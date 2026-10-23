@@ -1,0 +1,32 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.aws/
+
+# Local agent configuration and runtime state
+.agents/
+.omx/
+.codegraph/
+
+# Dependencies and generated output
+node_modules/
+dist/
+build/
+coverage/
+.next/
+.venv/
+__pycache__/
+*.pyc
+
+# Local files
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/
+.omx-state-locks/
+.omx-state-locks.identity.json
+.codex/
