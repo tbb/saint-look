@@ -179,7 +179,7 @@ test('invalid revisions, changed retry photos and conflicting receipts cannot st
 });
 
 
-test('a catalog written before revisions upgrades without losing its ready result or repeating providers', async t => {
+test('a catalog with unknown upload age expires on upgrade while preserving identity and explicit retry', async t => {
   const fixture = await providerFixture(t);
   const env = await environment(t);
   const original = await photoRequest();
@@ -197,11 +197,13 @@ test('a catalog written before revisions upgrades without losing its ready resul
       fixture.cutout, 'Рубашка', '["Красный"]', '{"type":"Рубашка","colors":["Красный"]}');
   legacy.close();
   const server = await env.launch(fixture.env);
-  const ready = await waitForItem(server, original.itemId);
+  const ready = await waitForItem(server, original.itemId, 'failed');
   assert.equal(ready.revision, 0);
   assert.equal(ready.operationId, original.operationId);
-  assert.equal(ready.type, 'Рубашка');
-  assert.deepEqual(Buffer.from(await (await server.request(ready.resultPath)).arrayBuffer()), fixture.cutout);
+  assert.equal(ready.error, 'result_expired');
+  assert.equal(ready.type, null);
+  assert.equal(ready.resultPath, null);
+  assert.equal((await server.request(`/v1/items/${original.itemId}/result`)).status, 410);
   assert.equal((await upload(server, original)).status, 200);
   assert.equal(fixture.calls.attributes.length, 0);
   assert.equal(fixture.calls.cutout.length, 0);

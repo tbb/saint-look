@@ -9,7 +9,7 @@ export function initializeProcessing(database) {
   database.exec("UPDATE items SET attributes_state='done',cutout_state='done' WHERE status='ready'");
 }
 
-export function createWorker(database, provider, env) {
+export function createWorker(database, provider, env, retention) {
   const timers = new Map();
   const abort = new AbortController();
   let closing = false;
@@ -21,27 +21,31 @@ export function createWorker(database, provider, env) {
     timers.set(operationId, setTimeout(() => { timers.delete(operationId); void process(itemId, operationId); }, first ? initialDelay : delay));
   }
   async function process(itemId, operationId) {
+    if (closing) return;
+    retention.sweep();
     const row = database.prepare('SELECT * FROM items WHERE item_id=? AND operation_id=?').get(itemId, operationId);
     if (closing || !row || row.status !== 'pending') return;
     const stage = row.attributes_state === 'done' ? 'cutout' : 'attributes';
     try {
       if (row.provider_id !== provider.id) throw new ProviderError('provider_configuration_changed');
       provider.preflight(Buffer.from(row.source));
-      database.prepare(`UPDATE items SET ${stage}_state='in_flight' WHERE item_id=? AND operation_id=?`).run(itemId, operationId);
+      database.prepare(`UPDATE items SET ${stage}_state='in_flight' WHERE item_id=? AND operation_id=? AND retention_state='active'`).run(itemId, operationId);
       const result = await provider[stage](Buffer.from(row.source), abort.signal);
       if (closing) return;
+      retention.sweep();
       if (stage === 'attributes') {
-        database.prepare("UPDATE items SET attributes_state='done',attributes=? WHERE item_id=? AND operation_id=?").run(JSON.stringify(result), itemId, operationId);
+        database.prepare("UPDATE items SET attributes_state='done',attributes=? WHERE item_id=? AND operation_id=? AND retention_state='active'").run(JSON.stringify(result), itemId, operationId);
         schedule(itemId, operationId, false);
       } else {
         const attributes = JSON.parse(row.attributes);
-        database.prepare("UPDATE items SET cutout_state='done',status='ready',result=?,type=?,colors=? WHERE item_id=? AND operation_id=?")
+        database.prepare("UPDATE items SET cutout_state='done',status='ready',result=?,type=?,colors=? WHERE item_id=? AND operation_id=? AND retention_state='active'")
           .run(result, attributes.type, JSON.stringify(attributes.colors), itemId, operationId);
       }
     } catch (error) {
       if (closing) return;
+      retention.sweep();
       const known = error instanceof ProviderError;
-      database.prepare(`UPDATE items SET status='failed',${stage}_state=?,error=? WHERE item_id=? AND operation_id=?`)
+      database.prepare(`UPDATE items SET status='failed',${stage}_state=?,error=? WHERE item_id=? AND operation_id=? AND retention_state='active'`)
         .run(!known || error.unknown ? 'unknown' : 'failed', known ? error.code : 'processing_unknown', itemId, operationId);
     }
   }
