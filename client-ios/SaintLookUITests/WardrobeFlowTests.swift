@@ -87,6 +87,59 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(offline.staticTexts["Синий"].exists)
     }
 
+    @MainActor
+    func testSavedResultAcknowledgementSurvivesRelaunchAndLostResponseWithoutLosingLocalCard() async throws {
+        try await control(mode: "block-acks")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        let uploaded = try await transportState()
+        let operationPath = try XCTUnwrap(uploaded["lastOperationPath"] as? String)
+        let before = try await backendResponse(path: operationPath + "/result")
+        XCTAssertEqual(before.status, 200, "The server copy remains until acknowledgement can be delivered")
+        try await control(mode: "offline")
+        app.terminate()
+
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 1, pending: 0, timeout: 5)
+        XCTAssertTrue(restored.images["item-photo"].firstMatch.exists)
+        XCTAssertTrue(restored.staticTexts["Футболка"].exists)
+        try await control(mode: "drop-next-ack-response")
+        var acknowledged = false
+        for _ in 0..<200 {
+            let state = try await transportState()
+            if state["acknowledgedOperations"] as? Int == 1,
+               state["droppedAcknowledgementResponses"] as? Int == 1,
+               (state["forwardedAcknowledgements"] as? Int ?? 0) >= 2 {
+                acknowledged = true
+                break
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(acknowledged, "Saved results must be acknowledged automatically after relaunch, including a lost response")
+        let cleaned = try await backendResponse(path: operationPath + "/result")
+        XCTAssertEqual(cleaned.status, 410)
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: cleaned.data) as? [String: String])?["error"], "result_delivered")
+        await waitForSummary(restored, ready: 1, pending: 0, timeout: 5)
+        try await control(mode: "offline")
+        restored.terminate()
+        let offline = launch(reset: false, baseURL: testURL)
+        await waitForSummary(offline, ready: 1, pending: 0, timeout: 5)
+        XCTAssertTrue(offline.images["item-photo"].firstMatch.exists)
+        XCTAssertTrue(offline.staticTexts["Футболка"].exists)
+        XCTAssertTrue(offline.staticTexts["Синий"].exists)
+        let finalState = try await transportState()
+        XCTAssertEqual(finalState["forwardedUploads"] as? Int, 1)
+    }
+
+    private func backendResponse(path: String) async throws -> (status: Int, data: Data) {
+        var request = URLRequest(url: URL(string: testURL + path)!)
+        request.timeoutInterval = 5
+        request.setValue("Bearer \(testToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        return (try XCTUnwrap(response as? HTTPURLResponse).statusCode, data)
+    }
+
     func testUnavailableBackendKeepsOriginalAndPendingCardAfterRelaunch() throws {
         let app = launch(reset: true, baseURL: "http://127.0.0.1:1")
         app.buttons["add-demo-photo"].tap()
