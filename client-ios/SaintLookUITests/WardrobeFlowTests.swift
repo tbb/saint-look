@@ -52,13 +52,17 @@ final class WardrobeFlowTests: XCTestCase {
         return app
     }
 
-    func testPhotoBecomesReadyThroughBackendAndSurvivesOfflineRelaunch() throws {
+    @MainActor
+    func testPhotoBecomesReadyThroughBackendAndSurvivesOfflineRelaunch() async throws {
         let app = launch(reset: true, baseURL: testURL)
         XCTAssertTrue(app.staticTexts["demo-notice"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Подключить локальный backend"].exists, "UI test credentials must load independently of Keychain state")
+        // Hold delivery until pending is observed; backend processing may finish before XCTest's first poll.
+        try await control(mode: "offline")
         app.buttons["add-demo-photo"].tap()
         XCTAssertTrue(app.images["item-photo"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["pending-status"].firstMatch.waitForExistence(timeout: 5))
+        try await control(mode: "online")
         let ready = app.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 30)
         let error = app.staticTexts["item-error"].firstMatch
         XCTAssertTrue(ready, error.exists ? error.label : "Ready card did not appear; no item error is shown")
