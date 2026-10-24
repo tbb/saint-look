@@ -21,7 +21,7 @@ final class WardrobeFlowTests: XCTestCase {
                 _ = try await providerControl(["reset": true], timeout: 15)
                 return
             } catch let error as URLError {
-                guard attempt < 2, [.timedOut, .networkConnectionLost, .cannotConnectToHost].contains(error.code) else { throw error }
+                guard attempt < 2, [URLError.Code.timedOut, .networkConnectionLost, .cannotConnectToHost].contains(error.code) else { throw error }
                 try await Task.sleep(nanoseconds: 500_000_000)
             }
         }
