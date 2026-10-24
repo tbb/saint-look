@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { RequestError, uuid } from './upload.mjs';
 
+const clearedFields = `retention_state=?, status='failed', source=X'', result=NULL,
+  attributes=NULL, type=NULL, colors=NULL, attributes_state='cleared', cutout_state='cleared', error=?`;
+
 export function createRetention(database, env, provider) {
   const now = clock(env, provider);
   const columns = database.prepare('PRAGMA table_info(items)').all();
@@ -14,9 +17,8 @@ export function createRetention(database, env, provider) {
   }
   database.exec('CREATE INDEX IF NOT EXISTS retention_deadlines ON items(retention_state, expires_at)');
   function sweep() {
-    database.prepare(`UPDATE items SET retention_state='expired', status='failed', source=X'', result=NULL,
-      attributes=NULL, type=NULL, colors=NULL, attributes_state='cleared', cutout_state='cleared', error='result_expired'
-      WHERE retention_state='active' AND expires_at<=?`).run(now());
+    database.prepare(`UPDATE items SET ${clearedFields}
+      WHERE retention_state='active' AND expires_at<=?`).run('expired', 'result_expired', now());
   }
   sweep();
   const timer = setInterval(sweep, 1000);
@@ -40,8 +42,7 @@ function clock(env, provider) {
 }
 
 function clearAttempt(database, itemId, operationId, state) {
-  database.prepare(`UPDATE items SET retention_state=?, status='failed', source=X'', result=NULL,
-    attributes=NULL, type=NULL, colors=NULL, attributes_state='cleared', cutout_state='cleared', error=?
+  database.prepare(`UPDATE items SET ${clearedFields}
     WHERE item_id=? AND operation_id=? AND retention_state='active'`)
     .run(state, `result_${state}`, itemId, operationId);
 }
