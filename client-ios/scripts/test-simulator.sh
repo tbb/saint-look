@@ -11,24 +11,39 @@ fi
 xcodebuild -version
 work_directory="$(mktemp -d)"
 trap 'rm -rf "$work_directory"' EXIT
-xcodebuild -project SaintLook.xcodeproj -scheme SaintLook -showdestinations > "$work_directory/destinations.txt"
-cat "$work_directory/destinations.txt"
 simulator_id="${SAINT_LOOK_SIMULATOR_UDID:-}"
 if [[ -z "$simulator_id" ]]; then
-  simulator_id="$(xcrun simctl list devices available --json | python3 -c '
+  # CoreSimulator may still be discovering preinstalled devices on a fresh runner.
+  for attempt in 1 2 3; do
+    xcrun simctl list devices available --json > "$work_directory/devices.json"
+    xcodebuild -project SaintLook.xcodeproj -scheme SaintLook -showdestinations > "$work_directory/destinations.txt"
+    cat "$work_directory/destinations.txt"
+    if simulator_id="$(python3 - "$work_directory/destinations.txt" "$work_directory/devices.json" <<'PYTHON'
 import json, re, sys
 with open(sys.argv[1]) as source:
     runnable = source.read().split("Ineligible destinations")[0]
-allowed = set(re.findall(r"id:([0-9A-Fa-f-]{36})", runnable))
-for runtime, devices in json.load(sys.stdin)["devices"].items():
+allowed = set(re.findall(r"id:\s*([0-9A-Fa-f-]{36})", runnable))
+with open(sys.argv[2]) as source:
+    devices_by_runtime = json.load(source)["devices"]
+for runtime, devices in devices_by_runtime.items():
     if ".iOS-" not in runtime:
         continue
     for device in devices:
         if device.get("isAvailable") and device["name"].startswith("iPhone") and device["udid"] in allowed:
             print(device["udid"])
             sys.exit(0)
-sys.exit("No available iPhone Simulator. Install an iOS runtime in Xcode.")
-' "$work_directory/destinations.txt")"
+sys.exit(1)
+PYTHON
+    )"; then
+      break
+    fi
+    echo "Waiting for Xcode to discover an available iPhone Simulator ($attempt/3)."
+    sleep 2
+  done
+  if [[ -z "$simulator_id" ]]; then
+    echo "No available iPhone Simulator. Install an iOS runtime in Xcode." >&2
+    exit 1
+  fi
 fi
 xcrun simctl boot "$simulator_id" 2>/dev/null || true
 xcrun simctl bootstatus "$simulator_id" -b
