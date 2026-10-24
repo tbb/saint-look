@@ -1,0 +1,100 @@
+name: Local ingestion checks
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'client-ios/**'
+      - 'docs/api/**'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ingestion-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    # This condition is intentionally present on EVERY job, before runner allocation.
+    # Set only after verifying included quota and a $0 paid-overage hard stop.
+    if: vars.ACTIONS_BUDGET_VERIFIED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      backend: ${{ steps.paths.outputs.backend }}
+      ios: ${{ steps.paths.outputs.ios }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'PY'
+          import os, subprocess
+          base, head = os.environ['BASE_SHA'], os.environ['HEAD_SHA']
+          paths = subprocess.check_output(['git', 'diff', '--name-only', base, head], text=True).splitlines() if base and head else []
+          common = not base or any(p.startswith(('docs/api/', '.github/workflows/')) for p in paths)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for name, prefix in [('backend', 'backend/'), ('ios', 'client-ios/')]:
+                  needed = common or any(p.startswith(prefix) for p in paths)
+                  output.write(f'{name}={str(needed).lower()}\n')
+          PY
+
+  backend:
+    if: vars.ACTIONS_BUDGET_VERIFIED == 'true' && needs.changes.outputs.backend == 'true'
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm --prefix backend ci --ignore-scripts
+      - run: npm --prefix backend run check
+      - run: npm --prefix backend test
+
+  ios:
+    if: vars.ACTIONS_BUDGET_VERIFIED == 'true' && needs.changes.outputs.ios == 'true'
+    needs: changes
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm --prefix backend ci --ignore-scripts
+      - name: Real Simulator and local backend (synthetic provider only)
+        env:
+          SAINT_LOOK_OWNER_TOKEN: saint-look-ui-tests-owner-token-00000001
+          SAINT_LOOK_PROVIDER: demo
+          SAINT_LOOK_DEMO_DELAY_MS: '2000'
+          SAINT_LOOK_DATA_DIR: ${{ runner.temp }}/saint-look-backend
+          SAINT_LOOK_UI_TEST_URL: http://127.0.0.1:8787
+          SAINT_LOOK_UI_TEST_TOKEN: saint-look-ui-tests-owner-token-00000001
+        run: |
+          node backend/src/server.mjs > "$RUNNER_TEMP/backend.log" 2>&1 &
+          backend_pid=$!
+          trap 'kill "$backend_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..50}; do
+            if curl --fail --silent http://127.0.0.1:8787/health > /dev/null; then break; fi
+            sleep 0.2
+          done
+          curl --fail --silent http://127.0.0.1:8787/health
+          bash client-ios/scripts/test-simulator.sh
