@@ -93,14 +93,25 @@ jobs:
           SAINT_LOOK_UI_TEST_CONTROL_URL: http://127.0.0.1:8788/__control
           SAINT_LOOK_UI_TEST_CONTROL_TOKEN: saint-look-ui-control-test-token-00000001
         run: |
+          wait_for_health() {
+            local url="$1"
+            for attempt in {1..50}; do
+              if curl --max-time 1 --fail --silent "$url" > /dev/null; then return 0; fi
+              sleep 0.2
+            done
+            echo "Health check timed out: $url" >&2
+            return 1
+          }
+          cleanup() {
+            if [[ -n "$proxy_pid" ]]; then kill "$proxy_pid" 2>/dev/null || true; fi
+            kill "$backend_pid" 2>/dev/null || true
+          }
+          proxy_pid=''
           node backend/src/server.mjs > "$RUNNER_TEMP/backend.log" 2>&1 &
           backend_pid=$!
+          trap cleanup EXIT
+          wait_for_health http://127.0.0.1:8787/health
           node client-ios/scripts/ui-test-proxy.mjs > "$RUNNER_TEMP/ui-proxy.log" 2>&1 &
           proxy_pid=$!
-          trap 'kill "$proxy_pid" "$backend_pid" 2>/dev/null || true' EXIT
-          for attempt in {1..50}; do
-            if curl --max-time 1 --fail --silent http://127.0.0.1:8788/health > /dev/null; then break; fi
-            sleep 0.2
-          done
-          curl --max-time 1 --fail --silent http://127.0.0.1:8788/health
+          wait_for_health http://127.0.0.1:8788/health
           bash client-ios/scripts/test-simulator.sh
