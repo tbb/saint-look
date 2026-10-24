@@ -48,7 +48,7 @@ test('incomplete, blocked or unsuitable attributes never publish a card or call 
     [{ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '{"suitable":true,"reason":null,"type":"","colors":[]}' }] } }] }, 'invalid_provider_response'],
     [{ candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [{ text: '{"suitable":true,"reason":null,"type":"Рубашка","colors":["Красный"]}' }] } }] }, 'invalid_provider_response'],
     [{ promptFeedback: { blockReason: 'SAFETY' } }, 'inappropriate_photo'],
-    [{ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '{"suitable":false,"reason":"multiple_items","type":null,"colors":[]}' }] } }] }, 'inappropriate_photo'],
+    [{ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '{"suitable":false,"reason":"multiple_items","type":null,"colors":[]}' }] } }] }, 'photo_multiple_items'],
   ]) {
     const fixture = await providerFixture(t, { attributes(_request, response) { response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(payload)); } });
     const env = await environment(t);
@@ -117,5 +117,55 @@ test('a compact JPEG that expands past the provider upload limit is rejected bef
   assert.equal((await upload(server, request)).status, 202);
   const failed = await waitForItem(server, request.itemId, 'failed');
   assert.equal(failed.error, 'image_too_large');
+  assert.equal(fixture.calls.attributes.length, 0); assert.equal(fixture.calls.cutout.length, 0);
+});
+
+test('a delayed provider leaves the card pending while the API remains usable', async (t) => {
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  t.after(() => release());
+  const fixture = await providerFixture(t, { async attributes(_request, response, { attributes }) {
+    await pending;
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(attributes) }] } }] }));
+  } });
+  const env = await environment(t); const server = await env.launch(fixture.env);
+  const request = await photoRequest(); await upload(server, request);
+  for (let n = 0; n < 50 && fixture.calls.attributes.length === 0; n++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(fixture.calls.attributes.length, 1);
+  const item = await (await server.request(`/v1/items/${request.itemId}`)).json();
+  assert.equal(item.status, 'pending'); assert.equal(item.processing.attributes, 'in_flight');
+  assert.equal(item.type, null); assert.equal(item.resultPath, null);
+  assert.equal((await server.request('/health')).status, 200);
+  release(); assert.equal((await waitForItem(server, request.itemId)).status, 'ready');
+});
+
+test('live mode with missing credentials stays live and fails closed instead of silently using demo', async (t) => {
+  const env = await environment(t);
+  const server = await env.launch({ SAINT_LOOK_PROVIDER: 'live', SAINT_LOOK_TEST_PROVIDER_ORIGIN: '', NODE_ENV: 'production', GEMINI_API_KEY: '', PHOTOROOM_API_KEY: '', SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED: '' });
+  assert.equal((await (await server.request('/health')).json()).mode, 'live');
+  const request = await photoRequest(); await upload(server, request);
+  const item = await waitForItem(server, request.itemId, 'failed');
+  assert.equal(item.mode, 'live'); assert.equal(item.error, 'provider_not_configured'); assert.equal(item.resultPath, null);
+});
+
+test('test transport cannot contact a remote origin or run outside explicit test mode', async (t) => {
+  const fixture = await providerFixture(t);
+  for (const override of [{ NODE_ENV: 'production' }, { SAINT_LOOK_TEST_PROVIDER_ORIGIN: 'https://example.invalid' }, { SAINT_LOOK_TEST_PROVIDER_ORIGIN: '' }]) {
+    const env = await environment(t); const server = await env.launch({ ...fixture.env, ...override });
+    const request = await photoRequest(); await upload(server, request);
+    assert.equal((await waitForItem(server, request.itemId, 'failed')).error, 'provider_not_configured');
+    await server.stop();
+  }
+  assert.equal(fixture.calls.attributes.length, 0); assert.equal(fixture.calls.cutout.length, 0);
+});
+
+test('a queued controlled-provider operation cannot silently resume as synthetic demo after restart', async (t) => {
+  const fixture = await providerFixture(t); const env = await environment(t);
+  let server = await env.launch({ ...fixture.env, SAINT_LOOK_STAGE_DELAY_MS: '10000' });
+  const request = await photoRequest(); await upload(server, request);
+  await server.stop(); server = await env.launch({ SAINT_LOOK_DEMO_DELAY_MS: '10' });
+  const failed = await waitForItem(server, request.itemId, 'failed');
+  assert.equal(failed.error, 'provider_configuration_changed'); assert.equal(failed.resultPath, null);
   assert.equal(fixture.calls.attributes.length, 0); assert.equal(fixture.calls.cutout.length, 0);
 });

@@ -15,6 +15,7 @@ export function createWorker(database, provider, env) {
   let closing = false;
   const delay = Number(env.SAINT_LOOK_STAGE_DELAY_MS || 0);
   const initialDelay = provider.id === 'demo' ? Number(env.SAINT_LOOK_DEMO_DELAY_MS || 1500) : delay;
+  if (![delay, initialDelay].every(value => Number.isInteger(value) && value >= 0 && value <= 60000)) throw new Error('Invalid processing delay configuration.');
   function schedule(itemId, first = true) {
     if (closing || timers.has(itemId)) return;
     timers.set(itemId, setTimeout(() => { timers.delete(itemId); void process(itemId); }, first ? initialDelay : delay));
