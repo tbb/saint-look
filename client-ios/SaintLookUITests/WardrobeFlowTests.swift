@@ -123,6 +123,38 @@ final class WardrobeFlowTests: XCTestCase {
 
 
     @MainActor
+    func testDeletingTwoOfflineThingsSurvivesRelaunchAndNeverUploadsTheirPhotos() async throws {
+        try await control(mode: "offline")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 0, pending: 2, timeout: 5)
+        try tapVisibleButton("delete-item", in: app)
+        await waitForSummary(app, ready: 0, pending: 1, timeout: 5)
+        try tapVisibleButton("delete-item", in: app)
+        await waitForSummary(app, ready: 0, pending: 0, timeout: 5)
+        XCTAssertFalse(app.images["item-photo"].exists)
+        app.terminate()
+
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 0, pending: 0, timeout: 5)
+        try await control(mode: "online")
+        var delivered = false
+        for _ in 0..<200 {
+            let state = try await transportState()
+            XCTAssertEqual(state["forwardedUploads"] as? Int, 0, "Deleted local photos must never be uploaded")
+            if state["deletedItems"] as? Int == 2 { delivered = true; break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(delivered, "Both durable deletion commands must resume without another user action")
+        await waitForSummary(restored, ready: 0, pending: 0, timeout: 5)
+        restored.terminate()
+        let again = launch(reset: false, baseURL: testURL)
+        await waitForSummary(again, ready: 0, pending: 0, timeout: 5)
+        XCTAssertFalse(again.images["item-photo"].exists)
+    }
+
+    @MainActor
     func testManualTypeSurvivesAutomaticResultAndOfflineColorEditsPersistWithoutUploadingAgain() async throws {
         try await control(mode: "offline")
         let app = launch(reset: true, baseURL: testURL)
