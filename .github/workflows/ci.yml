@@ -84,6 +84,7 @@ jobs:
       - name: Real Simulator and local backend (controlled providers)
         env:
           NODE_ENV: test
+          SAINT_LOOK_TEST_CLOCK_FILE: ${{ runner.temp }}/saint-look-clock.json
           SAINT_LOOK_RECORD_VIDEO: '1'
           SAINT_LOOK_OWNER_TOKEN: saint-look-ui-tests-owner-token-00000001
           SAINT_LOOK_PROVIDER: live
@@ -116,6 +117,7 @@ jobs:
             if [[ -n "$provider_pid" ]]; then kill "$provider_pid" 2>/dev/null || true; fi
           }
           provider_pid=''
+          node -e 'require("node:fs").writeFileSync(process.env.SAINT_LOOK_TEST_CLOCK_FILE, JSON.stringify({offsetMs: 0}))'
           backend_pid=''
           proxy_pid=''
           trap cleanup EXIT
