@@ -16,33 +16,33 @@ export function createWorker(database, provider, env) {
   const delay = Number(env.SAINT_LOOK_STAGE_DELAY_MS || 0);
   const initialDelay = provider.id === 'demo' ? Number(env.SAINT_LOOK_DEMO_DELAY_MS || 1500) : delay;
   if (![delay, initialDelay].every(value => Number.isInteger(value) && value >= 0 && value <= 60000)) throw new Error('Invalid processing delay configuration.');
-  function schedule(itemId, first = true) {
-    if (closing || timers.has(itemId)) return;
-    timers.set(itemId, setTimeout(() => { timers.delete(itemId); void process(itemId); }, first ? initialDelay : delay));
+  function schedule(itemId, operationId, first = true) {
+    if (closing || timers.has(operationId)) return;
+    timers.set(operationId, setTimeout(() => { timers.delete(operationId); void process(itemId, operationId); }, first ? initialDelay : delay));
   }
-  async function process(itemId) {
-    const row = database.prepare('SELECT * FROM items WHERE item_id=?').get(itemId);
+  async function process(itemId, operationId) {
+    const row = database.prepare('SELECT * FROM items WHERE item_id=? AND operation_id=?').get(itemId, operationId);
     if (closing || !row || row.status !== 'pending') return;
     const stage = row.attributes_state === 'done' ? 'cutout' : 'attributes';
     try {
       if (row.provider_id !== provider.id) throw new ProviderError('provider_configuration_changed');
       provider.preflight(Buffer.from(row.source));
-      database.prepare(`UPDATE items SET ${stage}_state='in_flight' WHERE item_id=?`).run(itemId);
+      database.prepare(`UPDATE items SET ${stage}_state='in_flight' WHERE item_id=? AND operation_id=?`).run(itemId, operationId);
       const result = await provider[stage](Buffer.from(row.source), abort.signal);
       if (closing) return;
       if (stage === 'attributes') {
-        database.prepare("UPDATE items SET attributes_state='done',attributes=? WHERE item_id=?").run(JSON.stringify(result), itemId);
-        schedule(itemId, false);
+        database.prepare("UPDATE items SET attributes_state='done',attributes=? WHERE item_id=? AND operation_id=?").run(JSON.stringify(result), itemId, operationId);
+        schedule(itemId, operationId, false);
       } else {
         const attributes = JSON.parse(row.attributes);
-        database.prepare("UPDATE items SET cutout_state='done',status='ready',result=?,type=?,colors=? WHERE item_id=?")
-          .run(result, attributes.type, JSON.stringify(attributes.colors), itemId);
+        database.prepare("UPDATE items SET cutout_state='done',status='ready',result=?,type=?,colors=? WHERE item_id=? AND operation_id=?")
+          .run(result, attributes.type, JSON.stringify(attributes.colors), itemId, operationId);
       }
     } catch (error) {
       if (closing) return;
       const known = error instanceof ProviderError;
-      database.prepare(`UPDATE items SET status='failed',${stage}_state=?,error=? WHERE item_id=?`)
-        .run(!known || error.unknown ? 'unknown' : 'failed', known ? error.code : 'processing_unknown', itemId);
+      database.prepare(`UPDATE items SET status='failed',${stage}_state=?,error=? WHERE item_id=? AND operation_id=?`)
+        .run(!known || error.unknown ? 'unknown' : 'failed', known ? error.code : 'processing_unknown', itemId, operationId);
     }
   }
   // Intent survives a crash. A previously started external request cannot be retried safely.
@@ -50,6 +50,6 @@ export function createWorker(database, provider, env) {
     attributes_state=CASE WHEN attributes_state='in_flight' THEN 'unknown' ELSE attributes_state END,
     cutout_state=CASE WHEN cutout_state='in_flight' THEN 'unknown' ELSE cutout_state END
     WHERE status='pending' AND (attributes_state IN ('in_flight','unknown') OR cutout_state IN ('in_flight','unknown'))`);
-  for (const row of database.prepare("SELECT item_id FROM items WHERE status='pending'").all()) schedule(row.item_id);
+  for (const row of database.prepare("SELECT item_id, operation_id FROM items WHERE status='pending'").all()) schedule(row.item_id, row.operation_id);
   return { schedule, close() { closing = true; for (const timer of timers.values()) clearTimeout(timer); abort.abort(); } };
 }

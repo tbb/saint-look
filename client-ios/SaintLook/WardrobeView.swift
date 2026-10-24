@@ -59,6 +59,7 @@ struct WardrobeView: View {
                         Button("Изменить тип и цвета") { editingItem = item }
                             .accessibilityIdentifier("edit-item")
                             .disabled(!store.storageAvailable)
+                        ItemRecoveryActions(store: store, item: item)
                     }
                 }
             }
@@ -117,6 +118,14 @@ private struct ItemCard: View {
                     .foregroundStyle(.red)
                     .accessibilityIdentifier("failed-status")
             }
+            if item.status != .ready, item.resultFilename != nil {
+                Text(item.resultMode == .demo
+                    ? "Пока показана предыдущая тестовая вырезка. Новая ещё не готова."
+                    : "Пока показана предыдущая вырезка. Новая ещё не готова.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("previous-result-notice")
+            }
             if let type = item.displayedType { Text(type).font(.headline) }
             if !item.displayedColors.isEmpty { Text(item.displayedColors.joined(separator: ", ")) }
             if let error = item.errorMessage {
@@ -125,6 +134,64 @@ private struct ItemCard: View {
             }
         }
         .padding(.vertical, 6)
+    }
+}
+
+@MainActor
+private struct ItemRecoveryActions: View {
+    @ObservedObject var store: WardrobeStore
+    let item: WardrobeItem
+    @State private var showingOptions = false
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var importing = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if item.status == .ready && !showingOptions {
+                Button("Проблема с вырезкой") { showingOptions = true }
+                    .accessibilityIdentifier("cutout-problem")
+            } else {
+                if ProcessingFailure.needsAnotherPhoto(item.errorCode) {
+                    Text("Замените снимок: на фото должна быть одна вещь вне человека.")
+                        .font(.footnote)
+                        .accessibilityIdentifier("replace-photo-hint")
+                } else if item.status != .pending {
+                    Button("Повторить обработку") { store.retryProcessing(item.id) }
+                        .accessibilityIdentifier("retry-processing")
+                }
+                PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                    Label("Заменить фото", systemImage: "photo")
+                }
+                .accessibilityIdentifier("replace-photo")
+                #if DEBUG
+                Button("Заменить тестовым фото") {
+                    store.replacePhoto(item.id, with: PhotoData.demoPhoto(replacement: true))
+                }
+                .accessibilityIdentifier("replace-demo-photo")
+                #endif
+                if importing { ProgressView("Сохраняем фото…") }
+            }
+        }
+        // These controls share one List row. Automatic row buttons can trigger each other,
+        // including presenting PhotosPicker when the user taps retry or the debug photo.
+        .buttonStyle(.borderless)
+        .disabled(importing || !store.storageAvailable)
+        .onChange(of: item.operationID) { _, _ in showingOptions = false }
+        .onChange(of: selectedPhoto) { _, photo in
+            guard let photo else { return }
+            importing = true
+            Task {
+                defer { importing = false; selectedPhoto = nil }
+                do {
+                    guard let data = try await photo.loadTransferable(type: Data.self) else {
+                        throw ClientError.invalidPhoto
+                    }
+                    store.replacePhoto(item.id, with: data)
+                } catch {
+                    store.notice = "Не удалось получить новое фото. Предыдущая карточка сохранена."
+                }
+            }
+        }
     }
 }
 

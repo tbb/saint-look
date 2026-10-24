@@ -31,20 +31,29 @@ struct BackendClient {
     }
 
     func submit(_ item: WardrobeItem, photo: Data) async throws -> ItemResponse {
-        let body = try JSONSerialization.data(withJSONObject: [
+        var payload: [String: Any] = [
             "itemId": item.id.uuidString.lowercased(),
             "operationId": item.operationID.uuidString.lowercased(),
             "photoVersionId": item.photoVersionID.uuidString.lowercased(),
             "imageBase64": photo.base64EncodedString()
-        ])
-        let data = try await send(request(path: "v1/items", method: "POST", body: body))
+        ]
+        let path: String
+        if item.revision == 0 {
+            path = "v1/items"
+        } else {
+            path = "v1/items/\(item.directoryName)/attempts"
+            payload["action"] = item.action.rawValue
+            payload["revision"] = item.revision
+        }
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        let data = try await send(request(path: path, method: "POST", body: body))
         let result = try JSONDecoder().decode(ItemResponse.self, from: data)
         try result.validate(for: item)
         return result
     }
 
     func status(_ item: WardrobeItem) async throws -> ItemResponse {
-        let data = try await send(request(path: "v1/items/\(item.directoryName)"))
+        let data = try await send(request(path: "v1/items/\(item.directoryName)/operations/\(item.operationID.uuidString.lowercased())"))
         let result = try JSONDecoder().decode(ItemResponse.self, from: data)
         try result.validate(for: item)
         return result
@@ -52,7 +61,7 @@ struct BackendClient {
 
     func result(_ item: WardrobeItem, response: ItemResponse) async throws -> Data {
         try response.validate(for: item)
-        let path = "v1/items/\(item.directoryName)/result"
+        let path = "v1/items/\(item.directoryName)/operations/\(item.operationID.uuidString.lowercased())/result"
         guard response.status == .ready, response.resultPath == "/" + path else {
             throw ClientError.invalidResponse
         }

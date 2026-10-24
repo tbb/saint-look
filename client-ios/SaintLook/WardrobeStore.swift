@@ -78,9 +78,59 @@ final class WardrobeStore: ObservableObject {
         items = updated
     }
 
+    func retryProcessing(_ id: UUID) {
+        beginAttempt(id, original: nil)
+    }
+
+    func replacePhoto(_ id: UUID, with original: Data) {
+        beginAttempt(id, original: original)
+    }
+
+    private func beginAttempt(_ id: UUID, original: Data?) {
+        guard let directory, storageAvailable,
+              let index = items.firstIndex(where: { $0.id == id }) else { return }
+        var item = items[index]
+        guard original != nil || item.status != .pending else { return }
+        guard item.revision < 9_007_199_254_740_991 else {
+            notice = "Не удалось создать новую попытку обработки. Текущая карточка сохранена."
+            return
+        }
+        do {
+            if let original {
+                let upload = try PhotoData.uploadCopy(of: original)
+                item.photoVersionID = UUID()
+                let version = item.photoVersionID.uuidString.lowercased()
+                item.originalFilename = "photo-\(version).original"
+                item.uploadFilename = "photo-\(version).png"
+                let folder = directory.appendingPathComponent(item.directoryName)
+                try original.write(to: folder.appendingPathComponent(item.originalFilename), options: .atomic)
+                try upload.write(to: folder.appendingPathComponent(item.uploadFilename), options: .atomic)
+                item.action = .replace
+            } else {
+                item.action = .retry
+            }
+            item.operationID = UUID()
+            item.revision += 1
+            item.status = .pending
+            item.uploadStarted = false
+            item.errorMessage = nil
+            item.errorCode = nil
+            var updated = items
+            updated[index] = item
+            try persist(updated)
+            items = updated
+            tasks[id]?.task.cancel()
+            tasks[id] = nil
+            if observing { start(id) }
+        } catch {
+            notice = (error as? ClientError)?.localizedDescription
+                ?? "Не удалось сохранить новую попытку. Предыдущая карточка и фото сохранены."
+        }
+    }
+
     func displayImage(for item: WardrobeItem) -> UIImage? {
         guard let directory else { return nil }
-        let filename = item.status == .ready ? "result.png" : "upload.png"
+        let filename = item.resultFilename ?? item.uploadFilename
         let path = directory.appendingPathComponent(item.directoryName).appendingPathComponent(filename)
         return UIImage(contentsOfFile: path.path)
     }
@@ -124,7 +174,8 @@ final class WardrobeStore: ObservableObject {
     }
 
     private func replace(_ item: WardrobeItem) throws {
-        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        guard let index = items.firstIndex(where: { $0.id == item.id }),
+              items[index].operationID == item.operationID else { throw CancellationError() }
         var updated = items
         updated[index] = item
         // A response may have awaited the network while this thing was edited locally.
@@ -137,10 +188,11 @@ final class WardrobeStore: ObservableObject {
 
     private func start(_ id: UUID) {
         guard tasks[id] == nil else { return }
+        guard let operationID = items.first(where: { $0.id == id })?.operationID else { return }
         let generation = UUID()
         let task = Task { [weak self] in
             guard let self else { return }
-            await self.process(id)
+            await self.process(id, operationID: operationID)
             if self.tasks[id]?.generation == generation { self.tasks[id] = nil }
         }
         tasks[id] = (generation, task)
@@ -158,25 +210,31 @@ final class WardrobeStore: ObservableObject {
             item.uploadStarted = true
             try replace(item)
         }
-        let photo = try Data(contentsOf: directory.appendingPathComponent(item.directoryName).appendingPathComponent("upload.png"))
+        let photo = try Data(contentsOf: directory.appendingPathComponent(item.directoryName).appendingPathComponent(item.uploadFilename))
         return try await client.submit(item, photo: photo)
     }
 
-    private func process(_ id: UUID) async {
+    private func isCurrent(_ item: WardrobeItem) -> Bool {
+        items.contains { $0.id == item.id && $0.operationID == item.operationID }
+    }
+
+    private func process(_ id: UUID, operationID: UUID) async {
         guard let directory else { return }
         var retrySeconds: UInt64 = 1
         while observing && !Task.isCancelled {
-            guard var item = items.first(where: { $0.id == id }), item.status == .pending else { return }
+            guard var item = items.first(where: { $0.id == id }), item.operationID == operationID, item.status == .pending else { return }
             do {
                 _ = try settings.validatedURL()
                 let client = BackendClient(settings: settings)
                 let current = try await response(for: &item, client: client, directory: directory)
                 try Task.checkCancellation()
+                guard isCurrent(item) else { return }
                 let pendingChanged = item.mode != current.mode || item.errorMessage != nil
                 backendMode = current.mode
                 item.mode = current.mode
                 if current.status == .failed {
                     item.status = .failed
+                    item.errorCode = current.error
                     item.errorMessage = ProcessingFailure.message(for: current.error)
                     try replace(item)
                     return
@@ -186,12 +244,18 @@ final class WardrobeStore: ObservableObject {
                     let imageData = try await client.result(item, response: current)
                     guard imageData.count <= 10 * 1024 * 1024, UIImage(data: imageData) != nil else { throw ClientError.invalidResponse }
                     try Task.checkCancellation()
-                    try imageData.write(to: directory.appendingPathComponent(item.directoryName).appendingPathComponent("result.png"), options: .atomic)
-                    item.type = type
-                    item.colors = current.colors
-                    item.status = .ready
-                    item.errorMessage = nil
-                    try replace(item)
+                    guard isCurrent(item) else { return }
+                    let filename = "result-\(item.operationID.uuidString.lowercased()).png"
+                    try imageData.write(to: directory.appendingPathComponent(item.directoryName).appendingPathComponent(filename), options: .atomic)
+                    var completed = item
+                    completed.resultFilename = filename
+                    completed.resultMode = current.mode
+                    completed.type = type
+                    completed.colors = current.colors
+                    completed.status = .ready
+                    completed.errorMessage = nil
+                    completed.errorCode = nil
+                    try replace(completed)
                     return
                 }
                 item.errorMessage = nil
@@ -199,7 +263,7 @@ final class WardrobeStore: ObservableObject {
                 retrySeconds = 1
                 try await Task.sleep(nanoseconds: 1_000_000_000)
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, isCurrent(item) else { return }
                 let retryable: Bool
                 if let serverError = error as? ClientError {
                     switch serverError {
@@ -209,6 +273,7 @@ final class WardrobeStore: ObservableObject {
                 } else {
                     retryable = error is URLError
                 }
+                if !retryable { item.status = .failed }
                 item.errorMessage = retryable
                     ? "Связи с сервером пока нет. Фото сохранено; отправка продолжится автоматически."
                     : (error as? ClientError)?.localizedDescription ?? "Не удалось сохранить результат. Исходное фото сохранено."
