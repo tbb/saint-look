@@ -1,4 +1,4 @@
-// Controlled external HTTP providers for Simulator tests; never used by production.
+// Controlled external HTTP providers for Simulator and the isolated dev profile; never live AI.
 import { createServer } from 'node:http';
 import sharp from 'sharp';
 import { demoResult } from '../../src/demo-provider.mjs';

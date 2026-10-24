@@ -13,6 +13,7 @@ function stop(code) {
   if (stopping) return;
   stopping = true;
   exitCode = code;
+  process.exitCode = code;
   for (const child of children) child.kill('SIGTERM');
   if (!children.size) process.exit(code);
   const timer = setTimeout(() => {

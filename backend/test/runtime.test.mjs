@@ -2,7 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
-import { environment } from './support.mjs';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { createInterface } from 'node:readline';
+import { mkdtemp, cp, symlink, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { randomBytes } from 'node:crypto';
+import { environment, photoRequest, upload, waitForItem } from './support.mjs';
+
 
 test('startup refuses a newer data format instead of pretending rollback succeeded', async t => {
   const env = await environment(t);
@@ -13,14 +21,6 @@ test('startup refuses a newer data format instead of pretending rollback succeed
   await assert.rejects(env.launch(), /Unsupported data version/);
 });
 
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
-import { createInterface } from 'node:readline';
-import { mkdtemp, cp, symlink, writeFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
-import { randomBytes } from 'node:crypto';
-import { photoRequest, upload, waitForItem } from './support.mjs';
 
 async function controlledRelease(t) {
   const directory = await mkdtemp(join(tmpdir(), 'saint-look-release-'));
@@ -90,4 +90,29 @@ test('controlled release reports its baked revision and completes HTTP provider 
   const persisted = await waitForItem(restarted, item.itemId);
   assert.equal(persisted.operationId, item.operationId);
   assert.deepEqual(Buffer.from(await (await restarted.request(persisted.resultPath)).arrayBuffer()), before);
+});
+
+test('a controlled release refuses missing or invalid baked identity', async t => {
+  const release = await controlledRelease(t);
+  await rm(join(release.directory, 'REVISION'));
+  await assert.rejects(release.launch(), /baked release revision is required/);
+  await writeFile(join(release.directory, 'REVISION'), 'not-a-git-revision\n');
+  await assert.rejects(release.launch(), /Invalid baked release revision/);
+});
+
+test('an unexpected provider process exit stops the controlled runtime instead of leaving a healthy API', async t => {
+  const release = await controlledRelease(t);
+  const server = await release.launch();
+  // Process supervision is observed through the operating system's process API.
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const { stdout } = await promisify(execFile)('ps', ['-axo', 'pid=,ppid=,args=']);
+  const provider = stdout.split('\n').map(line => line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/))
+    .find(match => match && Number(match[2]) === server.child.pid && match[3].endsWith('/test/providers/ui-server.mjs'));
+  assert.ok(provider, 'The runtime must own its loopback provider process');
+  const stopped = once(server.child, 'exit');
+  process.kill(Number(provider[1]), 'SIGKILL');
+  const [code] = await stopped;
+  assert.equal(code, 1);
+  await assert.rejects(fetch(server.url + '/health', { signal: AbortSignal.timeout(1000) }));
 });
