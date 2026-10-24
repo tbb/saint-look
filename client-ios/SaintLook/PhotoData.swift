@@ -26,14 +26,14 @@ enum PhotoData {
     }
 
     #if DEBUG
-    static func demoPhoto() -> Data {
+    static func demoPhoto(replacement: Bool = false) -> Data {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: 256, height: 256), format: format)
         return renderer.pngData { context in
             UIColor(white: 0.92, alpha: 1).setFill()
             context.fill(CGRect(x: 0, y: 0, width: 256, height: 256))
-            UIColor.systemBlue.setFill()
+            (replacement ? UIColor.systemRed : UIColor.systemBlue).setFill()
             let shirt = UIBezierPath()
             shirt.move(to: CGPoint(x: 80, y: 40))
             shirt.addLine(to: CGPoint(x: 110, y: 52))

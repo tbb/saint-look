@@ -14,7 +14,17 @@ final class WardrobeFlowTests: XCTestCase {
 
     override func setUp() async throws {
         continueAfterFailure = false
-        try await control(mode: "online", reset: true)
+        // Only setup resets are retried: no app action or one-shot failure is running yet.
+        for attempt in 0..<3 {
+            do {
+                try await control(mode: "online", reset: true, timeout: 15)
+                _ = try await providerControl(["reset": true], timeout: 15)
+                return
+            } catch let error as URLError {
+                guard attempt < 2, [.timedOut, .networkConnectionLost, .cannotConnectToHost].contains(error.code) else { throw error }
+                try await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
     }
 
     override func tearDown() async throws {
@@ -23,10 +33,10 @@ final class WardrobeFlowTests: XCTestCase {
         }
     }
 
-    private func control(mode: String, reset: Bool = false) async throws {
+    private func control(mode: String, reset: Bool = false, timeout: TimeInterval = 5) async throws {
         var request = URLRequest(url: URL(string: controlURL)!)
         request.httpMethod = "POST"
-        request.timeoutInterval = 5
+        request.timeoutInterval = timeout
         request.setValue("Bearer \(controlToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["mode": mode, "reset": reset])
@@ -121,7 +131,7 @@ final class WardrobeFlowTests: XCTestCase {
         app.swipeUp()
         let edit = app.buttons["edit-item"].firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 5))
-        edit.tap()
+        try tapVisibleButton("edit-item", in: app)
         let type = app.textFields["edit-type"]
         XCTAssertTrue(type.waitForExistence(timeout: 5))
         await enterText("Shirt", replacing: "", in: type, app: app)
@@ -141,7 +151,7 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertEqual(before["forwardedUploads"] as? Int, 1)
 
         try await control(mode: "offline")
-        restored.buttons["edit-item"].firstMatch.tap()
+        try tapVisibleButton("edit-item", in: restored)
         let colors = restored.textFields["edit-colors"]
         XCTAssertTrue(colors.waitForExistence(timeout: 5))
         await enterText("White, Green", replacing: "Синий", in: colors, app: restored)
@@ -167,7 +177,7 @@ final class WardrobeFlowTests: XCTestCase {
         let app = launch(reset: true, baseURL: testURL)
         app.buttons["add-demo-photo"].tap()
         app.swipeUp()
-        app.buttons["edit-item"].firstMatch.tap()
+        try tapVisibleButton("edit-item", in: app)
         let colors = app.textFields["edit-colors"]
         XCTAssertTrue(colors.waitForExistence(timeout: 3))
         await enterText("Red", replacing: "", in: colors, app: app)
@@ -191,7 +201,7 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Red"].exists)
         XCTAssertTrue(app.staticTexts["Футболка"].exists, "A colors-only edit must retain the automatic type")
 
-        app.buttons["edit-item"].firstMatch.tap()
+        try tapVisibleButton("edit-item", in: app)
         let type = app.textFields["edit-type"]
         XCTAssertTrue(type.waitForExistence(timeout: 3))
         await enterText("Shirt", replacing: "Футболка", in: type, app: app)
@@ -215,7 +225,7 @@ final class WardrobeFlowTests: XCTestCase {
         app.buttons["add-demo-photo"].tap()
         await waitForSummary(app, ready: 1, pending: 0)
         app.swipeUp()
-        app.buttons["edit-item"].firstMatch.tap()
+        try tapVisibleButton("edit-item", in: app)
         await enterText("Shirt", replacing: "Футболка", in: app.textFields["edit-type"], app: app)
         await enterText("Red", replacing: "Синий", in: app.textFields["edit-colors"], app: app)
         app.buttons["save-item-edits"].tap()
@@ -224,8 +234,8 @@ final class WardrobeFlowTests: XCTestCase {
         try await control(mode: "offline")
         let problem = app.buttons["cutout-problem"].firstMatch
         XCTAssertTrue(problem.waitForExistence(timeout: 5))
-        problem.tap()
-        app.buttons["retry-processing"].firstMatch.tap()
+        try tapVisibleButton("cutout-problem", in: app)
+        try tapVisibleButton("retry-processing", in: app)
         XCTAssertTrue(app.staticTexts["pending-status"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["previous-result-notice"].exists)
         XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
@@ -247,6 +257,129 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertEqual(state["forwardedUploads"] as? Int, 2)
         restored.swipeDown()
         await waitForSummary(restored, ready: 1, pending: 0, timeout: 5)
+    }
+
+    @MainActor
+    func testProviderFailureCanRetryAndUnsuitablePhotoOffersReplacementInSameThing() async throws {
+        _ = try await providerControl(["nextCutout": "provider_quota_exceeded"])
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        XCTAssertTrue(app.staticTexts["failed-status"].firstMatch.waitForExistence(timeout: 30))
+        app.swipeUp()
+        XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["item-error"].firstMatch.label.contains("Лимит"))
+        try tapVisibleButton("retry-processing", in: app)
+        XCTAssertTrue(app.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 30))
+        let retried = try await providerControl()
+        XCTAssertEqual(retried["attributesCalls"] as? Int, 2)
+        XCTAssertEqual(retried["cutoutCalls"] as? Int, 2)
+
+        _ = try await providerControl(["nextAttributes": "photo_on_person"])
+        try tapVisibleButton("cutout-problem", in: app)
+        try tapVisibleButton("replace-demo-photo", in: app)
+        XCTAssertTrue(app.staticTexts["failed-status"].firstMatch.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["replace-photo-hint"].exists)
+        XCTAssertTrue(app.staticTexts["previous-result-notice"].exists)
+        XCTAssertFalse(app.buttons["retry-processing"].exists)
+        try tapVisibleButton("replace-demo-photo", in: app)
+        XCTAssertTrue(app.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 30))
+        XCTAssertFalse(app.staticTexts["previous-result-notice"].exists)
+        let state = try await transportState()
+        XCTAssertEqual(state["acceptedOperations"] as? Int, 4)
+        XCTAssertEqual(state["forwardedUploads"] as? Int, 4)
+        app.swipeDown()
+        await waitForSummary(app, ready: 1, pending: 0, timeout: 5)
+    }
+
+    @MainActor
+    func testOfflineReplacementRetainsPreviousCutoutAndEditsUntilNewResultAfterRelaunch() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        app.swipeUp()
+        try tapVisibleButton("edit-item", in: app)
+        await enterText("Shirt", replacing: "Футболка", in: app.textFields["edit-type"], app: app)
+        await enterText("White", replacing: "Синий", in: app.textFields["edit-colors"], app: app)
+        app.buttons["save-item-edits"].tap()
+        XCTAssertTrue(app.staticTexts["Shirt"].waitForExistence(timeout: 5))
+        let previousImage = app.images["item-photo"].firstMatch.screenshot().pngRepresentation
+        try await control(mode: "offline")
+        try tapVisibleButton("cutout-problem", in: app)
+        try tapVisibleButton("replace-demo-photo", in: app)
+        XCTAssertTrue(app.staticTexts["pending-status"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["previous-result-notice"].exists)
+        XCTAssertTrue(app.images["item-photo"].firstMatch.screenshot().pngRepresentation == previousImage,
+                       "The previous cutout must remain visible instead of the red replacement source")
+        // Replace again before either new photo reaches the server; the persisted revision may skip one.
+        try tapVisibleButton("replace-demo-photo", in: app)
+        XCTAssertTrue(app.staticTexts["previous-result-notice"].exists)
+        app.terminate()
+
+        let restored = launch(reset: false, baseURL: testURL)
+        restored.swipeUp()
+        XCTAssertTrue(restored.staticTexts["previous-result-notice"].waitForExistence(timeout: 5))
+        XCTAssertTrue(restored.staticTexts["Shirt"].exists)
+        XCTAssertTrue(restored.staticTexts["White"].exists)
+        _ = try await providerControl(["nextCutout": "red"])
+        try await control(mode: "online")
+        XCTAssertTrue(restored.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 40))
+        XCTAssertFalse(restored.staticTexts["previous-result-notice"].exists)
+        XCTAssertTrue(restored.staticTexts["Shirt"].exists)
+        XCTAssertTrue(restored.staticTexts["White"].exists)
+        XCTAssertFalse(restored.images["item-photo"].firstMatch.screenshot().pngRepresentation == previousImage,
+                          "The new red cutout must replace the previous blue one after becoming ready")
+        let state = try await transportState()
+        XCTAssertEqual(state["acceptedOperations"] as? Int, 2)
+        XCTAssertEqual(state["forwardedUploads"] as? Int, 2)
+        try await control(mode: "offline")
+        restored.terminate()
+        let offline = launch(reset: false, baseURL: testURL)
+        offline.swipeUp()
+        XCTAssertTrue(offline.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(offline.staticTexts["Shirt"].exists)
+        XCTAssertTrue(offline.staticTexts["White"].exists)
+        XCTAssertFalse(offline.staticTexts["previous-result-notice"].exists)
+        offline.swipeDown()
+        await waitForSummary(offline, ready: 1, pending: 0, timeout: 5)
+    }
+
+    private func providerControl(_ input: [String: Any]? = nil, timeout: TimeInterval = 5) async throws -> [String: Any] {
+        let url = ProcessInfo.processInfo.environment["SAINT_LOOK_UI_PROVIDER_CONTROL_URL"]
+            ?? "http://127.0.0.1:8789/__control"
+        let token = ProcessInfo.processInfo.environment["SAINT_LOOK_UI_PROVIDER_CONTROL_TOKEN"]
+            ?? "saint-look-ui-provider-control-token-00000001"
+        var request = URLRequest(url: URL(string: url)!)
+        request.timeoutInterval = timeout
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let input {
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: input)
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    private enum InteractionError: Error { case buttonNotVisible(String) }
+
+    @MainActor
+    private func tapVisibleButton(_ identifier: String, in app: XCUIApplication) throws {
+        let button = app.buttons[identifier].firstMatch
+        // A ready update can push a row below the home indicator after a previous scroll.
+        // Do not tap a merely existing or partially visible accessibility element.
+        let top = app.frame.minY + 70
+        let bottom = app.frame.maxY - 50
+        for _ in 0..<4 {
+            if button.exists && button.isHittable && button.frame.minY >= top && button.frame.maxY <= bottom {
+                button.tap()
+                return
+            }
+            if button.exists && button.frame.minY < top { app.swipeDown() }
+            else { app.swipeUp() }
+        }
+        XCTFail("Button \(identifier) did not become fully visible")
+        throw InteractionError.buttonNotVisible(identifier)
     }
 
     @MainActor

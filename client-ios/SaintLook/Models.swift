@@ -5,9 +5,17 @@ enum ProcessingMode: String, Codable { case demo, live }
 struct WardrobeItem: Codable, Identifiable {
     enum Status: String, Codable { case pending, ready, failed }
 
+    enum AttemptAction: String, Codable { case create, retry, replace }
+
     let id: UUID
-    let operationID: UUID
-    let photoVersionID: UUID
+    var operationID: UUID
+    var photoVersionID: UUID
+    var revision = 0
+    var action: AttemptAction = .create
+    var originalFilename = "original.photo"
+    var uploadFilename = "upload.png"
+    var resultFilename: String?
+    var resultMode: ProcessingMode?
     var status: Status = .pending
     var uploadStarted = false
     var type: String?
@@ -15,6 +23,7 @@ struct WardrobeItem: Codable, Identifiable {
     var manualType: String?
     var manualColors: [String]?
     var errorMessage: String?
+    var errorCode: String?
     var mode: ProcessingMode?
 
     init(id: UUID, operationID: UUID, photoVersionID: UUID) {
@@ -25,6 +34,7 @@ struct WardrobeItem: Codable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, operationID, photoVersionID, status, uploadStarted, type, colors, errorMessage, mode, manualType, manualColors
+        case revision, action, originalFilename, uploadFilename, resultFilename, resultMode, errorCode
     }
 
     init(from decoder: Decoder) throws {
@@ -33,6 +43,13 @@ struct WardrobeItem: Codable, Identifiable {
         operationID = try values.decode(UUID.self, forKey: .operationID)
         photoVersionID = try values.decode(UUID.self, forKey: .photoVersionID)
         status = try values.decode(Status.self, forKey: .status)
+        revision = try values.decodeIfPresent(Int.self, forKey: .revision) ?? 0
+        action = try values.decodeIfPresent(AttemptAction.self, forKey: .action) ?? .create
+        originalFilename = try values.decodeIfPresent(String.self, forKey: .originalFilename) ?? "original.photo"
+        uploadFilename = try values.decodeIfPresent(String.self, forKey: .uploadFilename) ?? "upload.png"
+        resultFilename = try values.decodeIfPresent(String.self, forKey: .resultFilename)
+            ?? (status == .ready ? "result.png" : nil)
+        errorCode = try values.decodeIfPresent(String.self, forKey: .errorCode)
         uploadStarted = try values.decodeIfPresent(Bool.self, forKey: .uploadStarted) ?? false
         type = try values.decodeIfPresent(String.self, forKey: .type)
         colors = try values.decodeIfPresent([String].self, forKey: .colors) ?? []
@@ -42,6 +59,8 @@ struct WardrobeItem: Codable, Identifiable {
         // Ready cards written by the first demo-only version had no mode field.
         mode = try values.decodeIfPresent(ProcessingMode.self, forKey: .mode)
             ?? (status == .ready ? .demo : nil)
+        resultMode = try values.decodeIfPresent(ProcessingMode.self, forKey: .resultMode)
+            ?? (resultFilename != nil ? mode : nil)
     }
 
     var displayedType: String? { manualType ?? type }
@@ -55,6 +74,7 @@ struct ItemResponse: Decodable {
     let photoVersionId: UUID
     let status: WardrobeItem.Status
     let mode: ProcessingMode
+    let revision: Int?
     let type: String?
     let colors: [String]
     let resultPath: String?
@@ -62,7 +82,7 @@ struct ItemResponse: Decodable {
 
     func validate(for item: WardrobeItem) throws {
         guard itemId == item.id, operationId == item.operationID,
-              photoVersionId == item.photoVersionID else {
+              photoVersionId == item.photoVersionID, (revision ?? 0) == item.revision else {
             throw ClientError.invalidResponse
         }
     }
@@ -86,6 +106,10 @@ enum ClientError: LocalizedError {
 
 
 enum ProcessingFailure {
+    static func needsAnotherPhoto(_ code: String?) -> Bool {
+        ["photo_on_person", "photo_multiple_items", "photo_no_item", "photo_unclear", "inappropriate_photo", "image_too_large"].contains(code ?? "")
+    }
+
     static func message(for code: String?) -> String {
         switch code {
         case "photo_on_person": return "Вещь нужно сфотографировать отдельно, не на человеке. Исходник сохранён."
