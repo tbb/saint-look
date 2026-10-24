@@ -42,3 +42,66 @@ test('missing credentials or preflight approval fails without contacting either 
   assert.equal(fixture.calls.attributes.length, 0);
   assert.equal(fixture.calls.cutout.length, 0);
 });
+
+test('incomplete, blocked or unsuitable attributes never publish a card or call cutout', async (t) => {
+  for (const [payload, expected] of [
+    [{ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '{"suitable":true,"reason":null,"type":"","colors":[]}' }] } }] }, 'invalid_provider_response'],
+    [{ candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [{ text: '{"suitable":true,"reason":null,"type":"Рубашка","colors":["Красный"]}' }] } }] }, 'invalid_provider_response'],
+    [{ promptFeedback: { blockReason: 'SAFETY' } }, 'inappropriate_photo'],
+    [{ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '{"suitable":false,"reason":"multiple_items","type":null,"colors":[]}' }] } }] }, 'inappropriate_photo'],
+  ]) {
+    const fixture = await providerFixture(t, { attributes(_request, response) { response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(payload)); } });
+    const env = await environment(t);
+    const server = await env.launch(fixture.env);
+    const request = await photoRequest(); await upload(server, request);
+    const failed = await waitForItem(server, request.itemId, 'failed');
+    assert.equal(failed.error, expected);
+    assert.equal(failed.type, null); assert.deepEqual(failed.colors, []); assert.equal(failed.resultPath, null);
+    assert.equal(fixture.calls.cutout.length, 0);
+    await server.stop();
+  }
+});
+
+test('a corrupt, opaque or empty cutout never becomes ready even when attributes succeeded', async (t) => {
+  const { default: sharp } = await import('sharp');
+  for (const bytes of [Buffer.from('not a png'),
+    await sharp({ create: { width: 16, height: 16, channels: 4, background: '#ff0000ff' } }).png().toBuffer(),
+    await sharp({ create: { width: 16, height: 16, channels: 4, background: '#00000000' } }).png().toBuffer()]) {
+    const fixture = await providerFixture(t, { cutout(_request, response) { response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(bytes); } });
+    const env = await environment(t); const server = await env.launch(fixture.env);
+    const request = await photoRequest(); await upload(server, request);
+    const failed = await waitForItem(server, request.itemId, 'failed');
+    assert.equal(failed.error, 'invalid_provider_response');
+    assert.equal(failed.type, null); assert.equal(failed.resultPath, null);
+    assert.deepEqual(failed.processing, { attributes: 'done', cutout: 'failed' });
+    await server.stop();
+  }
+});
+
+test('provider quota and authorization refusals are explicit and never retried or replaced with demo', async (t) => {
+  for (const [stage, status, expected] of [['attributes', 429, 'provider_quota_exceeded'], ['cutout', 402, 'provider_quota_exceeded'], ['attributes', 401, 'provider_unauthorized']]) {
+    const fixture = await providerFixture(t, { [stage](_request, response) { response.writeHead(status, { 'Content-Type': 'application/json' }); response.end('{"error":"private upstream details"}'); } });
+    const env = await environment(t); const server = await env.launch(fixture.env);
+    const request = await photoRequest(); await upload(server, request);
+    const failed = await waitForItem(server, request.itemId, 'failed');
+    assert.equal(failed.error, expected); assert.equal(failed.resultPath, null);
+    assert.equal((await upload(server, request)).status, 200);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(fixture.calls[stage].length, 1);
+    await server.stop();
+  }
+});
+
+test('timeout after a request was sent persists unknown and duplicate uploads do not call the provider again', async (t) => {
+  const fixture = await providerFixture(t, { attributes() {} });
+  const env = await environment(t); let server = await env.launch({ ...fixture.env, SAINT_LOOK_PROVIDER_TIMEOUT_MS: '100' });
+  const request = await photoRequest(); await upload(server, request);
+  const failed = await waitForItem(server, request.itemId, 'failed');
+  assert.equal(failed.error, 'processing_unknown');
+  assert.deepEqual(failed.processing, { attributes: 'unknown', cutout: 'pending' });
+  await server.stop(); server = await env.launch(fixture.env);
+  assert.equal((await upload(server, request)).status, 200);
+  assert.deepEqual(await (await server.request(`/v1/items/${request.itemId}`)).json(), failed);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(fixture.calls.attributes.length, 1); assert.equal(fixture.calls.cutout.length, 0);
+});
