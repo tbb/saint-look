@@ -124,13 +124,13 @@ final class WardrobeStore: ObservableObject {
             var current = response
             for _ in 0..<120 {
                 try Task.checkCancellation()
-                if current.status == "failed" {
+                if current.status == .failed {
                     item.status = .failed
                     item.errorMessage = "Обработка не удалась. Исходное фото сохранено."
                     try replace(item)
                     return
                 }
-                if current.status == "ready" {
+                if current.status == .ready {
                     guard let type = current.type, !type.isEmpty, !current.colors.isEmpty else {
                         throw ClientError.invalidResponse
                     }

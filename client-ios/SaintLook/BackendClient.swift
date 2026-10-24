@@ -47,7 +47,7 @@ struct BackendClient {
     func result(_ item: WardrobeItem, response: ItemResponse) async throws -> Data {
         try response.validate(for: item)
         let path = "v1/items/\(item.directoryName)/result"
-        guard response.status == "ready", response.resultPath == "/" + path else {
+        guard response.status == .ready, response.resultPath == "/" + path else {
             throw ClientError.invalidResponse
         }
         return try await send(request(path: path))
