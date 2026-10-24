@@ -81,13 +81,20 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm --prefix backend ci --ignore-scripts
-      - name: Real Simulator and local backend (synthetic provider only)
+      - name: Real Simulator and local backend (controlled providers)
         env:
           NODE_ENV: test
           SAINT_LOOK_RECORD_VIDEO: '1'
           SAINT_LOOK_OWNER_TOKEN: saint-look-ui-tests-owner-token-00000001
-          SAINT_LOOK_PROVIDER: demo
-          SAINT_LOOK_DEMO_DELAY_MS: '2000'
+          SAINT_LOOK_PROVIDER: live
+          SAINT_LOOK_TEST_PROVIDER_ORIGIN: http://127.0.0.1:8789
+          GEMINI_API_KEY: fixture-gemini-key
+          PHOTOROOM_API_KEY: fixture-photoroom-key
+          SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED: 'true'
+          SAINT_LOOK_STAGE_DELAY_MS: '100'
+          SAINT_LOOK_PROVIDER_TIMEOUT_MS: '5000'
+          SAINT_LOOK_UI_PROVIDER_CONTROL_URL: http://127.0.0.1:8789/__control
+          SAINT_LOOK_UI_PROVIDER_CONTROL_TOKEN: saint-look-ui-provider-control-token-00000001
           SAINT_LOOK_DATA_DIR: ${{ runner.temp }}/saint-look-backend
           SAINT_LOOK_UI_TEST_URL: http://127.0.0.1:8788
           SAINT_LOOK_UI_TEST_TOKEN: saint-look-ui-tests-owner-token-00000001
@@ -105,12 +112,18 @@ jobs:
           }
           cleanup() {
             if [[ -n "$proxy_pid" ]]; then kill "$proxy_pid" 2>/dev/null || true; fi
-            kill "$backend_pid" 2>/dev/null || true
+            if [[ -n "$backend_pid" ]]; then kill "$backend_pid" 2>/dev/null || true; fi
+            if [[ -n "$provider_pid" ]]; then kill "$provider_pid" 2>/dev/null || true; fi
           }
+          provider_pid=''
+          backend_pid=''
           proxy_pid=''
+          trap cleanup EXIT
+          node backend/test/providers/ui-server.mjs > "$RUNNER_TEMP/ui-provider.log" 2>&1 &
+          provider_pid=$!
+          wait_for_health http://127.0.0.1:8789/health
           node backend/src/server.mjs > "$RUNNER_TEMP/backend.log" 2>&1 &
           backend_pid=$!
-          trap cleanup EXIT
           wait_for_health http://127.0.0.1:8787/health
           node client-ios/scripts/ui-test-proxy.mjs > "$RUNNER_TEMP/ui-proxy.log" 2>&1 &
           proxy_pid=$!
