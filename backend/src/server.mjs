@@ -9,6 +9,10 @@ import { initializeProcessing, createWorker } from './processing.mjs';
 import { initializeAttempts, acceptAttempt, readAttempt } from './attempts.mjs';
 import { initializeDeletion, deleteItem } from './deletion.mjs';
 import { createRetention, acknowledge } from './retention.mjs';
+import { initializeDataVersion, release } from './data-version.mjs';
+import { readRevision } from './revision.mjs';
+
+const revision = readRevision();
 
 const ownerToken = process.env.SAINT_LOOK_OWNER_TOKEN;
 if (!ownerToken || ownerToken.length < 32 || !['demo', 'live'].includes(process.env.SAINT_LOOK_PROVIDER)) {
@@ -24,6 +28,7 @@ process.umask(0o077);
 const directory = resolve(process.env.SAINT_LOOK_DATA_DIR || '.data');
 mkdirSync(directory, { recursive: true });
 const database = new DatabaseSync(join(directory, 'wardrobe.sqlite'));
+initializeDataVersion(database);
 database.exec(`PRAGMA journal_mode = WAL;
   CREATE TABLE IF NOT EXISTS items (
     item_id TEXT PRIMARY KEY, operation_id TEXT UNIQUE NOT NULL, photo_version_id TEXT NOT NULL,
@@ -48,7 +53,8 @@ function send(response, status, body) {
 const server = createServer(async (request, response) => {
   try {
     const path = new URL(request.url, 'http://localhost').pathname;
-    if (request.method === 'GET' && path === '/health') return send(response, 200, { status: 'ok', mode: provider.mode });
+    if (request.method === 'GET' && path === '/health') return send(response, 200, { status: 'ok', mode: provider.mode, revision, dataVersion: release.dataVersion,
+      ...(process.env.RAILWAY_DEPLOYMENT_ID ? { deploymentId: process.env.RAILWAY_DEPLOYMENT_ID } : {}) });
     if (!authorized(request)) return send(response, 401, { error: 'unauthorized' });
     retention.sweep();
     const acknowledgement = path.match(/^\/v1\/items\/([^/]+)\/operations\/([^/]+)\/ack$/);
