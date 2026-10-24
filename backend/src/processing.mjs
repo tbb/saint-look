@@ -24,7 +24,8 @@ export function createWorker(database, provider, env) {
     if (closing || !row || row.status !== 'pending') return;
     const stage = row.attributes_state === 'done' ? 'cutout' : 'attributes';
     try {
-      provider.preflight();
+      if (row.provider_id !== provider.id) throw new ProviderError('provider_configuration_changed');
+      provider.preflight(Buffer.from(row.source));
       database.prepare(`UPDATE items SET ${stage}_state='in_flight' WHERE item_id=?`).run(itemId);
       const result = await provider[stage](Buffer.from(row.source), abort.signal);
       if (closing) return;
@@ -40,8 +41,14 @@ export function createWorker(database, provider, env) {
       if (closing) return;
       const known = error instanceof ProviderError;
       database.prepare(`UPDATE items SET status='failed',${stage}_state=?,error=? WHERE item_id=?`)
-        .run(known && error.unknown ? 'unknown' : 'failed', known ? error.code : 'invalid_provider_response', itemId);
+        .run(!known || error.unknown ? 'unknown' : 'failed', known ? error.code : 'processing_unknown', itemId);
     }
   }
+  // Intent survives a crash. A previously started external request cannot be retried safely.
+  database.exec(`UPDATE items SET status='failed',error='processing_unknown',
+    attributes_state=CASE WHEN attributes_state='in_flight' THEN 'unknown' ELSE attributes_state END,
+    cutout_state=CASE WHEN cutout_state='in_flight' THEN 'unknown' ELSE cutout_state END
+    WHERE status='pending' AND (attributes_state IN ('in_flight','unknown') OR cutout_state IN ('in_flight','unknown'))`);
+  for (const row of database.prepare("SELECT item_id FROM items WHERE status='pending'").all()) schedule(row.item_id);
   return { schedule, close() { closing = true; for (const timer of timers.values()) clearTimeout(timer); abort.abort(); } };
 }
