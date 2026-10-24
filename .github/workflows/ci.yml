@@ -1,12 +1,18 @@
 name: Local ingestion checks
 
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - 'backend/**'
       - 'client-ios/**'
       - 'docs/api/**'
-      - '.github/workflows/ci.yml'
+      - '.github/workflows/**'
+      - 'scripts/deploy/**'
+      - 'docs/deployment.md'
+      - 'railway.json'
+      - '.dockerignore'
   workflow_dispatch:
 
 permissions:
@@ -140,3 +146,37 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
           compression-level: 0
+
+
+  deploy-policy:
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test scripts/deploy/*.test.mjs
+
+  container:
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build the checked source and verify persistent storage
+        run: |
+          revision="$(git rev-parse HEAD)"
+          printf '%s\n' "$revision" > backend/REVISION
+          docker build -f backend/Dockerfile -t saint-look-ci .
+          node backend/test/container-smoke.mjs saint-look-ci "$revision"
