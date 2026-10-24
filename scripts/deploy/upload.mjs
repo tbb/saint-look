@@ -9,7 +9,8 @@ try {
     if (!uuid.test(env[name] || '')) throw new Error(`Configure ${name} as an explicit ID.`);
   }
   if (!env.RAILWAY_TOKEN) throw new Error('Configure the project environment Railway token.');
-  const release = resolve(process.argv[2] || '');
+  if (!process.argv[2]) throw new Error('Provide the verified release directory.');
+  const release = resolve(process.argv[2]);
   const revision = readFileSync(join(release, 'backend/REVISION'), 'utf8').trim();
   if (!/^[a-f0-9]{40}$/.test(revision) || !lstatSync(join(release, 'railway.json')).isFile()) throw new Error('Verified release is incomplete.');
   let result;
