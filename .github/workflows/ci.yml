@@ -137,6 +137,16 @@ jobs:
           proxy_pid=$!
           wait_for_health http://127.0.0.1:8788/health
           bash client-ios/scripts/test-simulator.sh
+          # Exercise the explicit XCTest manifest using one existing local test.
+          # This validates the runner path; it is not a Railway demonstration.
+          SAINT_LOOK_REMOTE_SMOKE=1 \
+          SAINT_LOOK_REMOTE_URL=https://example.invalid \
+          SAINT_LOOK_REMOTE_TOKEN="$SAINT_LOOK_UI_TEST_TOKEN" \
+          SAINT_LOOK_REMOTE_REVISION="$(git rev-parse HEAD)" \
+          SAINT_LOOK_REMOTE_DEPLOYMENT_ID=local-harness-validation \
+          SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/WardrobeFlowTests/testPhotoBecomesReadyThroughBackendAndSurvivesOfflineRelaunch \
+          SAINT_LOOK_RECORD_VIDEO=0 \
+          bash client-ios/scripts/test-simulator.sh
       - name: Upload Simulator screencast
         if: always()
         uses: actions/upload-artifact@v4
