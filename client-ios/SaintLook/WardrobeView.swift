@@ -13,10 +13,19 @@ struct WardrobeView: View {
         NavigationStack {
             List {
                 Section {
-                    Text("Тестовый режим: вырезка и признаки демонстрационные, AI не вызывается.")
+                    if store.backendMode == .demo {
+                        Text("Тестовый режим: вырезка и признаки демонстрационные, AI не вызывается.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("demo-notice")
+                    } else {
+                        Text("Результат обработки сохранится на устройстве.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Всего: \(store.items.count). Готово: \(store.items.filter { $0.status == .ready }.count). Ожидают: \(store.items.filter { $0.status == .pending }.count).")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("demo-notice")
+                        .accessibilityIdentifier("wardrobe-summary")
                     Text("Одна вещь на фото, не на человеке. Пара обуви — одна вещь; пиджак и брюки добавляйте отдельно.")
                         .font(.footnote)
                     if !store.isConnected {
@@ -94,7 +103,7 @@ private struct ItemCard: View {
                 Text(item.uploadStarted ? "Обработка" : "Ожидает отправки")
                     .accessibilityIdentifier("pending-status")
             case .ready:
-                Text("Готово · тестовый результат")
+                Text(item.mode == .demo ? "Готово · тестовый результат" : "Готово")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("ready-status")
