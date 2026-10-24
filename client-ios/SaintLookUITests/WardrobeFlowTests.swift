@@ -1,13 +1,42 @@
 import XCTest
+import Foundation
 
 final class WardrobeFlowTests: XCTestCase {
     private let testToken = ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TEST_TOKEN"]
         ?? "saint-look-ui-tests-owner-token-00000001"
     private let testURL = ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TEST_URL"]
-        ?? "http://127.0.0.1:8787"
+        ?? "http://127.0.0.1:8788"
 
-    override func setUpWithError() throws {
+    private let controlURL = ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TEST_CONTROL_URL"]
+        ?? "http://127.0.0.1:8788/__control"
+    private let controlToken = ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TEST_CONTROL_TOKEN"]
+        ?? "saint-look-ui-control-test-token-00000001"
+
+    override func setUp() async throws {
         continueAfterFailure = false
+        try await control(mode: "online", reset: true)
+    }
+
+    override func tearDownWithError() throws {
+        XCUIApplication().terminate()
+    }
+
+    private func control(mode: String, reset: Bool = false) async throws {
+        var request = URLRequest(url: URL(string: controlURL)!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 5
+        request.setValue("Bearer \(controlToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["mode": mode, "reset": reset])
+        let (_, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+    }
+
+    private func waitForSummary(_ app: XCUIApplication, ready: Int, pending: Int, timeout: TimeInterval = 40) {
+        let summary = app.staticTexts["wardrobe-summary"]
+        let expected = "Всего: \(ready + pending). Готово: \(ready). Ожидают: \(pending)."
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", expected), object: summary)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: timeout), .completed)
     }
 
     private func launch(reset: Bool, baseURL: String) -> XCUIApplication {
@@ -54,4 +83,40 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(relaunched.staticTexts["pending-status"].firstMatch.exists)
         XCTAssertFalse(relaunched.staticTexts["ready-status"].exists)
     }
+
+    func testMultipleOfflinePhotosSurviveRelaunchAndAutomaticallyResumeInForeground() async throws {
+        try await control(mode: "offline")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        app.buttons["add-demo-photo"].tap()
+        waitForSummary(app, ready: 0, pending: 2, timeout: 5)
+        app.terminate()
+
+        let restored = launch(reset: false, baseURL: testURL)
+        waitForSummary(restored, ready: 0, pending: 2, timeout: 5)
+        try await control(mode: "online")
+        // No app restart, settings change, or manual retry after connectivity returns.
+        waitForSummary(restored, ready: 2, pending: 0)
+        try await control(mode: "offline")
+        restored.terminate()
+        let offline = launch(reset: false, baseURL: testURL)
+        waitForSummary(offline, ready: 2, pending: 0, timeout: 5)
+    }
+
+
+    func testLostUploadResponseReconcilesWithoutCreatingAnotherThing() async throws {
+        try await control(mode: "drop-next-upload-response")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        waitForSummary(app, ready: 1, pending: 0)
+
+        var request = URLRequest(url: URL(string: controlURL)!)
+        request.setValue("Bearer \(controlToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        let state = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(state["acceptedOperations"] as? Int, 1)
+        XCTAssertEqual(state["droppedUploadResponses"] as? Int, 1, "The proxy must actually lose an accepted response")
+    }
+
 }

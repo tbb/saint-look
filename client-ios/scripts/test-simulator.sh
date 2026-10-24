@@ -49,13 +49,31 @@ xcrun simctl boot "$simulator_id" 2>/dev/null || true
 xcrun simctl bootstatus "$simulator_id" -b
 mkdir -p build
 result_path="$(pwd)/build/UITests-$(date -u +%Y%m%dT%H%M%SZ).xcresult"
-xcodebuild \
-  -project SaintLook.xcodeproj \
-  -scheme SaintLook \
-  -configuration Debug \
-  -destination "platform=iOS Simulator,id=$simulator_id" \
-  -parallel-testing-enabled NO \
-  -derivedDataPath build/DerivedData \
-  -resultBundlePath "$result_path" \
-  CODE_SIGNING_ALLOWED=NO \
-  test
+build_options=(
+  -project SaintLook.xcodeproj
+  -scheme SaintLook
+  -configuration Debug
+  -destination "platform=iOS Simulator,id=$simulator_id"
+  -parallel-testing-enabled NO
+  -derivedDataPath build/DerivedData
+  CODE_SIGNING_ALLOWED=NO
+)
+xcodebuild "${build_options[@]}" build-for-testing
+
+# XCTest runs in its own generated host, so the app's ATS settings do not apply
+# to the test's loopback control connection. Change only that generated host.
+python3 - <<'PYTHON'
+from pathlib import Path
+import plistlib
+path = Path('build/DerivedData/Build/Products/Debug-iphonesimulator/SaintLookUITests-Runner.app/Info.plist')
+with path.open('rb') as source:
+    info = plistlib.load(source)
+ats = info.setdefault('NSAppTransportSecurity', {})
+domains = ats.setdefault('NSExceptionDomains', {})
+for host in ('127.0.0.1', 'localhost'):
+    domains.setdefault(host, {})['NSExceptionAllowsInsecureHTTPLoads'] = True
+with path.open('wb') as output:
+    plistlib.dump(info, output, fmt=plistlib.FMT_BINARY)
+PYTHON
+
+xcodebuild "${build_options[@]}" -resultBundlePath "$result_path" test-without-building
