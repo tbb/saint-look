@@ -123,6 +123,102 @@ final class WardrobeFlowTests: XCTestCase {
 
 
     @MainActor
+    func testDeletingTwoOfflineThingsSurvivesRelaunchAndNeverUploadsTheirPhotos() async throws {
+        try await control(mode: "offline")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 0, pending: 2, timeout: 5)
+        try tapVisibleButton("delete-item", in: app)
+        await waitForSummary(app, ready: 0, pending: 1, timeout: 5)
+        try tapVisibleButton("delete-item", in: app)
+        await waitForSummary(app, ready: 0, pending: 0, timeout: 5)
+        XCTAssertFalse(app.images["item-photo"].exists)
+        app.terminate()
+
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 0, pending: 0, timeout: 5)
+        try await control(mode: "online")
+        var delivered = false
+        for _ in 0..<200 {
+            let state = try await transportState()
+            XCTAssertEqual(state["forwardedUploads"] as? Int, 0, "Deleted local photos must never be uploaded")
+            if state["deletedItems"] as? Int == 2 { delivered = true; break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(delivered, "Both durable deletion commands must resume without another user action")
+        await waitForSummary(restored, ready: 0, pending: 0, timeout: 5)
+        restored.terminate()
+        let again = launch(reset: false, baseURL: testURL)
+        await waitForSummary(again, ready: 0, pending: 0, timeout: 5)
+        XCTAssertFalse(again.images["item-photo"].exists)
+    }
+
+    @MainActor
+    func testReadyThingDeletedOfflineStaysGoneAfterLostDeletionResponseAndAutomaticRetry() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        try await control(mode: "offline")
+        try tapVisibleButton("delete-item", in: app)
+        await waitForSummary(app, ready: 0, pending: 0, timeout: 5)
+        XCTAssertFalse(app.images["item-photo"].exists)
+        app.terminate()
+
+        try await control(mode: "drop-next-delete-response")
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 0, pending: 0, timeout: 5)
+        var repeated = false
+        for _ in 0..<200 {
+            let state = try await transportState()
+            if state["deletedItems"] as? Int == 1,
+               state["droppedDeleteResponses"] as? Int == 1,
+               (state["forwardedDeletes"] as? Int ?? 0) >= 2 {
+                repeated = true
+                break
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(repeated, "An accepted DELETE with a lost response must be retried automatically")
+        await waitForSummary(restored, ready: 0, pending: 0, timeout: 5)
+        let state = try await transportState()
+        XCTAssertEqual(state["acceptedOperations"] as? Int, 1)
+        XCTAssertEqual(state["forwardedUploads"] as? Int, 1, "Deleting a completed thing must not submit another processing request")
+        try await control(mode: "offline")
+        restored.terminate()
+        let offline = launch(reset: false, baseURL: testURL)
+        await waitForSummary(offline, ready: 0, pending: 0, timeout: 5)
+        XCTAssertFalse(offline.images["item-photo"].exists)
+    }
+
+    @MainActor
+    func testFailedThingCanBeDeletedOfflineAndItsCommandSurvivesRelaunch() async throws {
+        _ = try await providerControl(["nextCutout": "provider_quota_exceeded"])
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        XCTAssertTrue(app.staticTexts["failed-status"].firstMatch.waitForExistence(timeout: 40))
+        try await control(mode: "offline")
+        try tapVisibleButton("delete-item", in: app)
+        await waitForSummary(app, ready: 0, pending: 0, timeout: 5)
+        app.terminate()
+
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 0, pending: 0, timeout: 5)
+        try await control(mode: "online")
+        var delivered = false
+        for _ in 0..<200 {
+            let state = try await transportState()
+            if state["deletedItems"] as? Int == 1 { delivered = true; break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(delivered, "Deletion of a failed thing must resume after connectivity returns")
+        XCTAssertFalse(restored.staticTexts["failed-status"].exists)
+        XCTAssertFalse(restored.images["item-photo"].exists)
+        let state = try await transportState()
+        XCTAssertEqual(state["forwardedUploads"] as? Int, 1, "Deleting a failed thing must not retry processing")
+    }
+
+    @MainActor
     func testManualTypeSurvivesAutomaticResultAndOfflineColorEditsPersistWithoutUploadingAgain() async throws {
         try await control(mode: "offline")
         let app = launch(reset: true, baseURL: testURL)

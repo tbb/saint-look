@@ -2,6 +2,11 @@ import Foundation
 import Combine
 import UIKit
 
+private struct WardrobeCatalog: Codable {
+    let items: [WardrobeItem]
+    let pendingDeletionIDs: Set<UUID>
+}
+
 @MainActor
 final class WardrobeStore: ObservableObject {
     @Published private(set) var items: [WardrobeItem] = []
@@ -12,6 +17,8 @@ final class WardrobeStore: ObservableObject {
 
     private var directory: URL?
     private var tasks: [UUID: (generation: UUID, task: Task<Void, Never>)] = [:]
+    private var pendingDeletionIDs: Set<UUID> = []
+    private var deletionTasks: [UUID: (generation: UUID, task: Task<Void, Never>)] = [:]
     private var modeTask: Task<Void, Never>?
     private var observing = false
 
@@ -32,9 +39,20 @@ final class WardrobeStore: ObservableObject {
             directory = root
             let catalog = root.appendingPathComponent("catalog.json")
             if FileManager.default.fileExists(atPath: catalog.path) {
-                items = try JSONDecoder().decode([WardrobeItem].self, from: Data(contentsOf: catalog))
+                let data = try Data(contentsOf: catalog)
+                if let legacyItems = try? JSONDecoder().decode([WardrobeItem].self, from: data) {
+                    items = legacyItems
+                } else {
+                    let saved = try JSONDecoder().decode(WardrobeCatalog.self, from: data)
+                    items = saved.items
+                    pendingDeletionIDs = saved.pendingDeletionIDs
+                }
             }
             storageAvailable = true
+            for id in pendingDeletionIDs {
+                // Cleanup does not depend on valid credentials or a working connection.
+                try? removeLocalFiles(for: id)
+            }
         } catch {
             notice = "Не удалось открыть локальный гардероб. Существующие данные сохранены."
         }
@@ -76,6 +94,25 @@ final class WardrobeStore: ObservableObject {
         if let colors { updated[index].manualColors = colors }
         try persist(updated)
         items = updated
+    }
+
+    func deleteItem(_ id: UUID) {
+        guard storageAvailable, items.contains(where: { $0.id == id }) else { return }
+        let updated = items.filter { $0.id != id }
+        var deletions = pendingDeletionIDs
+        deletions.insert(id)
+        do {
+            // Hide only after both the removal and its delivery/cleanup intent are durable.
+            try persist(updated, pendingDeletions: deletions)
+            pendingDeletionIDs = deletions
+            items = updated
+            tasks[id]?.task.cancel()
+            tasks[id] = nil
+            try? removeLocalFiles(for: id)
+            if observing { startDeletion(id) }
+        } catch {
+            notice = "Не удалось сохранить удаление. Вещь осталась в гардеробе."
+        }
     }
 
     func retryProcessing(_ id: UUID) {
@@ -138,6 +175,7 @@ final class WardrobeStore: ObservableObject {
     func resumePendingItems() {
         observing = true
         discoverMode()
+        for id in pendingDeletionIDs { startDeletion(id) }
         for item in items where item.status == .pending { start(item.id) }
     }
 
@@ -145,6 +183,8 @@ final class WardrobeStore: ObservableObject {
         observing = false
         for entry in tasks.values { entry.task.cancel() }
         tasks.removeAll()
+        for entry in deletionTasks.values { entry.task.cancel() }
+        deletionTasks.removeAll()
         modeTask?.cancel()
         modeTask = nil
     }
@@ -168,9 +208,54 @@ final class WardrobeStore: ObservableObject {
         }
     }
 
-    private func persist(_ updated: [WardrobeItem]) throws {
+    private func persist(_ updated: [WardrobeItem], pendingDeletions: Set<UUID>? = nil) throws {
         guard let directory, storageAvailable else { throw CocoaError(.fileWriteUnknown) }
-        try JSONEncoder().encode(updated).write(to: directory.appendingPathComponent("catalog.json"), options: .atomic)
+        let catalog = WardrobeCatalog(items: updated, pendingDeletionIDs: pendingDeletions ?? pendingDeletionIDs)
+        try JSONEncoder().encode(catalog).write(to: directory.appendingPathComponent("catalog.json"), options: .atomic)
+    }
+
+    private func removeLocalFiles(for id: UUID) throws {
+        guard let directory else { throw CocoaError(.fileWriteUnknown) }
+        let folder = directory.appendingPathComponent(id.uuidString.lowercased(), isDirectory: true)
+        do { try FileManager.default.removeItem(at: folder) }
+        catch let error as CocoaError where error.code == .fileNoSuchFile { }
+    }
+
+    private func startDeletion(_ id: UUID) {
+        guard deletionTasks[id] == nil, pendingDeletionIDs.contains(id) else { return }
+        let generation = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.deliverDeletion(id)
+            if self.deletionTasks[id]?.generation == generation { self.deletionTasks[id] = nil }
+        }
+        deletionTasks[id] = (generation, task)
+    }
+
+    private func deliverDeletion(_ id: UUID) async {
+        var retrySeconds: UInt64 = 1
+        while observing && !Task.isCancelled && pendingDeletionIDs.contains(id) {
+            // Retry local cleanup even while offline; keep the intent if either side fails.
+            try? removeLocalFiles(for: id)
+            do {
+                try await BackendClient(settings: settings).deleteItem(id)
+                try Task.checkCancellation()
+                guard pendingDeletionIDs.contains(id) else { return }
+                try removeLocalFiles(for: id)
+                // Network awaits allow other additions, edits and deletions. Merge into
+                // current state; never save a catalog captured before the request.
+                var remaining = pendingDeletionIDs
+                remaining.remove(id)
+                try persist(items, pendingDeletions: remaining)
+                pendingDeletionIDs = remaining
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                do { try await Task.sleep(nanoseconds: retrySeconds * 1_000_000_000) }
+                catch { return }
+                retrySeconds = min(retrySeconds * 2, 10)
+            }
+        }
     }
 
     private func replace(_ item: WardrobeItem) throws {
@@ -206,6 +291,7 @@ final class WardrobeStore: ObservableObject {
             }
         }
         try Task.checkCancellation()
+        guard isCurrent(item) else { throw CancellationError() }
         if !item.uploadStarted {
             item.uploadStarted = true
             try replace(item)

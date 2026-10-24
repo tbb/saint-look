@@ -70,7 +70,7 @@ jobs:
     if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.ios == 'true'
     needs: changes
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:

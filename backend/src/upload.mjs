@@ -5,7 +5,7 @@ export class RequestError extends Error {
 }
 const maximumBody = 8 * 1024 * 1024;
 const maximumImage = 5 * 1024 * 1024;
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function readUpload(request) {
   if (!request.headers['content-type']?.toLowerCase().startsWith('application/json')) {

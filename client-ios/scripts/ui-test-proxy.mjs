@@ -11,6 +11,9 @@ const health = await fetch(new URL('/health', upstream), { signal: AbortSignal.t
 if (!health.ok || (await health.json()).mode !== 'demo') throw new Error('UI proxy requires a demo or controlled-provider backend.');
 let mode = 'online';
 const acceptedOperations = new Set();
+const deletedItems = new Set();
+let forwardedDeletes = 0;
+let droppedDeleteResponses = 0;
 let forwardedUploads = 0;
 let droppedUploadResponses = 0;
 const heldResults = new Map();
@@ -51,20 +54,23 @@ const server = createServer(async (request, response) => {
       if (request.headers.authorization !== `Bearer ${controlToken}`) return reply(response, 401, { error: 'unauthorized' });
       if (request.method === 'POST') {
         const input = JSON.parse((await readBody(request, 1024)).toString());
-        if (!['online', 'offline', 'drop-next-upload-response', 'hold-next-result'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
+        if (!['online', 'offline', 'drop-next-upload-response', 'drop-next-delete-response', 'hold-next-result'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
         mode = input.mode;
         if (mode !== 'hold-next-result' || input.reset) releaseResults();
-        if (input.reset) { acceptedOperations.clear(); forwardedUploads = 0; droppedUploadResponses = 0; }
+        if (input.reset) { acceptedOperations.clear(); forwardedUploads = 0; droppedUploadResponses = 0; deletedItems.clear(); forwardedDeletes = 0; droppedDeleteResponses = 0; }
       } else if (request.method !== 'GET') return reply(response, 405, { error: 'method_not_allowed' });
-      return reply(response, 200, { mode, acceptedOperations: acceptedOperations.size, forwardedUploads, droppedUploadResponses, heldResultResponses: heldResults.size });
+      return reply(response, 200, { mode, acceptedOperations: acceptedOperations.size, forwardedUploads, droppedUploadResponses, heldResultResponses: heldResults.size, deletedItems: deletedItems.size, forwardedDeletes, droppedDeleteResponses });
     }
     if (request.url !== '/health' && !request.url?.startsWith('/v1/items')) return reply(response, 404, { error: 'not_found' });
     if (mode === 'offline') { request.socket.destroy(); return; }
     const body = await readBody(request, 8 * 1024 * 1024);
     const isUpload = request.method === 'POST' && (request.url === '/v1/items' || /^\/v1\/items\/[^/]+\/attempts$/.test(request.url));
+    const isDelete = request.method === 'DELETE' && /^\/v1\/items\/[^/]+$/.test(request.url);
+    if (isDelete) forwardedDeletes++;
+    const shouldDropDelete = isDelete && mode === 'drop-next-delete-response';
     const shouldDrop = isUpload && mode === 'drop-next-upload-response';
     const shouldHold = request.method === 'GET' && /^\/v1\/items\/[^/]+(?:\/operations\/[^/]+)?\/result$/.test(request.url) && mode === 'hold-next-result';
-    if (shouldDrop || shouldHold) mode = 'online';
+    if (shouldDrop || shouldDropDelete || shouldHold) mode = 'online';
     if (isUpload) forwardedUploads++;
     const result = await fetch(new URL(request.url, upstream), {
       method: request.method,
@@ -73,7 +79,9 @@ const server = createServer(async (request, response) => {
       redirect: 'error', signal: AbortSignal.timeout(15000),
     });
     const data = Buffer.from(await result.arrayBuffer());
+    if (isDelete && result.status === 204) deletedItems.add(request.url);
     if (isUpload && result.ok) acceptedOperations.add(JSON.parse(data).operationId);
+    if (shouldDropDelete && result.status === 204) { droppedDeleteResponses++; request.socket.destroy(); return; }
     if (shouldDrop) { droppedUploadResponses++; request.socket.destroy(); return; }
     if (shouldHold && result.ok) await holdResult(response);
     if (response.destroyed) return;
