@@ -11,6 +11,7 @@ fi
 xcodebuild -version
 work_directory="$(mktemp -d)"
 recording_pid=''
+remote_manifest=''
 cleanup() {
   local test_status=$?
   trap - EXIT
@@ -27,6 +28,7 @@ cleanup() {
     fi
     wait "$recording_pid" 2>/dev/null || true
   fi
+  if [[ -n "$remote_manifest" ]]; then rm -f "$remote_manifest"; fi
   rm -rf "$work_directory"
   exit "$test_status"
 }
@@ -105,6 +107,40 @@ if [[ "${SAINT_LOOK_RECORD_VIDEO:-0}" == '1' ]]; then
 fi
 
 test_options=("${build_options[@]}")
+if [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" == '1' ]]; then
+  # Shell variables are not a portable way to configure a Simulator test host.
+  # Give XCTest an explicit manifest; never print or upload this secret-bearing file.
+  remote_manifest="$(pwd)/build/DerivedData/Build/Products/RemoteSmoke.xctestrun"
+  python3 - "$remote_manifest" <<'PYTHON'
+import os, plistlib, sys
+from pathlib import Path
+output = Path(sys.argv[1])
+inputs = [p for p in output.parent.glob('*.xctestrun') if p != output]
+if len(inputs) != 1:
+    raise SystemExit('Expected one generated XCTest manifest.')
+with inputs[0].open('rb') as source:
+    manifest = plistlib.load(source)
+if 'TestConfigurations' in manifest:
+    targets = [target for config in manifest['TestConfigurations'] for target in config['TestTargets']]
+else:
+    targets = [value for key, value in manifest.items() if not key.startswith('__') and isinstance(value, dict)]
+keys = ('SAINT_LOOK_REMOTE_SMOKE', 'SAINT_LOOK_REMOTE_URL', 'SAINT_LOOK_REMOTE_TOKEN',
+        'SAINT_LOOK_REMOTE_REVISION', 'SAINT_LOOK_REMOTE_DEPLOYMENT_ID')
+if any(not os.environ.get(key) for key in keys):
+    raise SystemExit('Remote smoke configuration is incomplete.')
+matched = 0
+for target in targets:
+    if target.get('BlueprintName') == 'SaintLookUITests' or 'SaintLookUITests' in target.get('TestBundlePath', ''):
+        target.setdefault('EnvironmentVariables', {}).update({key: os.environ[key] for key in keys})
+        matched += 1
+if not matched:
+    raise SystemExit('UI test target is missing from the XCTest manifest.')
+with output.open('wb') as destination:
+    os.chmod(output, 0o600)
+    plistlib.dump(manifest, destination)
+PYTHON
+  test_options=(-xctestrun "$remote_manifest" -destination "platform=iOS Simulator,id=$simulator_id" -parallel-testing-enabled NO)
+fi
 if [[ -n "${SAINT_LOOK_UI_TEST_ONLY:-}" ]]; then
   test_options+=("-only-testing:${SAINT_LOOK_UI_TEST_ONLY}")
 fi

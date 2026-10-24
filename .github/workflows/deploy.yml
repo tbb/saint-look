@@ -61,7 +61,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SELECTED_SHA: ${{ inputs.revision }}
         run: |
-          git fetch origin main
           node scripts/deploy/prepare-release.mjs "$SELECTED_SHA" "$RUNNER_TEMP/release" > "$RUNNER_TEMP/release-proof.json"
       - name: Install pinned Railway CLI
         run: |

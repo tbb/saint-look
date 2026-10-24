@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, access, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, access, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 
 const command = resolve('scripts/deploy/prepare-release.mjs');
 const jobs = ['changes', 'backend', 'ios', 'container', 'deploy-policy'];
-async function fixture(t, checked = false) {
+async function fixture(t, checked = false, prepare = async () => {}) {
   const directory = await mkdtemp(join(tmpdir(), 'saint-look-release-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', args, { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -16,6 +16,7 @@ async function fixture(t, checked = false) {
   await mkdir(join(directory, 'backend'));
   await writeFile(join(directory, 'backend/release.json'), JSON.stringify({ format: 1, dataVersion: 1, minDataVersion: 1, maxDataVersion: 1, profile: 'controlled-http' }));
   await writeFile(join(directory, 'backend/source.txt'), 'checked source\n');
+  await prepare(directory);
   git('add', '.'); git('commit', '-m', 'fixture');
   const sha = git('rev-parse', 'HEAD');
   git('update-ref', 'refs/remotes/origin/main', sha);
@@ -102,5 +103,20 @@ test('manual CI cannot substitute for the complete main push checks', async t =>
   const f = await fixture(t, true); f.state.event = 'workflow_dispatch';
   const result = await f.run();
   assert.equal(result.code, 1); assert.match(result.stderr, /No successful main CI/);
+  await assert.rejects(access(f.output));
+});
+
+
+test('a checked commit cannot smuggle files through a release symlink', async t => {
+  const f = await fixture(t, true, directory => symlink('/tmp', join(directory, 'outside')));
+  const result = await f.run();
+  assert.equal(result.code, 1); assert.match(result.stderr, /symlinks are not supported/);
+  await assert.rejects(access(f.output));
+});
+
+test('a checked historical release without the compatibility manifest cannot be rolled back', async t => {
+  const f = await fixture(t, true, directory => rm(join(directory, 'backend/release.json')));
+  const result = await f.run();
+  assert.equal(result.code, 1); assert.match(result.stderr, /no supported release manifest/);
   await assert.rejects(access(f.output));
 });
