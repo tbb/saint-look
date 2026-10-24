@@ -30,3 +30,12 @@ Thumbs.db
 
 # Local archive of removed agent tooling (may contain private context)
 /docs/archive/omx-local/
+
+# Local wardrobe data and Xcode build state
+.data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+DerivedData/
+*.xcresult/
+xcuserdata/
