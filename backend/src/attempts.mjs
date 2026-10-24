@@ -20,7 +20,7 @@ export function initializeAttempts(database) {
   }
 }
 
-export function acceptAttempt(database, input, provider, explicit = false) {
+export function acceptAttempt(database, input, provider, explicit = false, expiresAt) {
   // Upload decoding/normalization awaited before admission. Recheck here so a
   // DELETE that arrived during that await also wins over receipt replay.
   requireNotDeleted(database, input.itemId);
@@ -44,24 +44,24 @@ export function acceptAttempt(database, input, provider, explicit = false) {
     if (!explicit) throw new RequestError(409, 'identity_conflict');
     if (revision <= current.revision) throw new RequestError(409, 'stale_revision');
   }
-  const knownPhoto = database.prepare('SELECT 1 FROM operation_receipts WHERE item_id=? AND photo_version_id=?')
+  const knownPhoto = database.prepare('SELECT source_digest FROM operation_receipts WHERE item_id=? AND photo_version_id=?')
     .get(input.itemId, input.photoVersionId);
   // A retry keeps the client's local photo. Its preceding replacement may never
   // have reached admission (for example, a rejected owner token). Once known, a
   // photo version is immutable and a historical version cannot become current again.
   if (action === 'retry' && knownPhoto && (input.photoVersionId !== current?.photo_version_id
-    || !Buffer.from(current.source).equals(input.source))) throw new RequestError(409, 'identity_conflict');
+    || knownPhoto.source_digest !== sourceDigest)) throw new RequestError(409, 'identity_conflict');
   if (action === 'replace' && knownPhoto) throw new RequestError(409, 'identity_conflict');
   database.exec('BEGIN IMMEDIATE');
   try {
     database.prepare('INSERT INTO operation_receipts VALUES (?,?,?,?,?,?)')
       .run(input.operationId, input.itemId, input.photoVersionId, revision, action, sourceDigest);
-    database.prepare(`INSERT INTO items(item_id,operation_id,photo_version_id,status,source,mode,provider_id,revision)
-      VALUES (?,?,?,'pending',?,?,?,?) ON CONFLICT(item_id) DO UPDATE SET
+    database.prepare(`INSERT INTO items(item_id,operation_id,photo_version_id,status,source,mode,provider_id,revision,expires_at)
+      VALUES (?,?,?,'pending',?,?,?,?,?) ON CONFLICT(item_id) DO UPDATE SET
       operation_id=excluded.operation_id,photo_version_id=excluded.photo_version_id,status='pending',source=excluded.source,
-      mode=excluded.mode,provider_id=excluded.provider_id,revision=excluded.revision,result=NULL,type=NULL,colors=NULL,error=NULL,
+      mode=excluded.mode,provider_id=excluded.provider_id,revision=excluded.revision,expires_at=excluded.expires_at,retention_state='active',result=NULL,type=NULL,colors=NULL,error=NULL,
       attributes_state='pending',cutout_state='pending',attributes=NULL`)
-      .run(input.itemId, input.operationId, input.photoVersionId, input.source, provider.mode, provider.id, revision);
+      .run(input.itemId, input.operationId, input.photoVersionId, input.source, provider.mode, provider.id, revision, expiresAt);
     database.exec('COMMIT');
   } catch (error) { database.exec('ROLLBACK'); throw error; }
   return { status: 202, row: database.prepare('SELECT * FROM items WHERE item_id=?').get(input.itemId) };

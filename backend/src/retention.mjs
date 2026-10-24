@@ -1,13 +1,45 @@
+import { readFileSync } from 'node:fs';
 import { RequestError, uuid } from './upload.mjs';
 
-export function initializeRetention(database) {
+export function createRetention(database, env, provider) {
+  const now = clock(env, provider);
   const columns = database.prepare('PRAGMA table_info(items)').all();
   if (!columns.some(column => column.name === 'retention_state')) {
     database.exec("ALTER TABLE items ADD COLUMN retention_state TEXT NOT NULL DEFAULT 'active'");
   }
+  if (!columns.some(column => column.name === 'expires_at')) {
+    // Earlier versions recorded no upload time. Their unknown-age copies must
+    // expire instead of silently receiving another seven days on upgrade.
+    database.exec('ALTER TABLE items ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0');
+  }
+  database.exec('CREATE INDEX IF NOT EXISTS retention_deadlines ON items(retention_state, expires_at)');
+  function sweep() {
+    database.prepare(`UPDATE items SET retention_state='expired', status='failed', source=X'', result=NULL,
+      attributes=NULL, type=NULL, colors=NULL, attributes_state='cleared', cutout_state='cleared', error='result_expired'
+      WHERE retention_state='active' AND expires_at<=?`).run(now());
+  }
+  sweep();
+  const timer = setInterval(sweep, 1000);
+  return { sweep, deadline: () => now() + 7 * 24 * 60 * 60 * 1000, close() { clearInterval(timer); } };
 }
 
-export function clearAttempt(database, itemId, operationId, state) {
+function clock(env, provider) {
+  if (!env.SAINT_LOOK_TEST_CLOCK_FILE) return Date.now;
+  let origin;
+  try { origin = new URL(env.SAINT_LOOK_TEST_PROVIDER_ORIGIN); } catch { throw new Error('Invalid test clock configuration.'); }
+  if (env.NODE_ENV !== 'test' || provider.id !== 'live-test' || origin.protocol !== 'http:'
+    || !['127.0.0.1', '[::1]'].includes(origin.hostname) || origin.username || origin.password
+    || origin.search || origin.hash || origin.pathname !== '/') throw new Error('Invalid test clock configuration.');
+  return () => {
+    const { offsetMs } = JSON.parse(readFileSync(env.SAINT_LOOK_TEST_CLOCK_FILE, 'utf8'));
+    if (!Number.isSafeInteger(offsetMs) || offsetMs < 0 || offsetMs > 365 * 24 * 60 * 60 * 1000) {
+      throw new Error('Invalid test clock offset.');
+    }
+    return Date.now() + offsetMs;
+  };
+}
+
+function clearAttempt(database, itemId, operationId, state) {
   database.prepare(`UPDATE items SET retention_state=?, status='failed', source=X'', result=NULL,
     attributes=NULL, type=NULL, colors=NULL, attributes_state='cleared', cutout_state='cleared', error=?
     WHERE item_id=? AND operation_id=? AND retention_state='active'`)
