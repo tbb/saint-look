@@ -33,13 +33,15 @@ final class WardrobeFlowTests: XCTestCase {
         }
     }
 
-    private func control(mode: String, reset: Bool = false, timeout: TimeInterval = 5) async throws {
+    private func control(mode: String, reset: Bool = false, advanceTimeMs: Int? = nil, timeout: TimeInterval = 5) async throws {
         var request = URLRequest(url: URL(string: controlURL)!)
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
         request.setValue("Bearer \(controlToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["mode": mode, "reset": reset])
+        var payload: [String: Any] = ["mode": mode, "reset": reset]
+        if let advanceTimeMs { payload["advanceTimeMs"] = advanceTimeMs }
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         let (_, response) = try await URLSession.shared.data(for: request)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
     }
@@ -130,6 +132,46 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(offline.staticTexts["Синий"].exists)
         let finalState = try await transportState()
         XCTAssertEqual(finalState["forwardedUploads"] as? Int, 1)
+    }
+
+    @MainActor
+    func testExpiredUndeliveredResultKeepsOriginalAndRequiresExplicitRetryAfterRelaunch() async throws {
+        try await control(mode: "accept-upload-then-offline")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        var accepted = false
+        for _ in 0..<200 {
+            if (try await transportState())["acceptedOperations"] as? Int == 1 { accepted = true; break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(accepted, "The real backend must accept the photo before delivery is disconnected")
+        await waitForSummary(app, ready: 0, pending: 1, timeout: 5)
+        XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
+        app.terminate()
+
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 0, pending: 1, timeout: 5)
+        try await control(mode: "online", advanceTimeMs: 7 * 24 * 60 * 60 * 1000)
+        XCTAssertTrue(restored.staticTexts["failed-status"].firstMatch.waitForExistence(timeout: 30))
+        XCTAssertTrue(restored.staticTexts["item-error"].firstMatch.label.contains("истёк"))
+        XCTAssertTrue(restored.images["item-photo"].firstMatch.exists, "The local original must remain available after server expiry")
+        XCTAssertFalse(restored.staticTexts["ready-status"].exists)
+        let expired = try await transportState()
+        XCTAssertEqual(expired["forwardedUploads"] as? Int, 1, "Expiry must never automatically start another paid processing attempt")
+        let operationPath = try XCTUnwrap(expired["lastOperationPath"] as? String)
+        let result = try await backendResponse(path: operationPath + "/result")
+        XCTAssertEqual(result.status, 410)
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: result.data) as? [String: String])?["error"], "result_expired")
+
+        try tapVisibleButton("retry-processing", in: restored)
+        XCTAssertTrue(restored.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 40))
+        assertRecoveryDidNotOpenPhotoPicker(in: restored)
+        XCTAssertTrue(restored.images["item-photo"].firstMatch.exists)
+        let retried = try await transportState()
+        XCTAssertEqual(retried["acceptedOperations"] as? Int, 2)
+        XCTAssertEqual(retried["forwardedUploads"] as? Int, 2)
+        restored.swipeDown()
+        await waitForSummary(restored, ready: 1, pending: 0, timeout: 5)
     }
 
     private func backendResponse(path: String) async throws -> (status: Int, data: Data) {

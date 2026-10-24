@@ -20,9 +20,21 @@ struct BackendClient {
     private func send(_ request: URLRequest, expectedStatus: Int? = nil) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
+        if response.statusCode == 410 {
+            struct Failure: Decodable { let error: String }
+            if let failure = try? JSONDecoder().decode(Failure.self, from: data),
+               ["result_expired", "result_delivered"].contains(failure.error) {
+                throw ClientError.resultUnavailable(failure.error)
+            }
+        }
         guard (200..<300).contains(response.statusCode) else { throw ClientError.server(response.statusCode) }
         if let expectedStatus, response.statusCode != expectedStatus { throw ClientError.invalidResponse }
         return data
+    }
+
+    func acknowledge(_ acknowledgement: ResultAcknowledgement) async throws {
+        let path = "v1/items/\(acknowledgement.itemID.uuidString.lowercased())/operations/\(acknowledgement.operationID.uuidString.lowercased())/ack"
+        _ = try await send(request(path: path, method: "POST"), expectedStatus: 204)
     }
 
     func deleteItem(_ id: UUID) async throws {

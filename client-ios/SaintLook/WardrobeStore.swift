@@ -5,6 +5,8 @@ import UIKit
 private struct WardrobeCatalog: Codable {
     let items: [WardrobeItem]
     let pendingDeletionIDs: Set<UUID>
+    // Absent only in catalogs written before acknowledgement delivery existed.
+    let pendingAcknowledgements: Set<ResultAcknowledgement>?
 }
 
 @MainActor
@@ -19,6 +21,8 @@ final class WardrobeStore: ObservableObject {
     private var tasks: [UUID: (generation: UUID, task: Task<Void, Never>)] = [:]
     private var pendingDeletionIDs: Set<UUID> = []
     private var deletionTasks: [UUID: (generation: UUID, task: Task<Void, Never>)] = [:]
+    private var pendingAcknowledgements: Set<ResultAcknowledgement> = []
+    private var acknowledgementTasks: [ResultAcknowledgement: (generation: UUID, task: Task<Void, Never>)] = [:]
     private var modeTask: Task<Void, Never>?
     private var observing = false
 
@@ -38,14 +42,21 @@ final class WardrobeStore: ObservableObject {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             directory = root
             let catalog = root.appendingPathComponent("catalog.json")
+            var needsAcknowledgementMigration = false
             if FileManager.default.fileExists(atPath: catalog.path) {
                 let data = try Data(contentsOf: catalog)
                 if let legacyItems = try? JSONDecoder().decode([WardrobeItem].self, from: data) {
                     items = legacyItems
+                    needsAcknowledgementMigration = true
                 } else {
                     let saved = try JSONDecoder().decode(WardrobeCatalog.self, from: data)
                     items = saved.items
                     pendingDeletionIDs = saved.pendingDeletionIDs
+                    if let acknowledgements = saved.pendingAcknowledgements {
+                        pendingAcknowledgements = acknowledgements
+                    } else {
+                        needsAcknowledgementMigration = true
+                    }
                 }
             }
             storageAvailable = true
@@ -53,7 +64,19 @@ final class WardrobeStore: ObservableObject {
                 // Cleanup does not depend on valid credentials or a working connection.
                 try? removeLocalFiles(for: id)
             }
+            if needsAcknowledgementMigration {
+                let acknowledgements = Set(items.compactMap { item -> ResultAcknowledgement? in
+                    guard item.status == .ready, let filename = item.resultFilename,
+                          UIImage(contentsOfFile: root.appendingPathComponent(item.directoryName).appendingPathComponent(filename).path) != nil else { return nil }
+                    return ResultAcknowledgement(itemID: item.id, operationID: item.operationID)
+                })
+                // A legacy ready card is acknowledged only when its local image is usable,
+                // and only after the inferred delivery intent itself has been saved.
+                try persist(items, pendingAcknowledgements: acknowledgements)
+                pendingAcknowledgements = acknowledgements
+            }
         } catch {
+            storageAvailable = false
             notice = "Не удалось открыть локальный гардероб. Существующие данные сохранены."
         }
     }
@@ -101,9 +124,15 @@ final class WardrobeStore: ObservableObject {
         let updated = items.filter { $0.id != id }
         var deletions = pendingDeletionIDs
         deletions.insert(id)
+        let acknowledgements = Set(pendingAcknowledgements.filter { $0.itemID != id })
         do {
             // Hide only after both the removal and its delivery/cleanup intent are durable.
-            try persist(updated, pendingDeletions: deletions)
+            try persist(updated, pendingDeletions: deletions, pendingAcknowledgements: acknowledgements)
+            pendingAcknowledgements = acknowledgements
+            for acknowledgement in Array(acknowledgementTasks.keys) where acknowledgement.itemID == id {
+                acknowledgementTasks[acknowledgement]?.task.cancel()
+                acknowledgementTasks[acknowledgement] = nil
+            }
             pendingDeletionIDs = deletions
             items = updated
             tasks[id]?.task.cancel()
@@ -173,9 +202,11 @@ final class WardrobeStore: ObservableObject {
     }
 
     func resumePendingItems() {
+        guard storageAvailable else { return }
         observing = true
         discoverMode()
         for id in pendingDeletionIDs { startDeletion(id) }
+        for acknowledgement in pendingAcknowledgements { startAcknowledgement(acknowledgement) }
         for item in items where item.status == .pending { start(item.id) }
     }
 
@@ -185,6 +216,8 @@ final class WardrobeStore: ObservableObject {
         tasks.removeAll()
         for entry in deletionTasks.values { entry.task.cancel() }
         deletionTasks.removeAll()
+        for entry in acknowledgementTasks.values { entry.task.cancel() }
+        acknowledgementTasks.removeAll()
         modeTask?.cancel()
         modeTask = nil
     }
@@ -208,9 +241,11 @@ final class WardrobeStore: ObservableObject {
         }
     }
 
-    private func persist(_ updated: [WardrobeItem], pendingDeletions: Set<UUID>? = nil) throws {
+    private func persist(_ updated: [WardrobeItem], pendingDeletions: Set<UUID>? = nil,
+                         pendingAcknowledgements acknowledgements: Set<ResultAcknowledgement>? = nil) throws {
         guard let directory, storageAvailable else { throw CocoaError(.fileWriteUnknown) }
-        let catalog = WardrobeCatalog(items: updated, pendingDeletionIDs: pendingDeletions ?? pendingDeletionIDs)
+        let catalog = WardrobeCatalog(items: updated, pendingDeletionIDs: pendingDeletions ?? pendingDeletionIDs,
+                                      pendingAcknowledgements: acknowledgements ?? pendingAcknowledgements)
         try JSONEncoder().encode(catalog).write(to: directory.appendingPathComponent("catalog.json"), options: .atomic)
     }
 
@@ -258,7 +293,42 @@ final class WardrobeStore: ObservableObject {
         }
     }
 
-    private func replace(_ item: WardrobeItem) throws {
+    private func startAcknowledgement(_ acknowledgement: ResultAcknowledgement) {
+        guard acknowledgementTasks[acknowledgement] == nil, pendingAcknowledgements.contains(acknowledgement) else { return }
+        let generation = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.deliverAcknowledgement(acknowledgement)
+            if self.acknowledgementTasks[acknowledgement]?.generation == generation {
+                self.acknowledgementTasks[acknowledgement] = nil
+            }
+        }
+        acknowledgementTasks[acknowledgement] = (generation, task)
+    }
+
+    private func deliverAcknowledgement(_ acknowledgement: ResultAcknowledgement) async {
+        var retrySeconds: UInt64 = 1
+        while observing && !Task.isCancelled && pendingAcknowledgements.contains(acknowledgement) {
+            do {
+                try await BackendClient(settings: settings).acknowledge(acknowledgement)
+                try Task.checkCancellation()
+                guard pendingAcknowledgements.contains(acknowledgement) else { return }
+                var remaining = pendingAcknowledgements
+                remaining.remove(acknowledgement)
+                // Keep edits, replacements and other commands made during the request.
+                try persist(items, pendingAcknowledgements: remaining)
+                pendingAcknowledgements = remaining
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                do { try await Task.sleep(nanoseconds: retrySeconds * 1_000_000_000) }
+                catch { return }
+                retrySeconds = min(retrySeconds * 2, 10)
+            }
+        }
+    }
+
+    private func replace(_ item: WardrobeItem, acknowledgement: ResultAcknowledgement? = nil) throws {
         guard let index = items.firstIndex(where: { $0.id == item.id }),
               items[index].operationID == item.operationID else { throw CancellationError() }
         var updated = items
@@ -267,8 +337,12 @@ final class WardrobeStore: ObservableObject {
         // Processing updates never own manual values, including pending and failure updates.
         updated[index].manualType = items[index].manualType
         updated[index].manualColors = items[index].manualColors
-        try persist(updated)
+        var acknowledgements = pendingAcknowledgements
+        if let acknowledgement { acknowledgements.insert(acknowledgement) }
+        try persist(updated, pendingAcknowledgements: acknowledgements)
         items = updated
+        pendingAcknowledgements = acknowledgements
+        if let acknowledgement, observing { startAcknowledgement(acknowledgement) }
     }
 
     private func start(_ id: UUID) {
@@ -341,7 +415,7 @@ final class WardrobeStore: ObservableObject {
                     completed.status = .ready
                     completed.errorMessage = nil
                     completed.errorCode = nil
-                    try replace(completed)
+                    try replace(completed, acknowledgement: ResultAcknowledgement(itemID: item.id, operationID: item.operationID))
                     return
                 }
                 item.errorMessage = nil
@@ -360,6 +434,9 @@ final class WardrobeStore: ObservableObject {
                     retryable = error is URLError
                 }
                 if !retryable { item.status = .failed }
+                if let clientError = error as? ClientError, case .resultUnavailable(let code) = clientError {
+                    item.errorCode = code
+                }
                 item.errorMessage = retryable
                     ? "Связи с сервером пока нет. Фото сохранено; отправка продолжится автоматически."
                     : (error as? ClientError)?.localizedDescription ?? "Не удалось сохранить результат. Исходное фото сохранено."
