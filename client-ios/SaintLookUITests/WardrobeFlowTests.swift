@@ -113,6 +113,65 @@ final class WardrobeFlowTests: XCTestCase {
 
 
     @MainActor
+    func testManualTypeSurvivesAutomaticResultAndOfflineColorEditsPersistWithoutUploadingAgain() async throws {
+        try await control(mode: "offline")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        XCTAssertTrue(app.staticTexts["pending-status"].firstMatch.waitForExistence(timeout: 5))
+        app.swipeUp()
+        let edit = app.buttons["edit-item"].firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        edit.tap()
+        let type = app.textFields["edit-type"]
+        XCTAssertTrue(type.waitForExistence(timeout: 5))
+        type.tap()
+        type.typeText("Рубашка")
+        app.buttons["save-item-edits"].tap()
+        XCTAssertTrue(app.staticTexts["Рубашка"].waitForExistence(timeout: 5))
+        app.terminate()
+
+        let restored = launch(reset: false, baseURL: testURL)
+        restored.swipeUp()
+        XCTAssertTrue(restored.staticTexts["Рубашка"].waitForExistence(timeout: 5))
+        try await control(mode: "online")
+        XCTAssertTrue(restored.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 40))
+        XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
+        XCTAssertTrue(restored.staticTexts["Синий"].exists, "Editing type must leave colors available for the automatic result")
+        let before = try await transportState()
+        XCTAssertEqual(before["acceptedOperations"] as? Int, 1)
+        XCTAssertEqual(before["forwardedUploads"] as? Int, 1)
+
+        try await control(mode: "offline")
+        restored.buttons["edit-item"].firstMatch.tap()
+        let colors = restored.textFields["edit-colors"]
+        XCTAssertTrue(colors.waitForExistence(timeout: 5))
+        colors.tap()
+        colors.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Синий".count) + "Белый, Зелёный")
+        restored.buttons["save-item-edits"].tap()
+        XCTAssertTrue(restored.staticTexts["Белый, Зелёный"].waitForExistence(timeout: 5))
+        restored.terminate()
+
+        let offline = launch(reset: false, baseURL: testURL)
+        offline.swipeUp()
+        XCTAssertTrue(offline.staticTexts["Рубашка"].waitForExistence(timeout: 5))
+        XCTAssertTrue(offline.staticTexts["Белый, Зелёный"].exists)
+        XCTAssertTrue(offline.staticTexts["ready-status"].firstMatch.exists)
+        XCTAssertTrue(offline.images["item-photo"].firstMatch.exists)
+        try await control(mode: "online")
+        let after = try await transportState()
+        XCTAssertEqual(after["acceptedOperations"] as? Int, 1)
+        XCTAssertEqual(after["forwardedUploads"] as? Int, 1, "Local edits must not submit a new processing operation")
+    }
+
+    private func transportState() async throws -> [String: Any] {
+        var request = URLRequest(url: URL(string: controlURL)!)
+        request.setValue("Bearer \(controlToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    @MainActor
     func testLostUploadResponseReconcilesWithoutCreatingAnotherThing() async throws {
         try await control(mode: "drop-next-upload-response")
         let app = launch(reset: true, baseURL: testURL)
