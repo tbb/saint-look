@@ -24,6 +24,12 @@ struct BackendClient {
         return data
     }
 
+    func mode() async throws -> ProcessingMode {
+        struct Health: Decodable { let mode: ProcessingMode }
+        let data = try await send(request(path: "health"))
+        return try JSONDecoder().decode(Health.self, from: data).mode
+    }
+
     func submit(_ item: WardrobeItem, photo: Data) async throws -> ItemResponse {
         let body = try JSONSerialization.data(withJSONObject: [
             "itemId": item.id.uuidString.lowercased(),

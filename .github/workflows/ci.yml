@@ -83,19 +83,35 @@ jobs:
       - run: npm --prefix backend ci --ignore-scripts
       - name: Real Simulator and local backend (synthetic provider only)
         env:
+          NODE_ENV: test
           SAINT_LOOK_OWNER_TOKEN: saint-look-ui-tests-owner-token-00000001
           SAINT_LOOK_PROVIDER: demo
           SAINT_LOOK_DEMO_DELAY_MS: '2000'
           SAINT_LOOK_DATA_DIR: ${{ runner.temp }}/saint-look-backend
-          SAINT_LOOK_UI_TEST_URL: http://127.0.0.1:8787
+          SAINT_LOOK_UI_TEST_URL: http://127.0.0.1:8788
           SAINT_LOOK_UI_TEST_TOKEN: saint-look-ui-tests-owner-token-00000001
+          SAINT_LOOK_UI_TEST_CONTROL_URL: http://127.0.0.1:8788/__control
+          SAINT_LOOK_UI_TEST_CONTROL_TOKEN: saint-look-ui-control-test-token-00000001
         run: |
+          wait_for_health() {
+            local url="$1"
+            for attempt in {1..50}; do
+              if curl --max-time 1 --fail --silent "$url" > /dev/null; then return 0; fi
+              sleep 0.2
+            done
+            echo "Health check timed out: $url" >&2
+            return 1
+          }
+          cleanup() {
+            if [[ -n "$proxy_pid" ]]; then kill "$proxy_pid" 2>/dev/null || true; fi
+            kill "$backend_pid" 2>/dev/null || true
+          }
+          proxy_pid=''
           node backend/src/server.mjs > "$RUNNER_TEMP/backend.log" 2>&1 &
           backend_pid=$!
-          trap 'kill "$backend_pid" 2>/dev/null || true' EXIT
-          for attempt in {1..50}; do
-            if curl --fail --silent http://127.0.0.1:8787/health > /dev/null; then break; fi
-            sleep 0.2
-          done
-          curl --fail --silent http://127.0.0.1:8787/health
+          trap cleanup EXIT
+          wait_for_health http://127.0.0.1:8787/health
+          node client-ios/scripts/ui-test-proxy.mjs > "$RUNNER_TEMP/ui-proxy.log" 2>&1 &
+          proxy_pid=$!
+          wait_for_health http://127.0.0.1:8788/health
           bash client-ios/scripts/test-simulator.sh

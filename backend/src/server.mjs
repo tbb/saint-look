@@ -4,11 +4,12 @@ import { mkdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { readUpload, RequestError } from './upload.mjs';
-import { demoResult } from './demo-provider.mjs';
+import { createProviders } from './providers.mjs';
+import { initializeProcessing, createWorker } from './processing.mjs';
 
 const ownerToken = process.env.SAINT_LOOK_OWNER_TOKEN;
-if (!ownerToken || ownerToken.length < 32 || process.env.SAINT_LOOK_PROVIDER !== 'demo') {
-  console.error('Set an owner token of at least 32 characters and SAINT_LOOK_PROVIDER=demo.');
+if (!ownerToken || ownerToken.length < 32 || !['demo', 'live'].includes(process.env.SAINT_LOOK_PROVIDER)) {
+  console.error('Set an owner token of at least 32 characters and SAINT_LOOK_PROVIDER=demo|live.');
   process.exit(1);
 }
 const tokenDigest = createHash('sha256').update(`Bearer ${ownerToken}`).digest();
@@ -25,39 +26,23 @@ database.exec(`PRAGMA journal_mode = WAL;
     item_id TEXT PRIMARY KEY, operation_id TEXT UNIQUE NOT NULL, photo_version_id TEXT NOT NULL,
     status TEXT NOT NULL, source BLOB NOT NULL, result BLOB, type TEXT, colors TEXT, error TEXT
   )`);
-const delay = Number(process.env.SAINT_LOOK_DEMO_DELAY_MS || 1500);
-const scheduled = new Set();
-let closing = false;
+initializeProcessing(database);
+const provider = createProviders(process.env);
+const worker = createWorker(database, provider, process.env);
 
 function itemResponse(row) {
   return { itemId: row.item_id, operationId: row.operation_id, photoVersionId: row.photo_version_id,
-    status: row.status, mode: 'demo', type: row.type, colors: row.colors ? JSON.parse(row.colors) : [],
+    status: row.status, mode: row.mode, processing: { attributes: row.attributes_state, cutout: row.cutout_state }, type: row.type, colors: row.colors ? JSON.parse(row.colors) : [],
     resultPath: row.status === 'ready' ? `/v1/items/${row.item_id}/result` : null, error: row.error };
 }
 function send(response, status, body) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   response.end(JSON.stringify(body));
 }
-function schedule(itemId) {
-  const timer = setTimeout(async () => {
-    scheduled.delete(timer);
-    try {
-      if (process.env.SAINT_LOOK_DEMO_OUTCOME === 'fail') throw new Error('Controlled demo failure');
-      const result = await demoResult();
-      if (closing) return;
-      database.prepare("UPDATE items SET status='ready', result=?, type=?, colors=? WHERE item_id=?")
-        .run(result.image, result.type, JSON.stringify(result.colors), itemId);
-    } catch {
-      if (closing) return;
-      database.prepare("UPDATE items SET status='failed', error='processing_failed' WHERE item_id=?").run(itemId);
-    }
-  }, delay);
-  scheduled.add(timer);
-}
 const server = createServer(async (request, response) => {
   try {
     const path = new URL(request.url, 'http://localhost').pathname;
-    if (request.method === 'GET' && path === '/health') return send(response, 200, { status: 'ok', mode: 'demo' });
+    if (request.method === 'GET' && path === '/health') return send(response, 200, { status: 'ok', mode: provider.mode });
     if (!authorized(request)) return send(response, 401, { error: 'unauthorized' });
     if (request.method === 'POST' && path === '/v1/items') {
       const input = await readUpload(request);
@@ -70,9 +55,9 @@ const server = createServer(async (request, response) => {
         }
         return send(response, 409, { error: 'identity_conflict' });
       }
-      database.prepare('INSERT INTO items(item_id,operation_id,photo_version_id,status,source) VALUES (?,?,?,?,?)')
-        .run(input.itemId, input.operationId, input.photoVersionId, 'pending', input.source);
-      schedule(input.itemId);
+      database.prepare('INSERT INTO items(item_id,operation_id,photo_version_id,status,source,mode,provider_id) VALUES (?,?,?,?,?,?,?)')
+        .run(input.itemId, input.operationId, input.photoVersionId, 'pending', input.source, provider.mode, provider.id);
+      worker.schedule(input.itemId);
       return send(response, 202, itemResponse(database.prepare('SELECT * FROM items WHERE item_id=?').get(input.itemId)));
     }
     const route = path.match(/^\/v1\/items\/([^/]+)(\/result)?$/);
@@ -92,11 +77,10 @@ const server = createServer(async (request, response) => {
   }
 });
 server.listen(Number(process.env.PORT || 8787), process.env.HOST || '127.0.0.1', () => {
-  console.log(JSON.stringify({ url: `http://127.0.0.1:${server.address().port}`, mode: 'demo' }));
+  console.log(JSON.stringify({ url: `http://127.0.0.1:${server.address().port}`, mode: provider.mode }));
 });
 process.on('SIGTERM', () => {
-  closing = true;
-  for (const timer of scheduled) clearTimeout(timer);
+  worker.close();
   server.close(() => { database.close(); process.exit(0); });
   server.closeIdleConnections();
 });
