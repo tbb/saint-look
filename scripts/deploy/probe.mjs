@@ -1,6 +1,6 @@
 // Public HTTPS probe. Tokens stay in the environment and never follow redirects.
-import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { randomUUID, createHash } from 'node:crypto';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 const env = process.env;
 function origin() {
   const url = new URL(env.SAINT_LOOK_DEV_URL);
@@ -13,6 +13,10 @@ function origin() {
 }
 const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 try {
+  const mode = process.argv[2] || 'smoke';
+  const stateFile = process.argv[3];
+  if (!['smoke', 'seed', 'verify', 'cleanup'].includes(mode) || (mode !== 'smoke' && !stateFile)) throw new Error('Use smoke, seed FILE, verify FILE or cleanup FILE.');
+  if (mode === 'seed' && existsSync(stateFile)) throw new Error('Canary state file already exists.');
   const base = origin();
   const revision = env.SAINT_LOOK_EXPECTED_REVISION;
   const deploymentId = env.SAINT_LOOK_EXPECTED_DEPLOYMENT_ID;
@@ -47,6 +51,30 @@ try {
     }
     return { status: response.status, data: Buffer.concat(chunks) };
   }
+  const json = data => {
+    try { return JSON.parse(data); } catch { throw new Error('Invalid JSON response.'); }
+  };
+  const digest = data => createHash('sha256').update(data).digest('hex');
+  if (mode === 'verify' || mode === 'cleanup') {
+    const state = json(readFileSync(stateFile));
+    const uuid = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+    if (state.format !== 1 || state.status !== 'ready' || !['itemId', 'operationId', 'photoVersionId'].every(key => uuid.test(state[key] || ''))
+      || !/^[a-f0-9]{64}$/.test(state.resultSha256 || '')) throw new Error('Invalid synthetic canary state.');
+    const path = `/v1/items/${state.itemId}/operations/${state.operationId}`;
+    if (mode === 'cleanup') {
+      if ((await api(`/v1/items/${state.itemId}`, 'DELETE')).status !== 204) throw new Error('Canary cleanup failed.');
+    } else {
+      const reply = await api(path);
+      const current = json(reply.data);
+      if (reply.status !== 200 || current.status !== 'ready' || current.mode !== 'demo'
+        || !['itemId', 'operationId', 'photoVersionId'].every(key => state[key] === current[key])) throw new Error('Canary operation did not survive.');
+      const result = await api(path + '/result');
+      if (result.status !== 200 || digest(result.data) !== state.resultSha256) throw new Error('Canary result did not survive.');
+    }
+    console.log(JSON.stringify({ revision, deploymentId, continuity: mode === 'verify' ? 'passed' : 'cleaned', observedStatus: state.status }));
+    process.exit(0);
+  }
+  let retainCanary = false;
   const item = { itemId: randomUUID(), operationId: randomUUID(), photoVersionId: randomUUID(),
     imageBase64: readFileSync(new URL('./synthetic.png', import.meta.url)).toString('base64') };
   const path = `/v1/items/${item.itemId}/operations/${item.operationId}`;
@@ -55,7 +83,7 @@ try {
     if (![200, 202].includes(reply.status)) throw new Error('Synthetic upload failed.');
     const until = Date.now() + (env.NODE_ENV === 'test' ? 1000 : 120000);
     while (true) {
-      const state = JSON.parse(reply.data);
+      const state = json(reply.data);
       if (state.itemId !== item.itemId || state.operationId !== item.operationId || state.photoVersionId !== item.photoVersionId || state.mode !== 'demo') {
         throw new Error('Unexpected processing identity or provider mode.');
       }
@@ -70,13 +98,20 @@ try {
     }
     const result = await api(path + '/result');
     if (result.status !== 200 || !result.data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) throw new Error('Synthetic PNG was not delivered.');
+    if (mode === 'seed') {
+      writeFileSync(stateFile, JSON.stringify({ format: 1, itemId: item.itemId, operationId: item.operationId,
+        photoVersionId: item.photoVersionId, status: 'ready', resultSha256: digest(result.data),
+        seedRevision: revision, seedDeploymentId: deploymentId }) + '\n', { flag: 'wx', mode: 0o600 });
+      retainCanary = true;
+    } else {
     if ((await api(path + '/ack', 'POST')).status !== 204) throw new Error('Synthetic result acknowledgement failed.');
     const cleared = await api(path + '/result');
-    if (cleared.status !== 410 || JSON.parse(cleared.data).error !== 'result_delivered') throw new Error('Acknowledged result was not cleared.');
+    if (cleared.status !== 410 || json(cleared.data).error !== 'result_delivered') throw new Error('Acknowledged result was not cleared.');
+    }
   } finally {
-    if ((await api(`/v1/items/${item.itemId}`, 'DELETE')).status !== 204) throw new Error('Synthetic thing cleanup failed.');
+    if (!retainCanary && (await api(`/v1/items/${item.itemId}`, 'DELETE')).status !== 204) throw new Error('Synthetic thing cleanup failed.');
   }
-  console.log(JSON.stringify({ revision, deploymentId, ready: true, smoke: 'passed' }));
+  console.log(JSON.stringify({ revision, deploymentId, ready: true, ...(mode === 'seed' ? { continuity: 'seeded', observedStatus: 'ready' } : { smoke: 'passed' }) }));
 } catch (error) {
   console.error(error instanceof Error ? error.message : 'Deployment probe failed.');
   process.exitCode = 1;
