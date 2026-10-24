@@ -172,6 +172,9 @@ private struct ItemRecoveryActions: View {
                 if importing { ProgressView("Сохраняем фото…") }
             }
         }
+        // These controls share one List row. Automatic row buttons can trigger each other,
+        // including presenting PhotosPicker when the user taps retry or the debug photo.
+        .buttonStyle(.borderless)
         .disabled(importing || !store.storageAvailable)
         .onChange(of: item.operationID) { _, _ in showingOptions = false }
         .onChange(of: selectedPhoto) { _, photo in
