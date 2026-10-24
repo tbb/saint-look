@@ -12,6 +12,8 @@ struct WardrobeItem: Codable, Identifiable {
     var uploadStarted = false
     var type: String?
     var colors: [String] = []
+    var manualType: String?
+    var manualColors: [String]?
     var errorMessage: String?
     var mode: ProcessingMode?
 
@@ -22,7 +24,7 @@ struct WardrobeItem: Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, operationID, photoVersionID, status, uploadStarted, type, colors, errorMessage, mode
+        case id, operationID, photoVersionID, status, uploadStarted, type, colors, errorMessage, mode, manualType, manualColors
     }
 
     init(from decoder: Decoder) throws {
@@ -34,12 +36,16 @@ struct WardrobeItem: Codable, Identifiable {
         uploadStarted = try values.decodeIfPresent(Bool.self, forKey: .uploadStarted) ?? false
         type = try values.decodeIfPresent(String.self, forKey: .type)
         colors = try values.decodeIfPresent([String].self, forKey: .colors) ?? []
+        manualType = try values.decodeIfPresent(String.self, forKey: .manualType)
+        manualColors = try values.decodeIfPresent([String].self, forKey: .manualColors)
         errorMessage = try values.decodeIfPresent(String.self, forKey: .errorMessage)
         // Ready cards written by the first demo-only version had no mode field.
         mode = try values.decodeIfPresent(ProcessingMode.self, forKey: .mode)
             ?? (status == .ready ? .demo : nil)
     }
 
+    var displayedType: String? { manualType ?? type }
+    var displayedColors: [String] { manualColors ?? colors }
     var directoryName: String { id.uuidString.lowercased() }
 }
 
