@@ -104,4 +104,8 @@ if [[ "${SAINT_LOOK_RECORD_VIDEO:-0}" == '1' ]]; then
   echo "Recording Simulator UI tests to $video_path"
 fi
 
-xcodebuild "${build_options[@]}" -resultBundlePath "$result_path" test-without-building
+test_options=("${build_options[@]}")
+if [[ -n "${SAINT_LOOK_UI_TEST_ONLY:-}" ]]; then
+  test_options+=("-only-testing:${SAINT_LOOK_UI_TEST_ONLY}")
+fi
+xcodebuild "${test_options[@]}" -resultBundlePath "$result_path" test-without-building
