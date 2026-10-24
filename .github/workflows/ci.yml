@@ -86,7 +86,6 @@ jobs:
           NODE_ENV: test
           SAINT_LOOK_TEST_CLOCK_FILE: ${{ runner.temp }}/saint-look-clock.json
           SAINT_LOOK_RECORD_VIDEO: '1'
-          SAINT_LOOK_UI_TEST_ONLY: SaintLookUITests/WardrobeFlowTests/testSavedResultAcknowledgementSurvivesRelaunchAndLostResponseWithoutLosingLocalCard
           SAINT_LOOK_OWNER_TOKEN: saint-look-ui-tests-owner-token-00000001
           SAINT_LOOK_PROVIDER: live
           SAINT_LOOK_TEST_PROVIDER_ORIGIN: http://127.0.0.1:8789
