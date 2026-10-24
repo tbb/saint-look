@@ -52,7 +52,7 @@ export async function readUpload(request) {
     // No keepMetadata/withMetadata: pixels are oriented, metadata is discarded.
     const source = await decoder.rotate().png().toBuffer();
     return { itemId: input.itemId.toLowerCase(), operationId: input.operationId.toLowerCase(),
-      photoVersionId: input.photoVersionId.toLowerCase(), source };
+      photoVersionId: input.photoVersionId.toLowerCase(), source, revision: input.revision, action: input.action };
   } catch {
     throw new RequestError(400, 'invalid_image');
   }
