@@ -210,6 +210,46 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testExplicitRetryKeepsOneThingAndPreviousCutoutWithManualValuesAcrossRelaunch() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        app.swipeUp()
+        app.buttons["edit-item"].firstMatch.tap()
+        await enterText("Shirt", replacing: "Футболка", in: app.textFields["edit-type"], app: app)
+        await enterText("Red", replacing: "Синий", in: app.textFields["edit-colors"], app: app)
+        app.buttons["save-item-edits"].tap()
+        XCTAssertTrue(app.staticTexts["Shirt"].waitForExistence(timeout: 5))
+
+        try await control(mode: "offline")
+        let problem = app.buttons["cutout-problem"].firstMatch
+        XCTAssertTrue(problem.waitForExistence(timeout: 5))
+        problem.tap()
+        app.buttons["retry-processing"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["pending-status"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["previous-result-notice"].exists)
+        XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Shirt"].exists)
+        XCTAssertTrue(app.staticTexts["Red"].exists)
+        app.terminate()
+
+        let restored = launch(reset: false, baseURL: testURL)
+        restored.swipeUp()
+        XCTAssertTrue(restored.staticTexts["previous-result-notice"].waitForExistence(timeout: 5))
+        XCTAssertTrue(restored.images["item-photo"].firstMatch.exists)
+        try await control(mode: "online")
+        XCTAssertTrue(restored.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 40))
+        XCTAssertTrue(restored.staticTexts["Shirt"].exists)
+        XCTAssertTrue(restored.staticTexts["Red"].exists)
+        XCTAssertFalse(restored.staticTexts["previous-result-notice"].exists)
+        let state = try await transportState()
+        XCTAssertEqual(state["acceptedOperations"] as? Int, 2)
+        XCTAssertEqual(state["forwardedUploads"] as? Int, 2)
+        restored.swipeDown()
+        await waitForSummary(restored, ready: 1, pending: 0, timeout: 5)
+    }
+
+    @MainActor
     private func enterText(_ text: String, replacing previous: String, in field: XCUIElement, app: XCUIApplication) async {
         field.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
