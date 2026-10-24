@@ -19,7 +19,7 @@ struct ItemResponse: Decodable {
     let itemId: UUID
     let operationId: UUID
     let photoVersionId: UUID
-    let status: String
+    let status: WardrobeItem.Status
     let mode: String
     let type: String?
     let colors: [String]
@@ -28,8 +28,7 @@ struct ItemResponse: Decodable {
 
     func validate(for item: WardrobeItem) throws {
         guard itemId == item.id, operationId == item.operationID,
-              photoVersionId == item.photoVersionID, mode == "demo",
-              ["pending", "ready", "failed"].contains(status) else {
+              photoVersionId == item.photoVersionID, mode == "demo" else {
             throw ClientError.invalidResponse
         }
     }
