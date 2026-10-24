@@ -17,11 +17,16 @@ struct BackendClient {
         return request
     }
 
-    private func send(_ request: URLRequest) async throws -> Data {
+    private func send(_ request: URLRequest, expectedStatus: Int? = nil) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
         guard (200..<300).contains(response.statusCode) else { throw ClientError.server(response.statusCode) }
+        if let expectedStatus, response.statusCode != expectedStatus { throw ClientError.invalidResponse }
         return data
+    }
+
+    func deleteItem(_ id: UUID) async throws {
+        _ = try await send(request(path: "v1/items/\(id.uuidString.lowercased())", method: "DELETE"), expectedStatus: 204)
     }
 
     func mode() async throws -> ProcessingMode {

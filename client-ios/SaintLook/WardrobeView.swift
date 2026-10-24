@@ -60,6 +60,10 @@ struct WardrobeView: View {
                             .accessibilityIdentifier("edit-item")
                             .disabled(!store.storageAvailable)
                         ItemRecoveryActions(store: store, item: item)
+                        Button("Удалить вещь", role: .destructive) { store.deleteItem(item.id) }
+                            .buttonStyle(.borderless)
+                            .accessibilityIdentifier("delete-item")
+                            .disabled(!store.storageAvailable)
                     }
                 }
             }
