@@ -8,6 +8,7 @@ import { createProviders } from './providers.mjs';
 import { initializeProcessing, createWorker } from './processing.mjs';
 import { initializeAttempts, acceptAttempt, readAttempt } from './attempts.mjs';
 import { initializeDeletion, deleteItem } from './deletion.mjs';
+import { initializeRetention, acknowledge } from './retention.mjs';
 
 const ownerToken = process.env.SAINT_LOOK_OWNER_TOKEN;
 if (!ownerToken || ownerToken.length < 32 || !['demo', 'live'].includes(process.env.SAINT_LOOK_PROVIDER)) {
@@ -31,6 +32,7 @@ database.exec(`PRAGMA journal_mode = WAL;
 initializeDeletion(database);
 initializeProcessing(database);
 initializeAttempts(database);
+initializeRetention(database);
 const provider = createProviders(process.env);
 const worker = createWorker(database, provider, process.env);
 
@@ -48,6 +50,12 @@ const server = createServer(async (request, response) => {
     const path = new URL(request.url, 'http://localhost').pathname;
     if (request.method === 'GET' && path === '/health') return send(response, 200, { status: 'ok', mode: provider.mode });
     if (!authorized(request)) return send(response, 401, { error: 'unauthorized' });
+    const acknowledgement = path.match(/^\/v1\/items\/([^/]+)\/operations\/([^/]+)\/ack$/);
+    if (request.method === 'POST' && acknowledgement) {
+      acknowledge(database, acknowledgement[1].toLowerCase(), acknowledgement[2].toLowerCase());
+      response.writeHead(204, { 'Cache-Control': 'no-store' });
+      return response.end();
+    }
     const deletion = path.match(/^\/v1\/items\/([^/]+)$/);
     if (request.method === 'DELETE' && deletion) {
       deleteItem(database, deletion[1].toLowerCase());
@@ -66,6 +74,7 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && route) {
       const row = readAttempt(database, route[1].toLowerCase(), route[2]?.toLowerCase());
       if (!route[3]) return send(response, 200, itemResponse(row));
+      if (row.retention_state !== 'active') return send(response, 410, { error: row.error });
       if (row.status !== 'ready') return send(response, 409, { error: 'not_ready' });
       response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
       return response.end(Buffer.from(row.result));
