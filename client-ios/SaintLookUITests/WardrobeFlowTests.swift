@@ -32,11 +32,12 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
     }
 
-    private func waitForSummary(_ app: XCUIApplication, ready: Int, pending: Int, timeout: TimeInterval = 40) {
+    @MainActor
+    private func waitForSummary(_ app: XCUIApplication, ready: Int, pending: Int, timeout: TimeInterval = 40) async {
         let summary = app.staticTexts["wardrobe-summary"]
         let expected = "Всего: \(ready + pending). Готово: \(ready). Ожидают: \(pending)."
         let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", expected), object: summary)
-        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: timeout), .completed)
+        await fulfillment(of: [expectation], timeout: timeout)
     }
 
     private func launch(reset: Bool, baseURL: String) -> XCUIApplication {
@@ -84,31 +85,33 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertFalse(relaunched.staticTexts["ready-status"].exists)
     }
 
+    @MainActor
     func testMultipleOfflinePhotosSurviveRelaunchAndAutomaticallyResumeInForeground() async throws {
         try await control(mode: "offline")
         let app = launch(reset: true, baseURL: testURL)
         app.buttons["add-demo-photo"].tap()
         app.buttons["add-demo-photo"].tap()
-        waitForSummary(app, ready: 0, pending: 2, timeout: 5)
+        await waitForSummary(app, ready: 0, pending: 2, timeout: 5)
         app.terminate()
 
         let restored = launch(reset: false, baseURL: testURL)
-        waitForSummary(restored, ready: 0, pending: 2, timeout: 5)
+        await waitForSummary(restored, ready: 0, pending: 2, timeout: 5)
         try await control(mode: "online")
         // No app restart, settings change, or manual retry after connectivity returns.
-        waitForSummary(restored, ready: 2, pending: 0)
+        await waitForSummary(restored, ready: 2, pending: 0)
         try await control(mode: "offline")
         restored.terminate()
         let offline = launch(reset: false, baseURL: testURL)
-        waitForSummary(offline, ready: 2, pending: 0, timeout: 5)
+        await waitForSummary(offline, ready: 2, pending: 0, timeout: 5)
     }
 
 
+    @MainActor
     func testLostUploadResponseReconcilesWithoutCreatingAnotherThing() async throws {
         try await control(mode: "drop-next-upload-response")
         let app = launch(reset: true, baseURL: testURL)
         app.buttons["add-demo-photo"].tap()
-        waitForSummary(app, ready: 1, pending: 0)
+        await waitForSummary(app, ready: 1, pending: 0)
 
         var request = URLRequest(url: URL(string: controlURL)!)
         request.setValue("Bearer \(controlToken)", forHTTPHeaderField: "Authorization")
