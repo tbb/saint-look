@@ -61,9 +61,9 @@ const server = createServer(async (request, response) => {
     if (request.url !== '/health' && !request.url?.startsWith('/v1/items')) return reply(response, 404, { error: 'not_found' });
     if (mode === 'offline') { request.socket.destroy(); return; }
     const body = await readBody(request, 8 * 1024 * 1024);
-    const isUpload = request.method === 'POST' && request.url === '/v1/items';
+    const isUpload = request.method === 'POST' && (request.url === '/v1/items' || /^\/v1\/items\/[^/]+\/attempts$/.test(request.url));
     const shouldDrop = isUpload && mode === 'drop-next-upload-response';
-    const shouldHold = request.method === 'GET' && /^\/v1\/items\/[^/]+\/result$/.test(request.url) && mode === 'hold-next-result';
+    const shouldHold = request.method === 'GET' && /^\/v1\/items\/[^/]+(?:\/operations\/[^/]+)?\/result$/.test(request.url) && mode === 'hold-next-result';
     if (shouldDrop || shouldHold) mode = 'online';
     if (isUpload) forwardedUploads++;
     const result = await fetch(new URL(request.url, upstream), {
