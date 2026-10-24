@@ -23,6 +23,7 @@ final class WardrobeFlowTests: XCTestCase {
     func testPhotoBecomesReadyThroughBackendAndSurvivesOfflineRelaunch() throws {
         let app = launch(reset: true, baseURL: testURL)
         XCTAssertTrue(app.staticTexts["demo-notice"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Подключить локальный backend"].exists, "UI test credentials must load independently of Keychain state")
         app.buttons["add-demo-photo"].tap()
         XCTAssertTrue(app.images["item-photo"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["pending-status"].firstMatch.waitForExistence(timeout: 5))

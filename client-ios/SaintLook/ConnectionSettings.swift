@@ -6,18 +6,21 @@ struct ConnectionSettings {
     var token: String
 
     static func load() throws -> Self {
-        var settings = Self(
-            baseURL: UserDefaults.standard.string(forKey: "backendURL") ?? "http://127.0.0.1:8787",
-            token: try OwnerToken.read()
-        )
         #if DEBUG
         let environment = ProcessInfo.processInfo.environment
         if environment["SAINT_LOOK_UI_TESTING"] == "1" {
-            settings.baseURL = environment["SAINT_LOOK_BASE_URL"] ?? settings.baseURL
-            settings.token = environment["SAINT_LOOK_OWNER_TOKEN"] ?? settings.token
+            guard let baseURL = environment["SAINT_LOOK_BASE_URL"],
+                  let token = environment["SAINT_LOOK_OWNER_TOKEN"] else {
+                throw ClientError.invalidSettings
+            }
+            // UI tests supply isolated credentials; no existing Keychain state is required.
+            return Self(baseURL: baseURL, token: token)
         }
         #endif
-        return settings
+        return Self(
+            baseURL: UserDefaults.standard.string(forKey: "backendURL") ?? "http://127.0.0.1:8787",
+            token: try OwnerToken.read()
+        )
     }
 
     func validatedURL() throws -> URL {
