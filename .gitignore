@@ -39,3 +39,6 @@ Thumbs.db
 DerivedData/
 *.xcresult/
 xcuserdata/
+
+# Generated immutable deployment identity
+/backend/REVISION

@@ -18,10 +18,10 @@
 
 Project token задаётся через `RAILWAY_TOKEN` и ограничен одним project/environment. Account/workspace token использует `RAILWAY_API_TOKEN`; он не нужен в deploy job. `up` загружает локальные файлы; `--path-as-root` делает выбранную папку корнем архива. Поэтому checkout SHA должен предшествовать upload. [Railway: deploying](https://docs.railway.com/cli/deploying).
 
-Контракт команды для заранее созданного сервиса, из корня checkout:
+Контракт команды для заранее созданного сервиса: `RELEASE_DIRECTORY` — изолированный `git archive` проверенного коммита с добавленным `backend/REVISION`, корневым `railway.json` и `backend/Dockerfile`. `--no-gitignore` применяется только к этому чистому архиву, чтобы включить сгенерированную версию; рабочий каталог с локальными файлами загружать так нельзя.
 
 ```bash
-railway up backend --path-as-root \
+railway up "$RELEASE_DIRECTORY" --path-as-root --no-gitignore \
   --project "$RAILWAY_PROJECT_ID" \
   --environment "$RAILWAY_ENVIRONMENT_ID" \
   --service "$RAILWAY_SERVICE_ID" \
