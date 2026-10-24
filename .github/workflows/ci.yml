@@ -19,8 +19,9 @@ concurrency:
 jobs:
   changes:
     # This condition is intentionally present on EVERY job, before runner allocation.
-    # Set only after verifying included quota and a $0 paid-overage hard stop.
-    if: vars.ACTIONS_BUDGET_VERIFIED == 'true'
+    # Standard hosted runners are free for public repositories.
+    # Private repositories still require verified quota and a $0 paid-overage hard stop.
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 3
     outputs:
@@ -48,7 +49,7 @@ jobs:
           PY
 
   backend:
-    if: vars.ACTIONS_BUDGET_VERIFIED == 'true' && needs.changes.outputs.backend == 'true'
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.backend == 'true'
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -66,7 +67,7 @@ jobs:
       - run: npm --prefix backend test
 
   ios:
-    if: vars.ACTIONS_BUDGET_VERIFIED == 'true' && needs.changes.outputs.ios == 'true'
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.ios == 'true'
     needs: changes
     runs-on: macos-26
     timeout-minutes: 20
