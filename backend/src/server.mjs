@@ -9,6 +9,7 @@ import { initializeProcessing, createWorker } from './processing.mjs';
 import { initializeAttempts, acceptAttempt, readAttempt } from './attempts.mjs';
 import { initializeDeletion, deleteItem } from './deletion.mjs';
 import { createRetention, acknowledge } from './retention.mjs';
+import { initializeDataVersion } from './data-version.mjs';
 
 const ownerToken = process.env.SAINT_LOOK_OWNER_TOKEN;
 if (!ownerToken || ownerToken.length < 32 || !['demo', 'live'].includes(process.env.SAINT_LOOK_PROVIDER)) {
@@ -24,6 +25,7 @@ process.umask(0o077);
 const directory = resolve(process.env.SAINT_LOOK_DATA_DIR || '.data');
 mkdirSync(directory, { recursive: true });
 const database = new DatabaseSync(join(directory, 'wardrobe.sqlite'));
+initializeDataVersion(database);
 database.exec(`PRAGMA journal_mode = WAL;
   CREATE TABLE IF NOT EXISTS items (
     item_id TEXT PRIMARY KEY, operation_id TEXT UNIQUE NOT NULL, photo_version_id TEXT NOT NULL,
