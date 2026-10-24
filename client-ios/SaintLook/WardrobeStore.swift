@@ -156,6 +156,12 @@ final class WardrobeStore: ObservableObject {
             guard !Task.isCancelled else { return }
             item.errorMessage = (error as? ClientError)?.localizedDescription
                 ?? "Не удалось связаться с backend. Фото сохранено на устройстве."
+            #if DEBUG
+            if ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1" {
+                let diagnostic = error as NSError
+                item.errorMessage = (item.errorMessage ?? "") + " [DEBUG-ingestion: \(diagnostic.domain) \(diagnostic.code)]"
+            }
+            #endif
             do { try replace(item) }
             catch { notice = "Не удалось сохранить состояние карточки. Исходное фото сохранено." }
         }

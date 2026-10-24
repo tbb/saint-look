@@ -26,7 +26,9 @@ final class WardrobeFlowTests: XCTestCase {
         app.buttons["add-demo-photo"].tap()
         XCTAssertTrue(app.images["item-photo"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["pending-status"].firstMatch.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 30))
+        let ready = app.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 30)
+        let error = app.staticTexts["item-error"].firstMatch
+        XCTAssertTrue(ready, error.exists ? error.label : "Ready card did not appear; no item error is shown")
         XCTAssertTrue(app.staticTexts["Футболка"].exists)
         XCTAssertTrue(app.staticTexts["Синий"].exists)
         app.terminate()
