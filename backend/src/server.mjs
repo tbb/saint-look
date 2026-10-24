@@ -7,6 +7,7 @@ import { readUpload, RequestError } from './upload.mjs';
 import { createProviders } from './providers.mjs';
 import { initializeProcessing, createWorker } from './processing.mjs';
 import { initializeAttempts, acceptAttempt, readAttempt } from './attempts.mjs';
+import { initializeDeletion, deleteItem } from './deletion.mjs';
 
 const ownerToken = process.env.SAINT_LOOK_OWNER_TOKEN;
 if (!ownerToken || ownerToken.length < 32 || !['demo', 'live'].includes(process.env.SAINT_LOOK_PROVIDER)) {
@@ -27,6 +28,7 @@ database.exec(`PRAGMA journal_mode = WAL;
     item_id TEXT PRIMARY KEY, operation_id TEXT UNIQUE NOT NULL, photo_version_id TEXT NOT NULL,
     status TEXT NOT NULL, source BLOB NOT NULL, result BLOB, type TEXT, colors TEXT, error TEXT
   )`);
+initializeDeletion(database);
 initializeProcessing(database);
 initializeAttempts(database);
 const provider = createProviders(process.env);
@@ -46,6 +48,12 @@ const server = createServer(async (request, response) => {
     const path = new URL(request.url, 'http://localhost').pathname;
     if (request.method === 'GET' && path === '/health') return send(response, 200, { status: 'ok', mode: provider.mode });
     if (!authorized(request)) return send(response, 401, { error: 'unauthorized' });
+    const deletion = path.match(/^\/v1\/items\/([^/]+)$/);
+    if (request.method === 'DELETE' && deletion) {
+      deleteItem(database, deletion[1].toLowerCase());
+      response.writeHead(204, { 'Cache-Control': 'no-store' });
+      return response.end();
+    }
     const newAttempt = path.match(/^\/v1\/items\/([^/]+)\/attempts$/);
     if (request.method === 'POST' && (path === '/v1/items' || newAttempt)) {
       const input = await readUpload(request);

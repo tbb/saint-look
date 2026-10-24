@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { RequestError } from './upload.mjs';
+import { requireNotDeleted } from './deletion.mjs';
 
 function digest(source) { return createHash('sha256').update(source).digest('hex'); }
 
@@ -20,6 +21,9 @@ export function initializeAttempts(database) {
 }
 
 export function acceptAttempt(database, input, provider, explicit = false) {
+  // Upload decoding/normalization awaited before admission. Recheck here so a
+  // DELETE that arrived during that await also wins over receipt replay.
+  requireNotDeleted(database, input.itemId);
   const revision = explicit ? input.revision : 0;
   const action = explicit ? input.action : 'create';
   if (explicit && (!Number.isSafeInteger(revision) || revision < 1 || !['retry', 'replace'].includes(action))) {
@@ -64,6 +68,7 @@ export function acceptAttempt(database, input, provider, explicit = false) {
 }
 
 export function readAttempt(database, itemId, operationId) {
+  requireNotDeleted(database, itemId);
   const row = database.prepare('SELECT * FROM items WHERE item_id=?').get(itemId);
   if (row && (!operationId || row.operation_id === operationId)) return row;
   if (operationId && database.prepare('SELECT 1 FROM operation_receipts WHERE item_id=? AND operation_id=?').get(itemId, operationId)) {
