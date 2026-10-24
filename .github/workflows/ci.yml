@@ -84,6 +84,7 @@ jobs:
       - name: Real Simulator and local backend (synthetic provider only)
         env:
           NODE_ENV: test
+          SAINT_LOOK_RECORD_VIDEO: '1'
           SAINT_LOOK_OWNER_TOKEN: saint-look-ui-tests-owner-token-00000001
           SAINT_LOOK_PROVIDER: demo
           SAINT_LOOK_DEMO_DELAY_MS: '2000'
@@ -115,3 +116,12 @@ jobs:
           proxy_pid=$!
           wait_for_health http://127.0.0.1:8788/health
           bash client-ios/scripts/test-simulator.sh
+      - name: Upload Simulator screencast
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-ui-video
+          path: client-ios/build/videos/*.mp4
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 0
