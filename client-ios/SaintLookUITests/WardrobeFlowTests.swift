@@ -237,6 +237,7 @@ final class WardrobeFlowTests: XCTestCase {
         try tapVisibleButton("cutout-problem", in: app)
         try tapVisibleButton("retry-processing", in: app)
         XCTAssertTrue(app.staticTexts["pending-status"].firstMatch.waitForExistence(timeout: 5))
+        assertRecoveryDidNotOpenPhotoPicker(in: app)
         XCTAssertTrue(app.staticTexts["previous-result-notice"].exists)
         XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
         XCTAssertTrue(app.staticTexts["Shirt"].exists)
@@ -270,6 +271,7 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["item-error"].firstMatch.label.contains("Лимит"))
         try tapVisibleButton("retry-processing", in: app)
         XCTAssertTrue(app.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 30))
+        assertRecoveryDidNotOpenPhotoPicker(in: app)
         let retried = try await providerControl()
         XCTAssertEqual(retried["attributesCalls"] as? Int, 2)
         XCTAssertEqual(retried["cutoutCalls"] as? Int, 2)
@@ -278,11 +280,13 @@ final class WardrobeFlowTests: XCTestCase {
         try tapVisibleButton("cutout-problem", in: app)
         try tapVisibleButton("replace-demo-photo", in: app)
         XCTAssertTrue(app.staticTexts["failed-status"].firstMatch.waitForExistence(timeout: 30))
+        assertRecoveryDidNotOpenPhotoPicker(in: app)
         XCTAssertTrue(app.staticTexts["replace-photo-hint"].exists)
         XCTAssertTrue(app.staticTexts["previous-result-notice"].exists)
         XCTAssertFalse(app.buttons["retry-processing"].exists)
         try tapVisibleButton("replace-demo-photo", in: app)
         XCTAssertTrue(app.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 30))
+        assertRecoveryDidNotOpenPhotoPicker(in: app)
         XCTAssertFalse(app.staticTexts["previous-result-notice"].exists)
         let state = try await transportState()
         XCTAssertEqual(state["acceptedOperations"] as? Int, 4)
@@ -307,11 +311,13 @@ final class WardrobeFlowTests: XCTestCase {
         try tapVisibleButton("cutout-problem", in: app)
         try tapVisibleButton("replace-demo-photo", in: app)
         XCTAssertTrue(app.staticTexts["pending-status"].firstMatch.waitForExistence(timeout: 5))
+        assertRecoveryDidNotOpenPhotoPicker(in: app)
         XCTAssertTrue(app.staticTexts["previous-result-notice"].exists)
         XCTAssertTrue(app.images["item-photo"].firstMatch.screenshot().pngRepresentation == previousImage,
                        "The previous cutout must remain visible instead of the red replacement source")
         // Replace again before either new photo reaches the server; the persisted revision may skip one.
         try tapVisibleButton("replace-demo-photo", in: app)
+        assertRecoveryDidNotOpenPhotoPicker(in: app)
         XCTAssertTrue(app.staticTexts["previous-result-notice"].exists)
         app.terminate()
 
@@ -359,6 +365,15 @@ final class WardrobeFlowTests: XCTestCase {
         let (data, response) = try await URLSession.shared.data(for: request)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    @MainActor
+    private func assertRecoveryDidNotOpenPhotoPicker(in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        // Accessibility still exposes the underlying card while a system picker covers it.
+        // The wardrobe toolbar must remain directly tappable after retry/debug replacement.
+        XCTAssertTrue(app.navigationBars.buttons["Настройки"].firstMatch.isHittable,
+                      "Recovery must leave the wardrobe interactive, without opening PhotosPicker",
+                      file: file, line: line)
     }
 
     private enum InteractionError: Error { case buttonNotVisible(String) }
