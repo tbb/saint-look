@@ -18,7 +18,7 @@ export async function environment(t) {
     await rm(directory, { recursive: true, force: true });
   });
   return {
-    token,
+    token, directory,
     async launch(extra = {}) {
       const process = spawn(globalThis.process.execPath, ['src/server.mjs'], {
         cwd: new URL('..', import.meta.url),

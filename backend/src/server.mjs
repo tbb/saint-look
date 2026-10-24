@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readUpload, RequestError } from './upload.mjs';
 import { createProviders } from './providers.mjs';
 import { initializeProcessing, createWorker } from './processing.mjs';
+import { initializeAttempts, acceptAttempt, readAttempt } from './attempts.mjs';
 
 const ownerToken = process.env.SAINT_LOOK_OWNER_TOKEN;
 if (!ownerToken || ownerToken.length < 32 || !['demo', 'live'].includes(process.env.SAINT_LOOK_PROVIDER)) {
@@ -27,13 +28,14 @@ database.exec(`PRAGMA journal_mode = WAL;
     status TEXT NOT NULL, source BLOB NOT NULL, result BLOB, type TEXT, colors TEXT, error TEXT
   )`);
 initializeProcessing(database);
+initializeAttempts(database);
 const provider = createProviders(process.env);
 const worker = createWorker(database, provider, process.env);
 
 function itemResponse(row) {
   return { itemId: row.item_id, operationId: row.operation_id, photoVersionId: row.photo_version_id,
-    status: row.status, mode: row.mode, processing: { attributes: row.attributes_state, cutout: row.cutout_state }, type: row.type, colors: row.colors ? JSON.parse(row.colors) : [],
-    resultPath: row.status === 'ready' ? `/v1/items/${row.item_id}/result` : null, error: row.error };
+    status: row.status, mode: row.mode, revision: row.revision, processing: { attributes: row.attributes_state, cutout: row.cutout_state }, type: row.type, colors: row.colors ? JSON.parse(row.colors) : [],
+    resultPath: row.status === 'ready' ? `/v1/items/${row.item_id}/operations/${row.operation_id}/result` : null, error: row.error };
 }
 function send(response, status, body) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -44,27 +46,18 @@ const server = createServer(async (request, response) => {
     const path = new URL(request.url, 'http://localhost').pathname;
     if (request.method === 'GET' && path === '/health') return send(response, 200, { status: 'ok', mode: provider.mode });
     if (!authorized(request)) return send(response, 401, { error: 'unauthorized' });
-    if (request.method === 'POST' && path === '/v1/items') {
+    const newAttempt = path.match(/^\/v1\/items\/([^/]+)\/attempts$/);
+    if (request.method === 'POST' && (path === '/v1/items' || newAttempt)) {
       const input = await readUpload(request);
-      const existing = database.prepare('SELECT * FROM items WHERE item_id=? OR operation_id=?').all(input.itemId, input.operationId);
-      if (existing.length) {
-        const row = existing[0];
-        if (existing.length === 1 && row.item_id === input.itemId && row.operation_id === input.operationId
-          && row.photo_version_id === input.photoVersionId && Buffer.from(row.source).equals(input.source)) {
-          return send(response, 200, itemResponse(row));
-        }
-        return send(response, 409, { error: 'identity_conflict' });
-      }
-      database.prepare('INSERT INTO items(item_id,operation_id,photo_version_id,status,source,mode,provider_id) VALUES (?,?,?,?,?,?,?)')
-        .run(input.itemId, input.operationId, input.photoVersionId, 'pending', input.source, provider.mode, provider.id);
-      worker.schedule(input.itemId);
-      return send(response, 202, itemResponse(database.prepare('SELECT * FROM items WHERE item_id=?').get(input.itemId)));
+      if (newAttempt && newAttempt[1].toLowerCase() !== input.itemId) throw new RequestError(409, 'identity_conflict');
+      const accepted = acceptAttempt(database, input, provider, Boolean(newAttempt));
+      if (accepted.status === 202) worker.schedule(input.itemId, input.operationId);
+      return send(response, accepted.status, itemResponse(accepted.row));
     }
-    const route = path.match(/^\/v1\/items\/([^/]+)(\/result)?$/);
+    const route = path.match(/^\/v1\/items\/([^/]+)(?:\/operations\/([^/]+))?(\/result)?$/);
     if (request.method === 'GET' && route) {
-      const row = database.prepare('SELECT * FROM items WHERE item_id=?').get(route[1].toLowerCase());
-      if (!row) return send(response, 404, { error: 'not_found' });
-      if (!route[2]) return send(response, 200, itemResponse(row));
+      const row = readAttempt(database, route[1].toLowerCase(), route[2]?.toLowerCase());
+      if (!route[3]) return send(response, 200, itemResponse(row));
       if (row.status !== 'ready') return send(response, 409, { error: 'not_ready' });
       response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
       return response.end(Buffer.from(row.result));
