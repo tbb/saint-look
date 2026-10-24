@@ -17,8 +17,10 @@ final class WardrobeFlowTests: XCTestCase {
         try await control(mode: "online", reset: true)
     }
 
-    override func tearDownWithError() throws {
-        XCUIApplication().terminate()
+    override func tearDown() async throws {
+        await MainActor.run {
+            XCUIApplication().terminate()
+        }
     }
 
     private func control(mode: String, reset: Bool = false) async throws {
