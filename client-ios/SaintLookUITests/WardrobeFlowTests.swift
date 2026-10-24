@@ -125,17 +125,17 @@ final class WardrobeFlowTests: XCTestCase {
         let type = app.textFields["edit-type"]
         XCTAssertTrue(type.waitForExistence(timeout: 5))
         type.tap()
-        type.typeText("Рубашка")
+        type.typeText("Shirt")
         app.buttons["save-item-edits"].tap()
-        XCTAssertTrue(app.staticTexts["Рубашка"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Shirt"].waitForExistence(timeout: 5))
         app.terminate()
 
         let restored = launch(reset: false, baseURL: testURL)
         restored.swipeUp()
-        XCTAssertTrue(restored.staticTexts["Рубашка"].waitForExistence(timeout: 5))
+        XCTAssertTrue(restored.staticTexts["Shirt"].waitForExistence(timeout: 5))
         try await control(mode: "online")
         XCTAssertTrue(restored.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 40))
-        XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
+        XCTAssertTrue(restored.staticTexts["Shirt"].exists)
         XCTAssertTrue(restored.staticTexts["Синий"].exists, "Editing type must leave colors available for the automatic result")
         let before = try await transportState()
         XCTAssertEqual(before["acceptedOperations"] as? Int, 1)
@@ -146,21 +146,71 @@ final class WardrobeFlowTests: XCTestCase {
         let colors = restored.textFields["edit-colors"]
         XCTAssertTrue(colors.waitForExistence(timeout: 5))
         colors.tap()
-        colors.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Синий".count) + "Белый, Зелёный")
+        colors.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Синий".count) + "White, Green")
         restored.buttons["save-item-edits"].tap()
-        XCTAssertTrue(restored.staticTexts["Белый, Зелёный"].waitForExistence(timeout: 5))
+        XCTAssertTrue(restored.staticTexts["White, Green"].waitForExistence(timeout: 5))
         restored.terminate()
 
         let offline = launch(reset: false, baseURL: testURL)
         offline.swipeUp()
-        XCTAssertTrue(offline.staticTexts["Рубашка"].waitForExistence(timeout: 5))
-        XCTAssertTrue(offline.staticTexts["Белый, Зелёный"].exists)
+        XCTAssertTrue(offline.staticTexts["Shirt"].waitForExistence(timeout: 5))
+        XCTAssertTrue(offline.staticTexts["White, Green"].exists)
         XCTAssertTrue(offline.staticTexts["ready-status"].firstMatch.exists)
         XCTAssertTrue(offline.images["item-photo"].firstMatch.exists)
         try await control(mode: "online")
         let after = try await transportState()
         XCTAssertEqual(after["acceptedOperations"] as? Int, 1)
         XCTAssertEqual(after["forwardedUploads"] as? Int, 1, "Local edits must not submit a new processing operation")
+    }
+
+    @MainActor
+    func testManualColorsWinOverInFlightResultAndReadyEditsDoNotSubmitAgain() async throws {
+        try await control(mode: "offline")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        app.swipeUp()
+        app.buttons["edit-item"].firstMatch.tap()
+        let colors = app.textFields["edit-colors"]
+        XCTAssertTrue(colors.waitForExistence(timeout: 3))
+        colors.tap()
+        colors.typeText("Red")
+        // Prepare input before starting delivery, but save only while the result is in flight.
+        try await control(mode: "hold-next-result")
+        var held = false
+        for _ in 0..<400 {
+            let state = try await transportState()
+            if state["heldResultResponses"] as? Int == 1 {
+                held = true
+                break
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(held, "The result response must be in flight before saving the edit")
+        app.buttons["save-item-edits"].tap()
+        let waiting = try await transportState()
+        XCTAssertEqual(waiting["heldResultResponses"] as? Int, 1, "The response must remain held until the manual edit is saved")
+        try await control(mode: "online")
+        XCTAssertTrue(app.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Red"].exists)
+        XCTAssertTrue(app.staticTexts["Футболка"].exists, "A colors-only edit must retain the automatic type")
+
+        app.buttons["edit-item"].firstMatch.tap()
+        let type = app.textFields["edit-type"]
+        XCTAssertTrue(type.waitForExistence(timeout: 3))
+        type.tap()
+        type.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Футболка".count) + "Shirt")
+        app.buttons["save-item-edits"].tap()
+        XCTAssertTrue(app.staticTexts["Shirt"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Red"].exists)
+        app.terminate()
+        let restored = launch(reset: false, baseURL: testURL)
+        restored.swipeUp()
+        XCTAssertTrue(restored.staticTexts["Shirt"].waitForExistence(timeout: 5))
+        XCTAssertTrue(restored.staticTexts["Red"].exists)
+        XCTAssertTrue(restored.staticTexts["ready-status"].firstMatch.exists)
+        let state = try await transportState()
+        XCTAssertEqual(state["acceptedOperations"] as? Int, 1)
+        XCTAssertEqual(state["forwardedUploads"] as? Int, 1, "Online edits and relaunch must not create another processing request")
     }
 
     private func transportState() async throws -> [String: Any] {

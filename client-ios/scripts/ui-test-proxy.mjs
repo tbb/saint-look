@@ -13,6 +13,24 @@ let mode = 'online';
 const acceptedOperations = new Set();
 let forwardedUploads = 0;
 let droppedUploadResponses = 0;
+const heldResults = new Map();
+function releaseResults() {
+  for (const release of heldResults.values()) release();
+}
+async function holdResult(response) {
+  await new Promise(resolve => {
+    const release = () => {
+      clearTimeout(timer);
+      response.off('close', release);
+      heldResults.delete(response);
+      resolve();
+    };
+    const timer = setTimeout(release, 12000);
+    timer.unref();
+    heldResults.set(response, release);
+    response.once('close', release);
+  });
+}
 function reply(response, status, body) {
   response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   response.end(JSON.stringify(body));
@@ -33,18 +51,20 @@ const server = createServer(async (request, response) => {
       if (request.headers.authorization !== `Bearer ${controlToken}`) return reply(response, 401, { error: 'unauthorized' });
       if (request.method === 'POST') {
         const input = JSON.parse((await readBody(request, 1024)).toString());
-        if (!['online', 'offline', 'drop-next-upload-response'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
+        if (!['online', 'offline', 'drop-next-upload-response', 'hold-next-result'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
         mode = input.mode;
+        if (mode !== 'hold-next-result' || input.reset) releaseResults();
         if (input.reset) { acceptedOperations.clear(); forwardedUploads = 0; droppedUploadResponses = 0; }
       } else if (request.method !== 'GET') return reply(response, 405, { error: 'method_not_allowed' });
-      return reply(response, 200, { mode, acceptedOperations: acceptedOperations.size, forwardedUploads, droppedUploadResponses });
+      return reply(response, 200, { mode, acceptedOperations: acceptedOperations.size, forwardedUploads, droppedUploadResponses, heldResultResponses: heldResults.size });
     }
     if (request.url !== '/health' && !request.url?.startsWith('/v1/items')) return reply(response, 404, { error: 'not_found' });
     if (mode === 'offline') { request.socket.destroy(); return; }
     const body = await readBody(request, 8 * 1024 * 1024);
     const isUpload = request.method === 'POST' && request.url === '/v1/items';
     const shouldDrop = isUpload && mode === 'drop-next-upload-response';
-    if (shouldDrop) mode = 'online';
+    const shouldHold = request.method === 'GET' && /^\/v1\/items\/[^/]+\/result$/.test(request.url) && mode === 'hold-next-result';
+    if (shouldDrop || shouldHold) mode = 'online';
     if (isUpload) forwardedUploads++;
     const result = await fetch(new URL(request.url, upstream), {
       method: request.method,
@@ -55,6 +75,8 @@ const server = createServer(async (request, response) => {
     const data = Buffer.from(await result.arrayBuffer());
     if (isUpload && result.ok) acceptedOperations.add(JSON.parse(data).operationId);
     if (shouldDrop) { droppedUploadResponses++; request.socket.destroy(); return; }
+    if (shouldHold && result.ok) await holdResult(response);
+    if (response.destroyed) return;
     response.writeHead(result.status, { 'Content-Type': result.headers.get('content-type') || 'application/json', 'Cache-Control': 'no-store' });
     response.end(data);
   } catch {
@@ -64,4 +86,4 @@ const server = createServer(async (request, response) => {
 server.listen(Number(process.env.SAINT_LOOK_UI_PROXY_PORT || 8788), '127.0.0.1', () => {
   console.log(JSON.stringify({ url: `http://127.0.0.1:${server.address().port}` }));
 });
-process.on('SIGTERM', () => { server.close(); server.closeAllConnections(); });
+process.on('SIGTERM', () => { releaseResults(); server.close(); server.closeAllConnections(); });
