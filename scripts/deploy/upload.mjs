@@ -13,12 +13,14 @@ try {
   const release = resolve(process.argv[2]);
   const revision = readFileSync(join(release, 'backend/REVISION'), 'utf8').trim();
   if (!/^[a-f0-9]{40}$/.test(revision) || !lstatSync(join(release, 'railway.json')).isFile()) throw new Error('Verified release is incomplete.');
+  const cliEnvironment = { ...env };
+  delete cliEnvironment.RAILWAY_API_TOKEN;
   let result;
   try {
     result = JSON.parse(execFileSync('railway', ['up', release, '--path-as-root', '--no-gitignore',
       '--project', env.RAILWAY_PROJECT_ID, '--environment', env.RAILWAY_ENVIRONMENT_ID,
       '--service', env.RAILWAY_SERVICE_ID, '--detach', '--json', '--message', revision,
-    ], { encoding: 'utf8', timeout: 300000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }));
+    ], { env: cliEnvironment, encoding: 'utf8', timeout: 300000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }));
   } catch { throw new Error('Railway upload did not return a deployment ID. Check Railway before attempting another upload.'); }
   if (!uuid.test(result.deploymentId || '')) throw new Error('Railway returned an invalid deployment ID.');
   console.log(JSON.stringify({ revision, deploymentId: result.deploymentId }));
