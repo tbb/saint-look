@@ -8,6 +8,7 @@ struct WardrobeView: View {
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showSettings = false
     @State private var importing = false
+    @State private var editingItem: WardrobeItem?
 
     var body: some View {
         NavigationStack {
@@ -55,6 +56,9 @@ struct WardrobeView: View {
                 ForEach(store.items) { item in
                     Section {
                         ItemCard(item: item, image: store.displayImage(for: item))
+                        Button("Изменить тип и цвета") { editingItem = item }
+                            .accessibilityIdentifier("edit-item")
+                            .disabled(!store.storageAvailable)
                     }
                 }
             }
@@ -65,6 +69,7 @@ struct WardrobeView: View {
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView(store: store) }
+            .sheet(item: $editingItem) { item in ItemEditView(store: store, item: item) }
             .onChange(of: selectedPhoto) { _, photo in
                 guard let photo else { return }
                 importing = true
@@ -107,19 +112,88 @@ private struct ItemCard: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("ready-status")
-                Text(item.type ?? "Вещь").font(.headline)
-                Text(item.colors.joined(separator: ", "))
             case .failed:
                 Text("Не удалось обработать")
                     .foregroundStyle(.red)
                     .accessibilityIdentifier("failed-status")
             }
+            if let type = item.displayedType { Text(type).font(.headline) }
+            if !item.displayedColors.isEmpty { Text(item.displayedColors.joined(separator: ", ")) }
             if let error = item.errorMessage {
                 Text(error).font(.footnote).foregroundStyle(.secondary)
                     .accessibilityIdentifier("item-error")
             }
         }
         .padding(.vertical, 6)
+    }
+}
+
+@MainActor
+private struct ItemEditView: View {
+    @ObservedObject var store: WardrobeStore
+    let item: WardrobeItem
+    @Environment(\.dismiss) private var dismiss
+    @State private var type: String
+    @State private var colors: String
+    @State private var error: String?
+
+    init(store: WardrobeStore, item: WardrobeItem) {
+        self.store = store
+        self.item = item
+        _type = State(initialValue: item.displayedType ?? "")
+        _colors = State(initialValue: item.displayedColors.joined(separator: ", "))
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Тип вещи", text: $type)
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("edit-type")
+                    TextField("Цвета через запятую", text: $colors)
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("edit-colors")
+                } footer: {
+                    Text("Правки сохраняются на устройстве без интернета. Повторная обработка фото не нужна.")
+                }
+                if let error { Text(error).foregroundStyle(.red) }
+            }
+            .navigationTitle("Тип и цвета")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Сохранить") { save() }
+                        .accessibilityIdentifier("save-item-edits")
+                }
+            }
+        }
+    }
+
+    private func save() {
+        let editedType = type.trimmingCharacters(in: .whitespacesAndNewlines)
+        let editedColors = colors.split(separator: ",").map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
+        // An untouched field must remain automatic, even if a result arrived with the editor open.
+        let changedType = type != (item.displayedType ?? "")
+        let changedColors = colors != item.displayedColors.joined(separator: ", ")
+        guard !changedType || !editedType.isEmpty else {
+            error = "Укажите тип вещи или отмените изменение."
+            return
+        }
+        guard !changedColors || !editedColors.isEmpty else {
+            error = "Укажите хотя бы один цвет или отмените изменение."
+            return
+        }
+        do {
+            try store.saveEdits(for: item.id, type: changedType ? editedType : nil, colors: changedColors ? editedColors : nil)
+            dismiss()
+        } catch {
+            self.error = "Не удалось сохранить правки на устройстве. Попробуйте ещё раз."
+        }
     }
 }
 

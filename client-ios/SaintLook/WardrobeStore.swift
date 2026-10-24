@@ -69,6 +69,15 @@ final class WardrobeStore: ObservableObject {
         }
     }
 
+    func saveEdits(for id: UUID, type: String?, colors: [String]?) throws {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        var updated = items
+        if let type { updated[index].manualType = type }
+        if let colors { updated[index].manualColors = colors }
+        try persist(updated)
+        items = updated
+    }
+
     func displayImage(for item: WardrobeItem) -> UIImage? {
         guard let directory else { return nil }
         let filename = item.status == .ready ? "result.png" : "upload.png"
@@ -118,6 +127,10 @@ final class WardrobeStore: ObservableObject {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         var updated = items
         updated[index] = item
+        // A response may have awaited the network while this thing was edited locally.
+        // Processing updates never own manual values, including pending and failure updates.
+        updated[index].manualType = items[index].manualType
+        updated[index].manualColors = items[index].manualColors
         try persist(updated)
         items = updated
     }
