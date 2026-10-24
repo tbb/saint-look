@@ -1,0 +1,130 @@
+name: Deploy checked Railway dev release
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: 'Full 40-character SHA with successful main CI'
+        required: true
+        type: string
+      operation:
+        description: 'Both actions keep the current volume; rollback changes code only'
+        required: true
+        default: deploy
+        type: choice
+        options: [deploy, rollback]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: railway-dev-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main' && vars.RAILWAY_BUDGET_VERIFIED == 'true' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      revision: ${{ steps.upload.outputs.revision }}
+      deployment_id: ${{ steps.upload.outputs.deployment_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Verify deployment configuration
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          OWNER_TOKEN: ${{ secrets.SAINT_LOOK_DEV_OWNER_TOKEN }}
+          DEV_URL: ${{ vars.SAINT_LOOK_DEV_URL }}
+          PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+        run: |
+          node - <<'JS'
+          const e = process.env;
+          const uuid = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+          if (!e.RAILWAY_TOKEN || (e.OWNER_TOKEN || '').length < 32) throw new Error('Configure Railway and owner secrets first.');
+          for (const name of ['PROJECT_ID', 'ENVIRONMENT_ID', 'SERVICE_ID']) if (!uuid.test(e[name] || '')) throw new Error('Configure all Railway target IDs first.');
+          const u = new URL(e.DEV_URL);
+          if (u.protocol !== 'https:' || u.username || u.password || u.pathname !== '/' || u.search || u.hash) throw new Error('Configure an HTTPS dev origin.');
+          JS
+      - name: Verify exact main CI and prepare source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SELECTED_SHA: ${{ inputs.revision }}
+        run: |
+          git fetch origin main
+          node scripts/deploy/prepare-release.mjs "$SELECTED_SHA" "$RUNNER_TEMP/release" > "$RUNNER_TEMP/release-proof.json"
+      - name: Install pinned Railway CLI
+        run: |
+          npm install --global @railway/cli@5.71.0
+          railway --version
+      - name: Upload checked release
+        id: upload
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+        run: |
+          node scripts/deploy/upload.mjs "$RUNNER_TEMP/release" > "$RUNNER_TEMP/deployment.json"
+          node - <<'JS'
+          const fs = require('node:fs');
+          const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/deployment.json', 'utf8'));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `revision=${d.revision}\ndeployment_id=${d.deploymentId}\n`);
+          JS
+      - name: Verify selected deployment and public API
+        env:
+          SAINT_LOOK_DEV_URL: ${{ vars.SAINT_LOOK_DEV_URL }}
+          SAINT_LOOK_DEV_OWNER_TOKEN: ${{ secrets.SAINT_LOOK_DEV_OWNER_TOKEN }}
+          SAINT_LOOK_EXPECTED_REVISION: ${{ steps.upload.outputs.revision }}
+          SAINT_LOOK_EXPECTED_DEPLOYMENT_ID: ${{ steps.upload.outputs.deployment_id }}
+        run: node scripts/deploy/probe.mjs
+      - name: Record deployment identity
+        env:
+          REVISION: ${{ steps.upload.outputs.revision }}
+          DEPLOYMENT_ID: ${{ steps.upload.outputs.deployment_id }}
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          node - <<'JS'
+          const fs = require('node:fs');
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Operation: ${process.env.OPERATION}\n\nRevision: ${process.env.REVISION}\n\nRailway deployment: ${process.env.DEPLOYMENT_ID}\n\nPublic API smoke passed. Code rollback does not restore data. Volume continuity must be recorded separately.\n`);
+          JS
+
+  remote-ios:
+    if: github.ref == 'refs/heads/main' && vars.RAILWAY_BUDGET_VERIFIED == 'true' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    needs: deploy
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Simulator against the selected Railway deployment
+        env:
+          SAINT_LOOK_REMOTE_SMOKE: '1'
+          SAINT_LOOK_REMOTE_URL: ${{ vars.SAINT_LOOK_DEV_URL }}
+          SAINT_LOOK_REMOTE_TOKEN: ${{ secrets.SAINT_LOOK_DEV_OWNER_TOKEN }}
+          SAINT_LOOK_REMOTE_REVISION: ${{ needs.deploy.outputs.revision }}
+          SAINT_LOOK_REMOTE_DEPLOYMENT_ID: ${{ needs.deploy.outputs.deployment_id }}
+          SAINT_LOOK_UI_TEST_ONLY: SaintLookUITests/RemoteDeploymentTests
+          SAINT_LOOK_RECORD_VIDEO: '1'
+        run: bash client-ios/scripts/test-simulator.sh
+      - name: Upload remote Simulator screencast
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: remote-simulator-ui-video
+          path: client-ios/build/videos/*.mp4
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 0

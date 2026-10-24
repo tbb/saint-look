@@ -19,14 +19,14 @@ async function fixture(t, checked = false) {
   git('add', '.'); git('commit', '-m', 'fixture');
   const sha = git('rev-parse', 'HEAD');
   git('update-ref', 'refs/remotes/origin/main', sha);
-  const state = { checked, jobs: jobs.map(name => ({ name, status: 'completed', conclusion: 'success' })) };
+  const state = { checked, event: 'push', jobs: jobs.map(name => ({ name, status: 'completed', conclusion: 'success' })) };
   const api = createServer((request, response) => {
     assert.equal(request.headers.authorization, 'Bearer fixture-token');
     response.setHeader('Content-Type', 'application/json');
     const url = new URL(request.url, 'http://localhost');
     if (url.pathname.endsWith('/ci.yml/runs')) {
       assert.equal(url.searchParams.get('head_sha'), sha);
-      response.end(JSON.stringify({ workflow_runs: state.checked ? [{ id: 42, head_sha: sha, head_branch: 'main', event: 'push', path: '.github/workflows/ci.yml', status: 'completed', conclusion: 'success', head_repository: { full_name: 'fixture/project' } }] : [] }));
+      response.end(JSON.stringify({ workflow_runs: state.checked ? [{ id: 42, head_sha: sha, head_branch: 'main', event: state.event, path: '.github/workflows/ci.yml', status: 'completed', conclusion: 'success', head_repository: { full_name: 'fixture/project' } }] : [] }));
     } else if (url.pathname.endsWith('/42/jobs')) response.end(JSON.stringify({ jobs: state.jobs }));
     else { response.statusCode = 404; response.end('{}'); }
   });
@@ -66,4 +66,41 @@ test('a fully checked main commit produces exactly its source plus the baked rev
   assert.equal(await readFile(join(f.output, 'backend/REVISION'), 'utf8'), f.sha + '\n');
   await assert.rejects(access(join(f.output, 'secret.env')));
   assert.deepEqual(JSON.parse(result.stdout), { revision: f.sha, ciRunId: 42, dataVersion: 1 });
+});
+
+for (const job of ['backend', 'ios', 'container', 'deploy-policy']) {
+  test(`a skipped ${job} job cannot authorize deployment`, async t => {
+    const f = await fixture(t, true);
+    f.state.jobs.find(value => value.name === job).conclusion = 'skipped';
+    const result = await f.run();
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /Required CI job did not pass/);
+    await assert.rejects(access(f.output));
+  });
+}
+
+test('dispatch from another branch and abbreviated or injected refs are rejected before upload', async t => {
+  const f = await fixture(t, true);
+  for (const sha of ['main', f.sha.slice(0, 12), '--help', f.sha + ';echo unsafe']) {
+    assert.match((await f.run(sha)).stderr, /full lowercase commit SHA/);
+  }
+  assert.match((await f.run(f.sha, { GITHUB_REF: 'refs/heads/unreviewed' })).stderr, /workflow from main/);
+  await assert.rejects(access(f.output));
+});
+
+test('a commit outside main is rejected even when it exists locally', async t => {
+  const f = await fixture(t, true);
+  f.git('checkout', '-b', 'side');
+  await writeFile(join(f.directory, 'side.txt'), 'side'); f.git('add', '.'); f.git('commit', '-m', 'side');
+  const result = await f.run(f.git('rev-parse', 'HEAD'));
+  assert.equal(result.code, 1); assert.match(result.stderr, /not part of main/);
+  await assert.rejects(access(f.output));
+});
+
+
+test('manual CI cannot substitute for the complete main push checks', async t => {
+  const f = await fixture(t, true); f.state.event = 'workflow_dispatch';
+  const result = await f.run();
+  assert.equal(result.code, 1); assert.match(result.stderr, /No successful main CI/);
+  await assert.rejects(access(f.output));
 });

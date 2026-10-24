@@ -32,7 +32,7 @@ try {
   try { git('merge-base', '--is-ancestor', sha, 'refs/remotes/origin/main'); }
   catch { throw new Error('Selected commit is not part of main.'); }
   const result = await github(`/repos/${repository}/actions/workflows/ci.yml/runs?head_sha=${sha}&branch=main&status=success&per_page=100`);
-  const run = result.workflow_runs?.find(run => run.head_sha === sha && run.head_branch === 'main' && ['push', 'workflow_dispatch'].includes(run.event)
+  const run = result.workflow_runs?.find(run => run.head_sha === sha && run.head_branch === 'main' && run.event === 'push'
     && run.path === '.github/workflows/ci.yml' && run.status === 'completed' && run.conclusion === 'success'
     && run.head_repository?.full_name === repository && Number.isSafeInteger(run.id));
   if (!run) throw new Error('No successful main CI for the selected commit.');
@@ -48,6 +48,7 @@ try {
   catch { throw new Error('Selected commit has no supported release manifest.'); }
   if (manifest.format !== 1 || manifest.profile !== 'controlled-http' || manifest.dataVersion !== 1
     || manifest.minDataVersion !== 1 || manifest.maxDataVersion !== 1) throw new Error('Selected release is not supported by this deployment workflow.');
+  if (git('ls-tree', '-r', sha).split('\n').some(entry => entry.startsWith('120000 '))) throw new Error('Release symlinks are not supported.');
   const output = resolve(destination);
   mkdirSync(output, { mode: 0o700 });
   try {
