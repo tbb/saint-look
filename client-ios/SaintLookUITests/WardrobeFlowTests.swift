@@ -124,8 +124,7 @@ final class WardrobeFlowTests: XCTestCase {
         edit.tap()
         let type = app.textFields["edit-type"]
         XCTAssertTrue(type.waitForExistence(timeout: 5))
-        type.tap()
-        type.typeText("Shirt")
+        await enterText("Shirt", replacing: "", in: type, app: app)
         app.buttons["save-item-edits"].tap()
         XCTAssertTrue(app.staticTexts["Shirt"].waitForExistence(timeout: 5))
         app.terminate()
@@ -145,8 +144,7 @@ final class WardrobeFlowTests: XCTestCase {
         restored.buttons["edit-item"].firstMatch.tap()
         let colors = restored.textFields["edit-colors"]
         XCTAssertTrue(colors.waitForExistence(timeout: 5))
-        colors.tap()
-        colors.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Синий".count) + "White, Green")
+        await enterText("White, Green", replacing: "Синий", in: colors, app: restored)
         restored.buttons["save-item-edits"].tap()
         XCTAssertTrue(restored.staticTexts["White, Green"].waitForExistence(timeout: 5))
         restored.terminate()
@@ -172,8 +170,7 @@ final class WardrobeFlowTests: XCTestCase {
         app.buttons["edit-item"].firstMatch.tap()
         let colors = app.textFields["edit-colors"]
         XCTAssertTrue(colors.waitForExistence(timeout: 3))
-        colors.tap()
-        colors.typeText("Red")
+        await enterText("Red", replacing: "", in: colors, app: app)
         // Prepare input before starting delivery, but save only while the result is in flight.
         try await control(mode: "hold-next-result")
         var held = false
@@ -197,8 +194,7 @@ final class WardrobeFlowTests: XCTestCase {
         app.buttons["edit-item"].firstMatch.tap()
         let type = app.textFields["edit-type"]
         XCTAssertTrue(type.waitForExistence(timeout: 3))
-        type.tap()
-        type.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Футболка".count) + "Shirt")
+        await enterText("Shirt", replacing: "Футболка", in: type, app: app)
         app.buttons["save-item-edits"].tap()
         XCTAssertTrue(app.staticTexts["Shirt"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Red"].exists)
@@ -211,6 +207,16 @@ final class WardrobeFlowTests: XCTestCase {
         let state = try await transportState()
         XCTAssertEqual(state["acceptedOperations"] as? Int, 1)
         XCTAssertEqual(state["forwardedUploads"] as? Int, 1, "Online edits and relaunch must not create another processing request")
+    }
+
+    @MainActor
+    private func enterText(_ text: String, replacing previous: String, in field: XCUIElement, app: XCUIApplication) async {
+        field.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: previous.count) + text)
+        // Synthesized input can arrive after typeText returns; saving must observe the entered value.
+        let entered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", text), object: field)
+        await fulfillment(of: [entered], timeout: 10)
     }
 
     private func transportState() async throws -> [String: Any] {
