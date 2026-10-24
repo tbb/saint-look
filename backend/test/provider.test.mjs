@@ -105,3 +105,17 @@ test('timeout after a request was sent persists unknown and duplicate uploads do
   await new Promise(resolve => setTimeout(resolve, 100));
   assert.equal(fixture.calls.attributes.length, 1); assert.equal(fixture.calls.cutout.length, 0);
 });
+
+test('a compact JPEG that expands past the provider upload limit is rejected before external I/O', async (t) => {
+  const { randomBytes } = await import('node:crypto');
+  const { default: sharp } = await import('sharp');
+  const jpeg = await sharp(randomBytes(1500 * 1500 * 3), { raw: { width: 1500, height: 1500, channels: 3 } }).jpeg({ quality: 65 }).toBuffer();
+  assert.ok(jpeg.length < 5 * 1024 * 1024);
+  assert.ok((await sharp(jpeg).png().toBuffer()).length > 5 * 1024 * 1024);
+  const fixture = await providerFixture(t); const env = await environment(t); const server = await env.launch(fixture.env);
+  const request = { ...await photoRequest(), imageBase64: jpeg.toString('base64') };
+  assert.equal((await upload(server, request)).status, 202);
+  const failed = await waitForItem(server, request.itemId, 'failed');
+  assert.equal(failed.error, 'image_too_large');
+  assert.equal(fixture.calls.attributes.length, 0); assert.equal(fixture.calls.cutout.length, 0);
+});

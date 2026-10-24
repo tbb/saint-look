@@ -36,8 +36,8 @@ export async function environment(t) {
       ]);
       return {
         url: ready.url,
-        async stop() {
-          if (process.exitCode === null) { process.kill('SIGTERM'); await once(process, 'exit'); }
+        async stop(signal = 'SIGTERM') {
+          if (process.exitCode === null) { process.kill(signal); await once(process, 'exit'); }
           processes.delete(process);
         },
         request(path, options = {}) {
