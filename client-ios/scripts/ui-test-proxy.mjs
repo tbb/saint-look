@@ -1,5 +1,7 @@
 // Test-only transport fault proxy. It never accepts a non-loopback upstream.
 import { createServer } from 'node:http';
+import { readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 
 const upstream = new URL(process.env.SAINT_LOOK_UI_PROXY_UPSTREAM || 'http://127.0.0.1:8787');
 const controlToken = process.env.SAINT_LOOK_UI_TEST_CONTROL_TOKEN || 'saint-look-ui-control-test-token-00000001';
@@ -9,9 +11,29 @@ if (process.env.NODE_ENV !== 'test' || upstream.protocol !== 'http:' || upstream
 }
 const health = await fetch(new URL('/health', upstream), { signal: AbortSignal.timeout(5000), redirect: 'error' });
 if (!health.ok || (await health.json()).mode !== 'demo') throw new Error('UI proxy requires a demo or controlled-provider backend.');
+const clockFile = process.env.SAINT_LOOK_TEST_CLOCK_FILE;
+const maximumClockOffset = 365 * 24 * 60 * 60 * 1000;
+function readClockOffset() {
+  const offset = JSON.parse(readFileSync(clockFile, 'utf8')).offsetMs;
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > maximumClockOffset) throw new Error('Invalid test clock offset.');
+  return offset;
+}
+if (clockFile) {
+  if (!isAbsolute(clockFile)) throw new Error('Test clock requires an absolute path.');
+  readClockOffset();
+}
+function updateClock(offsetMs) {
+  const temporary = `${clockFile}.proxy-${process.pid}.tmp`;
+  writeFileSync(temporary, JSON.stringify({ offsetMs }), { mode: 0o600 });
+  renameSync(temporary, clockFile);
+}
 let mode = 'online';
 const acceptedOperations = new Set();
 const deletedItems = new Set();
+const acknowledgedOperations = new Set();
+let forwardedAcknowledgements = 0;
+let droppedAcknowledgementResponses = 0;
+let lastOperationPath;
 let forwardedDeletes = 0;
 let droppedDeleteResponses = 0;
 let forwardedUploads = 0;
@@ -54,23 +76,39 @@ const server = createServer(async (request, response) => {
       if (request.headers.authorization !== `Bearer ${controlToken}`) return reply(response, 401, { error: 'unauthorized' });
       if (request.method === 'POST') {
         const input = JSON.parse((await readBody(request, 1024)).toString());
-        if (!['online', 'offline', 'drop-next-upload-response', 'drop-next-delete-response', 'hold-next-result'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
+        if (!['online', 'offline', 'drop-next-upload-response', 'drop-next-delete-response', 'block-acks', 'drop-next-ack-response', 'accept-upload-then-offline', 'hold-next-result'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
+        let nextOffset;
+        if (input.advanceTimeMs !== undefined) {
+          if (!clockFile || !Number.isSafeInteger(input.advanceTimeMs) || input.advanceTimeMs < 0) {
+            return reply(response, 400, { error: 'invalid_time_advance' });
+          }
+          nextOffset = (input.reset ? 0 : readClockOffset()) + input.advanceTimeMs;
+          if (!Number.isSafeInteger(nextOffset) || nextOffset > maximumClockOffset) return reply(response, 400, { error: 'invalid_time_advance' });
+        } else if (input.reset && clockFile) {
+          nextOffset = 0;
+        }
+        if (nextOffset !== undefined) updateClock(nextOffset);
         mode = input.mode;
         if (mode !== 'hold-next-result' || input.reset) releaseResults();
-        if (input.reset) { acceptedOperations.clear(); forwardedUploads = 0; droppedUploadResponses = 0; deletedItems.clear(); forwardedDeletes = 0; droppedDeleteResponses = 0; }
+        if (input.reset) { acceptedOperations.clear(); forwardedUploads = 0; droppedUploadResponses = 0; deletedItems.clear(); forwardedDeletes = 0; droppedDeleteResponses = 0; acknowledgedOperations.clear(); forwardedAcknowledgements = 0; droppedAcknowledgementResponses = 0; lastOperationPath = undefined; }
       } else if (request.method !== 'GET') return reply(response, 405, { error: 'method_not_allowed' });
-      return reply(response, 200, { mode, acceptedOperations: acceptedOperations.size, forwardedUploads, droppedUploadResponses, heldResultResponses: heldResults.size, deletedItems: deletedItems.size, forwardedDeletes, droppedDeleteResponses });
+      return reply(response, 200, { mode, acceptedOperations: acceptedOperations.size, forwardedUploads, droppedUploadResponses, heldResultResponses: heldResults.size, deletedItems: deletedItems.size, forwardedDeletes, droppedDeleteResponses, acknowledgedOperations: acknowledgedOperations.size, forwardedAcknowledgements, droppedAcknowledgementResponses, lastOperationPath, clockOffsetMs: clockFile ? readClockOffset() : undefined });
     }
     if (request.url !== '/health' && !request.url?.startsWith('/v1/items')) return reply(response, 404, { error: 'not_found' });
     if (mode === 'offline') { request.socket.destroy(); return; }
     const body = await readBody(request, 8 * 1024 * 1024);
     const isUpload = request.method === 'POST' && (request.url === '/v1/items' || /^\/v1\/items\/[^/]+\/attempts$/.test(request.url));
+    const isAcknowledgement = request.method === 'POST' && /^\/v1\/items\/[^/]+\/operations\/[^/]+\/ack$/.test(request.url);
+    if (isAcknowledgement && mode === 'block-acks') { request.socket.destroy(); return; }
+    if (isAcknowledgement) forwardedAcknowledgements++;
+    const shouldDropAcknowledgement = isAcknowledgement && mode === 'drop-next-ack-response';
     const isDelete = request.method === 'DELETE' && /^\/v1\/items\/[^/]+$/.test(request.url);
     if (isDelete) forwardedDeletes++;
     const shouldDropDelete = isDelete && mode === 'drop-next-delete-response';
+    const shouldDisconnectAfterUpload = isUpload && mode === 'accept-upload-then-offline';
     const shouldDrop = isUpload && mode === 'drop-next-upload-response';
     const shouldHold = request.method === 'GET' && /^\/v1\/items\/[^/]+(?:\/operations\/[^/]+)?\/result$/.test(request.url) && mode === 'hold-next-result';
-    if (shouldDrop || shouldDropDelete || shouldHold) mode = 'online';
+    if (shouldDrop || shouldDropDelete || shouldDropAcknowledgement || shouldHold) mode = 'online';
     if (isUpload) forwardedUploads++;
     const result = await fetch(new URL(request.url, upstream), {
       method: request.method,
@@ -80,7 +118,14 @@ const server = createServer(async (request, response) => {
     });
     const data = Buffer.from(await result.arrayBuffer());
     if (isDelete && result.status === 204) deletedItems.add(request.url);
-    if (isUpload && result.ok) acceptedOperations.add(JSON.parse(data).operationId);
+    if (isUpload && result.ok) {
+      const accepted = JSON.parse(data);
+      acceptedOperations.add(accepted.operationId);
+      lastOperationPath = `/v1/items/${accepted.itemId}/operations/${accepted.operationId}`;
+    }
+    if (shouldDisconnectAfterUpload && result.ok) { mode = 'offline'; request.socket.destroy(); return; }
+    if (isAcknowledgement && result.status === 204) acknowledgedOperations.add(request.url);
+    if (shouldDropAcknowledgement && result.status === 204) { droppedAcknowledgementResponses++; request.socket.destroy(); return; }
     if (shouldDropDelete && result.status === 204) { droppedDeleteResponses++; request.socket.destroy(); return; }
     if (shouldDrop) { droppedUploadResponses++; request.socket.destroy(); return; }
     if (shouldHold && result.ok) await holdResult(response);

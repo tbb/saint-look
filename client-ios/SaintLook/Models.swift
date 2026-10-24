@@ -68,6 +68,11 @@ struct WardrobeItem: Codable, Identifiable {
     var directoryName: String { id.uuidString.lowercased() }
 }
 
+struct ResultAcknowledgement: Codable, Hashable {
+    let itemID: UUID
+    let operationID: UUID
+}
+
 struct ItemResponse: Decodable {
     let itemId: UUID
     let operationId: UUID
@@ -89,7 +94,7 @@ struct ItemResponse: Decodable {
 }
 
 enum ClientError: LocalizedError {
-    case invalidSettings, invalidPhoto, oversizedPhoto, invalidResponse, server(Int), keychain
+    case invalidSettings, invalidPhoto, oversizedPhoto, invalidResponse, server(Int), resultUnavailable(String), keychain
 
     var errorDescription: String? {
         switch self {
@@ -97,6 +102,7 @@ enum ClientError: LocalizedError {
         case .invalidPhoto: return "Не удалось прочитать фотографию. Выберите другой снимок."
         case .oversizedPhoto: return "Фотография слишком большая. Выберите снимок до 20 МБ."
         case .invalidResponse: return "Backend вернул неподходящий результат. Исходное фото сохранено."
+        case .resultUnavailable(let code): return ProcessingFailure.message(for: code)
         case .server(401): return "Backend не принял токен владельца. Проверьте настройки."
         case .server: return "Обработка недоступна. Исходное фото сохранено."
         case .keychain: return "Не удалось сохранить токен в защищённом хранилище."
@@ -121,6 +127,10 @@ enum ProcessingFailure {
         case "provider_quota_exceeded": return "Лимит обработки исчерпан. Исходное фото сохранено."
         case "provider_not_configured", "provider_preflight_required", "provider_unauthorized":
             return "Сервис обработки пока не настроен. Исходное фото сохранено."
+        case "result_expired":
+            return "Срок хранения результата на сервере истёк. Фото сохранено на устройстве. Повторите обработку."
+        case "result_delivered":
+            return "Серверная копия результата уже очищена. Фото сохранено на устройстве. Повторите обработку."
         case "processing_unknown":
             return "Не удалось подтвердить результат обработки. Автоматический повтор остановлен; исходник сохранён."
         case "invalid_provider_response": return "Обработчик вернул неполный результат. Исходное фото сохранено."
