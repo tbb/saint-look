@@ -8,7 +8,6 @@
 
 # Local agent configuration and runtime state
 .agents/
-.omx/
 .codegraph/
 
 # Dependencies and generated output
@@ -27,6 +26,7 @@ Thumbs.db
 *.log
 .idea/
 .vscode/
-.omx-state-locks/
-.omx-state-locks.identity.json
 .codex/
+
+# Local archive of removed agent tooling (may contain private context)
+/docs/archive/omx-local/
