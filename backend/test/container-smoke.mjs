@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { photoRequest } from './support.mjs';
 
 const [image, revision] = process.argv.slice(2);
 if (!image || image.startsWith('-') || !/^[0-9a-f]{40}$/.test(revision || '')) throw new Error('Usage: container-smoke.mjs IMAGE FULL_SHA');
@@ -59,7 +58,9 @@ async function ready(server, id) {
 try {
   await docker(['volume', 'create', volume]);
   let server = await launch();
-  const photo = await photoRequest();
+  // Fixed synthetic 16x16 PNG keeps this host-side check dependency-free.
+  const photo = { itemId: randomUUID(), operationId: randomUUID(), photoVersionId: randomUUID(),
+    imageBase64: 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAGUlEQVQokWP4oGBAEmIY1aAwGkofhmvSAADfxkAQ0gu8xwAAAABJRU5ErkJggg==' };
   assert.equal((await request(server, '/v1/items', {
     method: 'POST', headers: { Authorization: 'Bearer invalid', 'Content-Type': 'application/json' }, body: JSON.stringify(photo),
   })).status, 401);
