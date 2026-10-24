@@ -39,11 +39,15 @@ export function acceptAttempt(database, input, provider, explicit = false) {
   if (current) {
     if (!explicit) throw new RequestError(409, 'identity_conflict');
     if (revision <= current.revision) throw new RequestError(409, 'stale_revision');
-    if (action === 'retry' && (input.photoVersionId !== current.photo_version_id
-      || !Buffer.from(current.source).equals(input.source))) throw new RequestError(409, 'identity_conflict');
   }
-  if (action === 'replace' && database.prepare('SELECT 1 FROM operation_receipts WHERE item_id=? AND photo_version_id=?')
-    .get(input.itemId, input.photoVersionId)) throw new RequestError(409, 'identity_conflict');
+  const knownPhoto = database.prepare('SELECT 1 FROM operation_receipts WHERE item_id=? AND photo_version_id=?')
+    .get(input.itemId, input.photoVersionId);
+  // A retry keeps the client's local photo. Its preceding replacement may never
+  // have reached admission (for example, a rejected owner token). Once known, a
+  // photo version is immutable and a historical version cannot become current again.
+  if (action === 'retry' && knownPhoto && (input.photoVersionId !== current?.photo_version_id
+    || !Buffer.from(current.source).equals(input.source))) throw new RequestError(409, 'identity_conflict');
+  if (action === 'replace' && knownPhoto) throw new RequestError(409, 'identity_conflict');
   database.exec('BEGIN IMMEDIATE');
   try {
     database.prepare('INSERT INTO operation_receipts VALUES (?,?,?,?,?,?)')

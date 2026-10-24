@@ -169,7 +169,6 @@ test('invalid revisions, changed retry photos and conflicting receipts cannot st
     assert.equal((await attempt(server, { ...retry, revision })).status, 400);
   }
   assert.equal((await attempt(server, { ...retry, action: 'automatic' })).status, 400);
-  assert.equal((await attempt(server, { ...retry, photoVersionId: randomUUID() })).status, 409);
   const changedPhoto = await sharp({ create: { width: 16, height: 16, channels: 3, background: 'green' } }).png().toBuffer();
   assert.equal((await attempt(server, { ...retry, imageBase64: changedPhoto.toString('base64') })).status, 409);
   assert.equal((await attempt(server, { ...retry, action: 'replace' })).status, 409);
@@ -212,4 +211,38 @@ test('a catalog written before revisions upgrades without losing its ready resul
   assert.equal((await upload(server, original)).status, 409);
   assert.equal(fixture.calls.attributes.length, 1);
   assert.equal(fixture.calls.cutout.length, 1);
+});
+
+test('retrying a replacement rejected before acceptance admits the local photo without reviving historical photos', async t => {
+  const fixture = await providerFixture(t);
+  const env = await environment(t);
+  const server = await env.launch(fixture.env);
+  const original = await photoRequest();
+  await upload(server, original);
+  await waitForItem(server, original.itemId);
+  const replacementImage = await sharp({ create: { width: 16, height: 16, channels: 3, background: 'green' } }).png().toBuffer();
+  const replacement = { ...original, imageBase64: replacementImage.toString('base64'),
+    photoVersionId: randomUUID(), operationId: randomUUID(), revision: 1, action: 'replace' };
+  const denied = await server.request(`/v1/items/${original.itemId}/attempts`, {
+    method: 'POST', headers: { Authorization: 'Bearer wrong-owner-token', 'Content-Type': 'application/json' }, body: JSON.stringify(replacement),
+  });
+  assert.equal(denied.status, 401);
+  assert.equal((await server.request(`/v1/items/${original.itemId}/operations/${replacement.operationId}`)).status, 404);
+  const retry = { ...replacement, action: 'retry', operationId: randomUUID(), revision: 2 };
+  assert.equal((await attempt(server, retry)).status, 202);
+  assert.equal((await attempt(server, retry)).status, 200);
+  const ready = await waitForItem(server, original.itemId);
+  assert.equal(ready.operationId, retry.operationId);
+  assert.equal(ready.photoVersionId, replacement.photoVersionId);
+  assert.equal(ready.revision, 2);
+  assert.equal((await attempt(server, replacement)).status, 409);
+  const historicalRetry = { ...original, operationId: randomUUID(), revision: 3, action: 'retry' };
+  assert.equal((await attempt(server, historicalRetry)).status, 409);
+  await server.stop();
+  const restarted = await env.launch(fixture.env);
+  assert.equal((await attempt(restarted, retry)).status, 200);
+  assert.equal((await attempt(restarted, historicalRetry)).status, 409);
+  assert.deepEqual(await (await restarted.request(`/v1/items/${original.itemId}`)).json(), ready);
+  assert.equal(fixture.calls.attributes.length, 2);
+  assert.equal(fixture.calls.cutout.length, 2);
 });
