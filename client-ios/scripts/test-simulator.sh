@@ -10,7 +10,27 @@ if ! command -v xcodebuild >/dev/null || ! command -v xcrun >/dev/null; then
 fi
 xcodebuild -version
 work_directory="$(mktemp -d)"
-trap 'rm -rf "$work_directory"' EXIT
+recording_pid=''
+cleanup() {
+  local test_status=$?
+  trap - EXIT
+  if [[ -n "$recording_pid" ]]; then
+    # SIGINT lets simctl finish the MP4 container, including after a failed test.
+    kill -INT "$recording_pid" 2>/dev/null || true
+    for attempt in {1..50}; do
+      if ! kill -0 "$recording_pid" 2>/dev/null; then break; fi
+      sleep 0.2
+    done
+    if kill -0 "$recording_pid" 2>/dev/null; then
+      echo "Simulator recorder did not finish within 10 seconds." >&2
+      kill -KILL "$recording_pid" 2>/dev/null || true
+    fi
+    wait "$recording_pid" 2>/dev/null || true
+  fi
+  rm -rf "$work_directory"
+  exit "$test_status"
+}
+trap cleanup EXIT
 simulator_id="${SAINT_LOOK_SIMULATOR_UDID:-}"
 if [[ -z "$simulator_id" ]]; then
   # CoreSimulator may still be discovering preinstalled devices on a fresh runner.
@@ -75,5 +95,13 @@ for host in ('127.0.0.1', 'localhost'):
 with path.open('wb') as output:
     plistlib.dump(info, output, fmt=plistlib.FMT_BINARY)
 PYTHON
+
+if [[ "${SAINT_LOOK_RECORD_VIDEO:-0}" == '1' ]]; then
+  mkdir -p build/videos
+  video_path="$(pwd)/build/videos/Simulator-$(date -u +%Y%m%dT%H%M%SZ).mp4"
+  xcrun simctl io "$simulator_id" recordVideo --codec=h264 "$video_path" > "$work_directory/recording.log" 2>&1 &
+  recording_pid=$!
+  echo "Recording Simulator UI tests to $video_path"
+fi
 
 xcodebuild "${build_options[@]}" -resultBundlePath "$result_path" test-without-building
