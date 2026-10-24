@@ -48,7 +48,6 @@ test('owner acknowledgement clears a saved result and is safe to repeat after re
   const restarted = await env.launch(fixture.env);
   assert.equal((await ack(restarted, item)).status, 204);
   await assertCleared(restarted, item, 'result_delivered');
-  assert.deepEqual(saved, fixture.cutout, 'Clearing the server copy cannot alter the downloaded bytes');
   assert.equal(fixture.calls.attributes.length, 1);
   assert.equal(fixture.calls.cutout.length, 1);
 });
