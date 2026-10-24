@@ -49,9 +49,11 @@ export function createProviders(env) {
   const cutoutURL = `${testOrigin || 'https://sdk.photoroom.com'}/v1/segment`;
   return {
     id: testOrigin ? 'live-test' : 'live', mode: testOrigin ? 'demo' : 'live',
-    preflight() {
+    preflight(source) {
+      if (source.length > 5 * 1024 * 1024) throw new ProviderError('image_too_large');
       if (!Number.isInteger(timeout) || timeout < 50 || timeout > 120000) throw new ProviderError('provider_not_configured');
       if (!env.GEMINI_API_KEY?.trim() || !env.PHOTOROOM_API_KEY?.trim()) throw new ProviderError('provider_not_configured');
+      if (env.NODE_ENV === 'test' && !testOrigin) throw new ProviderError('provider_not_configured');
       if (testOrigin) {
         let origin;
         try { origin = new URL(testOrigin); } catch { throw new ProviderError('provider_not_configured'); }
