@@ -85,7 +85,6 @@ jobs:
         env:
           NODE_ENV: test
           SAINT_LOOK_RECORD_VIDEO: '1'
-          SAINT_LOOK_UI_TEST_ONLY: SaintLookUITests/WardrobeFlowTests/testDeletingTwoOfflineThingsSurvivesRelaunchAndNeverUploadsTheirPhotos
           SAINT_LOOK_OWNER_TOKEN: saint-look-ui-tests-owner-token-00000001
           SAINT_LOOK_PROVIDER: live
           SAINT_LOOK_TEST_PROVIDER_ORIGIN: http://127.0.0.1:8789
