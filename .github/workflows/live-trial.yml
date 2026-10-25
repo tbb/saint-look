@@ -115,7 +115,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.deploy.outputs.revision }}
           persist-credentials: false
       - name: Explicit public-photo trial against live providers
         env:
@@ -144,7 +144,7 @@ jobs:
       - name: Record trial scope
         if: always()
         env:
-          CLIENT_REVISION: ${{ github.sha }}
+          CLIENT_REVISION: ${{ needs.deploy.outputs.revision }}
           BACKEND_REVISION: ${{ needs.deploy.outputs.revision }}
           DEPLOYMENT_ID: ${{ needs.deploy.outputs.deployment_id }}
           PHOTO_COUNT: ${{ inputs.photo_count }}
