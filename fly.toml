@@ -1,0 +1,40 @@
+# The deployment command must supply the existing app explicitly with --app.
+primary_region = "ams"
+kill_signal = "SIGTERM"
+kill_timeout = 15
+
+[build]
+  dockerfile = "backend/Dockerfile"
+
+[env]
+  HOST = "0.0.0.0"
+  PORT = "8080"
+  SAINT_LOOK_DATA_DIR = "/data"
+
+[mounts]
+  source = "saint_look_data"
+  destination = "/data"
+  initial_size = "3GB"
+  scheduled_snapshots = false
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "15s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1024MB"
+
+[[restart]]
+  policy = "on-failure"
+  retries = 3

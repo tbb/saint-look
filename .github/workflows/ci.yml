@@ -1,12 +1,18 @@
 name: Local ingestion checks
 
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - 'backend/**'
       - 'client-ios/**'
       - 'docs/api/**'
-      - '.github/workflows/ci.yml'
+      - '.github/workflows/**'
+      - 'scripts/deploy/**'
+      - 'docs/deployment.md'
+      - 'fly.toml'
+      - '.dockerignore'
   workflow_dispatch:
 
 permissions:
@@ -131,6 +137,16 @@ jobs:
           proxy_pid=$!
           wait_for_health http://127.0.0.1:8788/health
           bash client-ios/scripts/test-simulator.sh
+          # Exercise the explicit XCTest manifest using one existing local test.
+          # This validates the runner path; it is not a remote deployment demonstration.
+          SAINT_LOOK_REMOTE_SMOKE=1 \
+          SAINT_LOOK_REMOTE_URL=https://example.invalid \
+          SAINT_LOOK_REMOTE_TOKEN="$SAINT_LOOK_UI_TEST_TOKEN" \
+          SAINT_LOOK_REMOTE_REVISION="$(git rev-parse HEAD)" \
+          SAINT_LOOK_REMOTE_DEPLOYMENT_ID=local-harness-validation \
+          SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/WardrobeFlowTests/testPhotoBecomesReadyThroughBackendAndSurvivesOfflineRelaunch \
+          SAINT_LOOK_RECORD_VIDEO=0 \
+          bash client-ios/scripts/test-simulator.sh
       - name: Upload Simulator screencast
         if: always()
         uses: actions/upload-artifact@v4
@@ -140,3 +156,37 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
           compression-level: 0
+
+
+  deploy-policy:
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test scripts/deploy/*.test.mjs
+
+  container:
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build the checked source and verify persistent storage
+        run: |
+          revision="$(git rev-parse HEAD)"
+          printf '%s\n' "$revision" > backend/REVISION
+          docker build -f backend/Dockerfile -t saint-look-ci .
+          node backend/test/container-smoke.mjs saint-look-ci "$revision"

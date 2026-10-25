@@ -91,3 +91,20 @@ SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/WardrobeFlowTests/testDeletingTwoOfflin
 В CI прогон UI-тестов записывается в MP4. Запись доступна в артефакте `simulator-ui-video` соответствующего GitHub Actions run и хранится 7 дней. Для локальной записи запустите скрипт с `SAINT_LOOK_RECORD_VIDEO=1`. Видео показывает автоматические сценарии Simulator; ручную проверку PhotosPicker оно не заменяет.
 
 В среде реализации Linux нет Xcode; результат hosted Simulator-прогона фиксируется в PR. Отложенная ручная проверка системного PhotosPicker отслеживается отдельно в [#13](https://github.com/tbb/saint-look/issues/13).
+
+## Проверка Fly.io dev-стенда
+
+Отдельный `RemoteDeploymentTests` по умолчанию пропускается; прежние 14 локальных сценариев продолжают работать. Manual deploy workflow запускает только этот класс после проверки точного SHA и уникального маркера выкладки через публичный API. Simulator напрямую подключается к HTTPS, добавляет синтетическое фото, получает готовую demo-карточку и проверяет её после офлайн-перезапуска. Прокси и локальные control endpoints этому сценарию не нужны. Видео хранится 7 дней в артефакте `remote-simulator-ui-video`; токен в интерфейсе не показывается.
+
+Для ручного запуска на Mac нужны `SAINT_LOOK_REMOTE_URL`, `SAINT_LOOK_REMOTE_REVISION` (40 символов), `SAINT_LOOK_REMOTE_DEPLOYMENT_ID` и секрет `SAINT_LOOK_REMOTE_TOKEN` в окружении. Введите токен без вывода и записи в историю:
+
+```bash
+read -rs SAINT_LOOK_REMOTE_TOKEN
+export SAINT_LOOK_REMOTE_TOKEN
+SAINT_LOOK_REMOTE_SMOKE=1 \
+SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/RemoteDeploymentTests \
+SAINT_LOOK_RECORD_VIDEO=1 bash client-ios/scripts/test-simulator.sh
+unset SAINT_LOOK_REMOTE_TOKEN
+```
+
+В конце сценарий удаляет карточку через UI и даёт очереди удаления время на отправку. Это не отдельное доказательство серверной очистки: её проверяет API smoke. При прерывании UI-прогона на стенде может остаться синтетическая запись; серверные изображения очищаются подтверждением или сроком хранения. Проверка сохранности volume при redeploy/rollback описана в [runbook](../docs/deployment.md). Успешный локальный CI с пропущенным remote-классом не доказывает работу Fly.io: до настройки аккаунта нужен отдельный реальный прогон.
