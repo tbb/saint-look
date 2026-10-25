@@ -9,6 +9,9 @@ struct WardrobeView: View {
     @State private var showSettings = false
     @State private var importing = false
     @State private var editingItem: WardrobeItem?
+    #if DEBUG
+    @State private var trialImported = false
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -38,9 +41,22 @@ struct WardrobeView: View {
                     .accessibilityIdentifier("add-photo")
                     .disabled(importing || !store.storageAvailable)
                     #if DEBUG
-                    Button("Добавить тестовое фото") { store.addPhoto(PhotoData.demoPhoto()) }
-                        .accessibilityIdentifier("add-demo-photo")
-                        .disabled(!store.storageAvailable)
+                    if ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1",
+                       ProcessInfo.processInfo.environment["SAINT_LOOK_LIVE_TRIAL"] == "1" {
+                        Button("Добавить фото пробы") {
+                            do {
+                                let photo = try PhotoData.trialPhoto()
+                                trialImported = true
+                                store.addPhoto(photo)
+                            } catch { store.notice = "Не удалось прочитать фото пробы." }
+                        }
+                        .accessibilityIdentifier("add-trial-photo")
+                        .disabled(trialImported || !store.storageAvailable)
+                    } else {
+                        Button("Добавить тестовое фото") { store.addPhoto(PhotoData.demoPhoto()) }
+                            .accessibilityIdentifier("add-demo-photo")
+                            .disabled(!store.storageAvailable)
+                    }
                     #endif
                     if importing { ProgressView("Сохраняем фото…") }
                 }
@@ -130,8 +146,8 @@ private struct ItemCard: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("previous-result-notice")
             }
-            if let type = item.displayedType { Text(type).font(.headline) }
-            if !item.displayedColors.isEmpty { Text(item.displayedColors.joined(separator: ", ")) }
+            if let type = item.displayedType { Text(type).font(.headline).accessibilityIdentifier("item-type") }
+            if !item.displayedColors.isEmpty { Text(item.displayedColors.joined(separator: ", ")).accessibilityIdentifier("item-colors") }
             if let error = item.errorMessage {
                 Text(error).font(.footnote).foregroundStyle(.secondary)
                     .accessibilityIdentifier("item-error")

@@ -26,6 +26,18 @@ enum PhotoData {
     }
 
     #if DEBUG
+    static func trialPhoto() throws -> Data {
+        let env = ProcessInfo.processInfo.environment
+        guard env["SAINT_LOOK_UI_TESTING"] == "1", env["SAINT_LOOK_LIVE_TRIAL"] == "1",
+              let index = Int(env["SAINT_LOOK_TRIAL_PHOTO_INDEX"] ?? ""), (0..<3).contains(index),
+              let folder = Bundle.main.url(forResource: "TrialPhotos", withExtension: nil),
+              let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("manifest.json"))) as? [String: Any],
+              let photos = manifest["photos"] as? [[String: Any]], photos.indices.contains(index),
+              let file = photos[index]["file"] as? String,
+              file.range(of: "^photo-[1-3]\\.(png|jpg)$", options: .regularExpression) != nil else { throw ClientError.invalidPhoto }
+        return try Data(contentsOf: folder.appendingPathComponent(file))
+    }
+
     static func demoPhoto(replacement: Bool = false) -> Data {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1

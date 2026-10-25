@@ -4,6 +4,8 @@
 	classes = {};
 	objectVersion = 56;
 	objects = {
+        A10000000000000000000001 = { isa = PBXFileReference; lastKnownFileType = folder; path = TrialPhotos; sourceTree = "<group>"; };
+        A10000000000000000000002 = { isa = PBXBuildFile; fileRef = A10000000000000000000001; };
 		90A521E0B4304DF1B8310A01 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDeploymentTests.swift; sourceTree = "<group>"; };
 		90A521E0B4304DF1B8310A02 = { isa = PBXBuildFile; fileRef = 90A521E0B4304DF1B8310A01; };
 		E959299B73926175FEB12F20 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendClient.swift; sourceTree = "<group>"; };
@@ -25,13 +27,13 @@
 		0112DAE3F84CB4DF5179BE01 = { isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		8BCD5BC4CDFDF0918087C782 = { isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SaintLook.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F219C0274590DA45E4BEF1EA = { isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SaintLookUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		69F8D45498D7E20DA99BB780 = { isa = PBXGroup; children = (E959299B73926175FEB12F20, FD0F22A41EEF8EA92C875D0A, 78FD430803560F137BDECEE8, 21DC170FC2BB6172E56A6AE1, FFC0D725B6ACBF4421EA007C, 76737E11F36B9C7D82347EA4, 83AE5166EB71746ADA53AC09, 0112DAE3F84CB4DF5179BE01); path = SaintLook; sourceTree = "<group>"; };
+		69F8D45498D7E20DA99BB780 = { isa = PBXGroup; children = (A10000000000000000000001, E959299B73926175FEB12F20, FD0F22A41EEF8EA92C875D0A, 78FD430803560F137BDECEE8, 21DC170FC2BB6172E56A6AE1, FFC0D725B6ACBF4421EA007C, 76737E11F36B9C7D82347EA4, 83AE5166EB71746ADA53AC09, 0112DAE3F84CB4DF5179BE01); path = SaintLook; sourceTree = "<group>"; };
 		BFC937463906E5DB7A02A37C = { isa = PBXGroup; children = (1990EB052BB1F30FC44C073A, 90A521E0B4304DF1B8310A01); path = SaintLookUITests; sourceTree = "<group>"; };
 		328EC33DF3954DC9B83FA285 = { isa = PBXGroup; children = (8BCD5BC4CDFDF0918087C782, F219C0274590DA45E4BEF1EA); name = Products; sourceTree = "<group>"; };
 		E50290A24C49A459B43487C5 = { isa = PBXGroup; children = (69F8D45498D7E20DA99BB780, BFC937463906E5DB7A02A37C, 328EC33DF3954DC9B83FA285); sourceTree = "<group>"; };
 		971ED9D05B25DB6C4D7680D4 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (6968175B5B5AE67EE01AC2B4, 9E85BE2E618741285A78EE00, C28E3B592A560C32484F497E, E76206782446B99609509337, 7C216507A092DFE0CA07C714, 11AC25F1503E2DFF095BD96B, 6506581E61247573B7A726D5); runOnlyForDeploymentPostprocessing = 0; };
 		78AE8C6BEB2A40A6D824CCEE = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		364863F9F2E558B0F50473FC = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		364863F9F2E558B0F50473FC = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000002); runOnlyForDeploymentPostprocessing = 0; };
 		6E431EB0650617AA1756B320 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (68F003EB7325EA3F558EF0AB, 90A521E0B4304DF1B8310A02); runOnlyForDeploymentPostprocessing = 0; };
 		1ABF84E55BD30AC2CEF8FC42 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		7DED7670B79BEA8B7480B1FC = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
