@@ -67,7 +67,7 @@ test('a fully checked main commit produces exactly its source plus the baked rev
   assert.equal(await readFile(join(f.output, 'backend/source.txt'), 'utf8'), 'checked source\n');
   assert.equal(await readFile(join(f.output, 'backend/REVISION'), 'utf8'), f.sha + '\n');
   await assert.rejects(access(join(f.output, 'secret.env')));
-  assert.deepEqual(JSON.parse(result.stdout), { revision: f.sha, ciRunId: 42, dataVersion: 1 });
+  assert.deepEqual(JSON.parse(result.stdout), { revision: f.sha, ciRunId: 42, profile: 'controlled-http', dataVersion: 1 });
 });
 
 for (const job of ['backend', 'ios', 'container', 'deploy-policy']) {
@@ -128,4 +128,20 @@ test('a checked Railway-only historical commit is not a Fly rollback target', as
   const result = await f.run();
   assert.equal(result.code, 1); assert.match(result.stderr, /no Fly deployment configuration/);
   await assert.rejects(access(f.output));
+});
+
+test('live selection requires a release explicitly supporting the live profile', async t => {
+  const old = await fixture(t, true);
+  const rejected = await old.run(old.sha, { SAINT_LOOK_DEPLOYMENT_PROFILE: 'live' });
+  assert.equal(rejected.code, 1);
+  assert.match(rejected.stderr, /does not support the selected profile/);
+  const capable = await fixture(t, true, async directory => {
+    const path = join(directory, 'backend/release.json');
+    const manifest = JSON.parse(await readFile(path));
+    manifest.profiles = ['controlled-http', 'live'];
+    await writeFile(path, JSON.stringify(manifest));
+  });
+  const result = await capable.run(capable.sha, { SAINT_LOOK_DEPLOYMENT_PROFILE: 'live' });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).profile, 'live');
 });
