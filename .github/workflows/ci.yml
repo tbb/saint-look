@@ -11,7 +11,7 @@ on:
       - '.github/workflows/**'
       - 'scripts/deploy/**'
       - 'docs/deployment.md'
-      - 'railway.json'
+      - 'fly.toml'
       - '.dockerignore'
   workflow_dispatch:
 
@@ -138,7 +138,7 @@ jobs:
           wait_for_health http://127.0.0.1:8788/health
           bash client-ios/scripts/test-simulator.sh
           # Exercise the explicit XCTest manifest using one existing local test.
-          # This validates the runner path; it is not a Railway demonstration.
+          # This validates the runner path; it is not a remote deployment demonstration.
           SAINT_LOOK_REMOTE_SMOKE=1 \
           SAINT_LOOK_REMOTE_URL=https://example.invalid \
           SAINT_LOOK_REMOTE_TOKEN="$SAINT_LOOK_UI_TEST_TOKEN" \

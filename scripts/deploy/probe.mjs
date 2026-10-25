@@ -32,7 +32,7 @@ try {
       if (health?.status === 'ok' && health.mode === 'demo' && health.revision === revision && health.dataVersion === 1 && health.deploymentId === deploymentId) {
         ready = true; break;
       }
-    } catch { /* The old deployment may stop while the volume moves to the new one. */ }
+    } catch { /* The existing Machine may restart while the new version is deployed. */ }
     await pause(env.NODE_ENV === 'test' ? 20 : 2000);
   } while (Date.now() < deadline);
   if (!ready) throw new Error('Selected deployment did not become ready.');
