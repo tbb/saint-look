@@ -1,4 +1,4 @@
-// Railway dev profile: real HTTP adapters, but only controlled loopback providers.
+// Dev profile: real HTTP adapters, but only controlled loopback providers.
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';

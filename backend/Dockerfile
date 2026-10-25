@@ -7,7 +7,7 @@ COPY backend/src ./src
 COPY backend/test/providers/ui-server.mjs ./test/providers/ui-server.mjs
 COPY backend/release.json backend/REVISION ./
 RUN node --input-type=module -e "import {readRevision} from './src/revision.mjs'; readRevision(true)"
-# UID 0 is intentional for Railway's mounted volume ownership.
+# UID 0 is intentional for the mounted volume's root ownership.
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8080 SAINT_LOOK_DATA_DIR=/data
 EXPOSE 8080
 STOPSIGNAL SIGTERM

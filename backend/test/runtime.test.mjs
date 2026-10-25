@@ -63,18 +63,18 @@ async function controlledRelease(t) {
   };
 }
 
-test('controlled release reports its baked revision and completes HTTP provider processing despite live environment values', async t => {
+test('controlled release changes deployment identity while retaining its revision and result across restart', async t => {
   const release = await controlledRelease(t);
   const server = await release.launch({
     SAINT_LOOK_PROVIDER: 'live', NODE_ENV: 'production',
     SAINT_LOOK_TEST_PROVIDER_ORIGIN: 'https://example.invalid',
     GEMINI_API_KEY: 'must-not-be-used', PHOTOROOM_API_KEY: 'must-not-be-used',
-    SAINT_LOOK_TEST_CLOCK_FILE: '/must-not-be-read', RAILWAY_GIT_COMMIT_SHA: 'untrusted-environment-value',
-    RAILWAY_DEPLOYMENT_ID: 'test-deployment-id',
+    SAINT_LOOK_TEST_CLOCK_FILE: '/must-not-be-read', FLY_IMAGE_REF: 'registry.fly.io/example:untrusted-environment-value',
+    SAINT_LOOK_DEPLOYMENT_ID: 'b10826ef-458b-4caa-9ee1-9402e94071cb',
   });
   const health = await (await server.request('/health')).json();
   assert.equal(health.revision, release.revision);
-  assert.equal(health.deploymentId, 'test-deployment-id');
+  assert.equal(health.deploymentId, 'b10826ef-458b-4caa-9ee1-9402e94071cb');
   assert.equal(health.dataVersion, 1);
   assert.equal(health.mode, 'demo');
   assert.equal((await server.request('/__control')).status, 404);
@@ -86,7 +86,10 @@ test('controlled release reports its baked revision and completes HTTP provider 
   const before = Buffer.from(await (await server.request(ready.resultPath)).arrayBuffer());
   assert.ok(before.length > 0);
   assert.equal(await server.stop(), 0);
-  const restarted = await release.launch();
+  const restarted = await release.launch({ SAINT_LOOK_DEPLOYMENT_ID: '71068c38-726b-448a-a206-f6f3d8d973d4' });
+  const restartedHealth = await (await restarted.request('/health')).json();
+  assert.equal(restartedHealth.revision, release.revision);
+  assert.equal(restartedHealth.deploymentId, '71068c38-726b-448a-a206-f6f3d8d973d4');
   const persisted = await waitForItem(restarted, item.itemId);
   assert.equal(persisted.operationId, item.operationId);
   assert.deepEqual(Buffer.from(await (await restarted.request(persisted.resultPath)).arrayBuffer()), before);
