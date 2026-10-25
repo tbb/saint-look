@@ -54,24 +54,28 @@ final class WardrobeFlowTests: XCTestCase {
         await fulfillment(of: [expectation], timeout: timeout)
     }
 
-    private func launch(reset: Bool, baseURL: String) -> XCUIApplication {
+    private func launch(reset: Bool, baseURL: String, trialIndex: Int? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["SAINT_LOOK_BASE_URL"] = baseURL
         app.launchEnvironment["SAINT_LOOK_OWNER_TOKEN"] = testToken
         app.launchEnvironment["SAINT_LOOK_UI_TESTING"] = "1"
         app.launchEnvironment["SAINT_LOOK_RESET_DATA"] = reset ? "1" : "0"
+        if let trialIndex {
+            app.launchEnvironment["SAINT_LOOK_LIVE_TRIAL"] = "1"
+            app.launchEnvironment["SAINT_LOOK_TRIAL_PHOTO_INDEX"] = String(trialIndex)
+        }
         app.launch()
         return app
     }
 
     @MainActor
     func testPhotoBecomesReadyThroughBackendAndSurvivesOfflineRelaunch() async throws {
-        let app = launch(reset: true, baseURL: testURL)
+        let app = launch(reset: true, baseURL: testURL, trialIndex: 1)
         XCTAssertTrue(app.staticTexts["demo-notice"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Подключить локальный backend"].exists, "UI test credentials must load independently of Keychain state")
         // Hold delivery until pending is observed; backend processing may finish before XCTest's first poll.
         try await control(mode: "offline")
-        app.buttons["add-demo-photo"].tap()
+        app.buttons["add-trial-photo"].tap()
         XCTAssertTrue(app.images["item-photo"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["pending-status"].firstMatch.waitForExistence(timeout: 5))
         try await control(mode: "online")
@@ -538,6 +542,39 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertFalse(offline.staticTexts["previous-result-notice"].exists)
         offline.swipeDown()
         await waitForSummary(offline, ready: 1, pending: 0, timeout: 5)
+    }
+
+    @MainActor
+    func testReplacementDeletedBeforeHeldResultArrivesStaysGoneAfterOfflineRelaunch() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        try await control(mode: "hold-next-result")
+        try tapVisibleButton("cutout-problem", in: app)
+        try tapVisibleButton("replace-demo-photo", in: app)
+        var held = false
+        for _ in 0..<100 {
+            if (try await transportState())["heldResultResponses"] as? Int == 1 { held = true; break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(held, "The replacement result must be held before deleting the thing")
+        try tapVisibleButton("delete-item", in: app)
+        await waitForSummary(app, ready: 0, pending: 0, timeout: 5)
+        try await control(mode: "online")
+        var deleted = false
+        for _ in 0..<100 {
+            if (try await transportState())["deletedItems"] as? Int == 1 { deleted = true; break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(deleted)
+        XCTAssertFalse(app.images["item-photo"].exists)
+        let state = try await transportState()
+        XCTAssertEqual(state["acceptedOperations"] as? Int, 2)
+        try await control(mode: "offline")
+        app.terminate()
+        let offline = launch(reset: false, baseURL: testURL)
+        await waitForSummary(offline, ready: 0, pending: 0, timeout: 5)
+        XCTAssertFalse(offline.images["item-photo"].exists)
     }
 
     private func providerControl(_ input: [String: Any]? = nil, timeout: TimeInterval = 5) async throws -> [String: Any] {
