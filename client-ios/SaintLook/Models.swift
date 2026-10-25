@@ -94,11 +94,12 @@ struct ItemResponse: Decodable {
 }
 
 enum ClientError: LocalizedError {
-    case invalidSettings, invalidPhoto, oversizedPhoto, invalidResponse, server(Int), resultUnavailable(String), keychain
+    case invalidSettings, invalidAttributes, invalidPhoto, oversizedPhoto, invalidResponse, server(Int), resultUnavailable(String), keychain
 
     var errorDescription: String? {
         switch self {
         case .invalidSettings: return "Укажите адрес backend и токен владельца в настройках."
+        case .invalidAttributes: return "Выберите тип и от одного до пяти цветов из списка."
         case .invalidPhoto: return "Не удалось прочитать фотографию. Выберите другой снимок."
         case .oversizedPhoto: return "Фотография слишком большая. Выберите снимок до 20 МБ."
         case .invalidResponse: return "Backend вернул неподходящий результат. Исходное фото сохранено."

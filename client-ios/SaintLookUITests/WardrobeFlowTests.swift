@@ -327,19 +327,18 @@ final class WardrobeFlowTests: XCTestCase {
         let edit = app.buttons["edit-item"].firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 5))
         try tapVisibleButton("edit-item", in: app)
-        let type = app.textFields["edit-type"]
-        XCTAssertTrue(type.waitForExistence(timeout: 5))
-        await enterText("Shirt", replacing: "", in: type, app: app)
+        XCTAssertFalse(app.textFields["edit-type"].exists)
+        try chooseType("shirt", in: app)
         app.buttons["save-item-edits"].tap()
-        XCTAssertTrue(app.staticTexts["Shirt"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Рубашка"].waitForExistence(timeout: 5))
         app.terminate()
 
         let restored = launch(reset: false, baseURL: testURL)
         restored.swipeUp()
-        XCTAssertTrue(restored.staticTexts["Shirt"].waitForExistence(timeout: 5))
+        XCTAssertTrue(restored.staticTexts["Рубашка"].waitForExistence(timeout: 5))
         try await control(mode: "online")
         XCTAssertTrue(restored.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 40))
-        XCTAssertTrue(restored.staticTexts["Shirt"].exists)
+        XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
         XCTAssertTrue(restored.staticTexts["Синий"].exists, "Editing type must leave colors available for the automatic result")
         let before = try await transportState()
         XCTAssertEqual(before["acceptedOperations"] as? Int, 1)
@@ -347,17 +346,15 @@ final class WardrobeFlowTests: XCTestCase {
 
         try await control(mode: "offline")
         try tapVisibleButton("edit-item", in: restored)
-        let colors = restored.textFields["edit-colors"]
-        XCTAssertTrue(colors.waitForExistence(timeout: 5))
-        await enterText("White, Green", replacing: "Синий", in: colors, app: restored)
+        try chooseColors(["white", "green"], replacing: ["blue"], in: restored)
         restored.buttons["save-item-edits"].tap()
-        XCTAssertTrue(restored.staticTexts["White, Green"].waitForExistence(timeout: 5))
+        XCTAssertTrue(restored.staticTexts["Белый, Зелёный"].waitForExistence(timeout: 5))
         restored.terminate()
 
         let offline = launch(reset: false, baseURL: testURL)
         offline.swipeUp()
-        XCTAssertTrue(offline.staticTexts["Shirt"].waitForExistence(timeout: 5))
-        XCTAssertTrue(offline.staticTexts["White, Green"].exists)
+        XCTAssertTrue(offline.staticTexts["Рубашка"].waitForExistence(timeout: 5))
+        XCTAssertTrue(offline.staticTexts["Белый, Зелёный"].exists)
         XCTAssertTrue(offline.staticTexts["ready-status"].firstMatch.exists)
         XCTAssertTrue(offline.images["item-photo"].firstMatch.exists)
         try await control(mode: "online")
@@ -367,15 +364,72 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testPaletteAllowsAtMostFiveColorsAndPersistsCanonicalLabels() async throws {
+        try await control(mode: "offline")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        try tapVisibleButton("edit-item", in: app)
+        try tapVisibleButton("choose-colors", in: app)
+        for id in ["black", "white", "gray", "beige", "brown"] {
+            try tapVisibleButton("color-\(id)", in: app)
+        }
+        XCTAssertFalse(app.buttons["color-red"].isEnabled, "A sixth color must be unavailable")
+        try tapVisibleButton("color-black", in: app)
+        XCTAssertTrue(app.buttons["color-red"].isEnabled)
+        try tapVisibleButton("color-red", in: app)
+        app.buttons["done-colors"].tap()
+        app.buttons["save-item-edits"].tap()
+        XCTAssertTrue(app.staticTexts["Белый, Серый, Бежевый, Коричневый, Красный"].waitForExistence(timeout: 5))
+        app.terminate()
+        let restored = launch(reset: false, baseURL: testURL)
+        restored.swipeUp()
+        XCTAssertTrue(restored.staticTexts["Белый, Серый, Бежевый, Коричневый, Красный"].waitForExistence(timeout: 5))
+        XCTAssertFalse(restored.staticTexts["item-type"].exists, "Editing colors must not invent a manual type")
+        let state = try await transportState()
+        XCTAssertEqual(state["forwardedUploads"] as? Int, 0)
+    }
+
+    @MainActor
+    func testLegacyLabelsSurviveUntouchedSaveAndExplicitSelectionReplacesOnlyEditedField() async throws {
+        try await control(mode: "legacy-attributes")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        try await control(mode: "offline")
+        try tapVisibleButton("edit-item", in: app)
+        try tapVisibleButton("choose-colors", in: app)
+        app.buttons["done-colors"].tap()
+        app.buttons["save-item-edits"].tap()
+        XCTAssertTrue(app.staticTexts["Накидка"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Сиреневый"].exists)
+        app.terminate()
+        let restored = launch(reset: false, baseURL: testURL)
+        restored.swipeUp()
+        XCTAssertTrue(restored.staticTexts["Накидка"].waitForExistence(timeout: 5))
+        XCTAssertTrue(restored.staticTexts["Сиреневый"].exists)
+        try tapVisibleButton("edit-item", in: restored)
+        try chooseType("shirt", in: restored)
+        restored.buttons["save-item-edits"].tap()
+        XCTAssertTrue(restored.staticTexts["Рубашка"].waitForExistence(timeout: 5))
+        XCTAssertTrue(restored.staticTexts["Сиреневый"].exists, "An untouched legacy color must survive a type edit")
+        try tapVisibleButton("edit-item", in: restored)
+        try chooseColors(["purple"], replacing: [], in: restored)
+        restored.buttons["save-item-edits"].tap()
+        XCTAssertTrue(restored.staticTexts["Фиолетовый"].waitForExistence(timeout: 5))
+        XCTAssertFalse(restored.staticTexts["Сиреневый"].exists)
+        XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
+        let state = try await transportState()
+        XCTAssertEqual(state["forwardedUploads"] as? Int, 1)
+    }
+
+    @MainActor
     func testManualColorsWinOverInFlightResultAndReadyEditsDoNotSubmitAgain() async throws {
         try await control(mode: "offline")
         let app = launch(reset: true, baseURL: testURL)
         app.buttons["add-demo-photo"].tap()
         app.swipeUp()
         try tapVisibleButton("edit-item", in: app)
-        let colors = app.textFields["edit-colors"]
-        XCTAssertTrue(colors.waitForExistence(timeout: 3))
-        await enterText("Red", replacing: "", in: colors, app: app)
+        try chooseColors(["red"], replacing: [], in: app)
         // Prepare input before starting delivery, but save only while the result is in flight.
         try await control(mode: "hold-next-result")
         var held = false
@@ -393,21 +447,19 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertEqual(waiting["heldResultResponses"] as? Int, 1, "The response must remain held until the manual edit is saved")
         try await control(mode: "online")
         XCTAssertTrue(app.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Red"].exists)
+        XCTAssertTrue(app.staticTexts["Красный"].exists)
         XCTAssertTrue(app.staticTexts["Футболка"].exists, "A colors-only edit must retain the automatic type")
 
         try tapVisibleButton("edit-item", in: app)
-        let type = app.textFields["edit-type"]
-        XCTAssertTrue(type.waitForExistence(timeout: 3))
-        await enterText("Shirt", replacing: "Футболка", in: type, app: app)
+        try chooseType("shirt", in: app)
         app.buttons["save-item-edits"].tap()
-        XCTAssertTrue(app.staticTexts["Shirt"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Red"].exists)
+        XCTAssertTrue(app.staticTexts["Рубашка"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Красный"].exists)
         app.terminate()
         let restored = launch(reset: false, baseURL: testURL)
         restored.swipeUp()
-        XCTAssertTrue(restored.staticTexts["Shirt"].waitForExistence(timeout: 5))
-        XCTAssertTrue(restored.staticTexts["Red"].exists)
+        XCTAssertTrue(restored.staticTexts["Рубашка"].waitForExistence(timeout: 5))
+        XCTAssertTrue(restored.staticTexts["Красный"].exists)
         XCTAssertTrue(restored.staticTexts["ready-status"].firstMatch.exists)
         let state = try await transportState()
         XCTAssertEqual(state["acceptedOperations"] as? Int, 1)
@@ -421,10 +473,10 @@ final class WardrobeFlowTests: XCTestCase {
         await waitForSummary(app, ready: 1, pending: 0)
         app.swipeUp()
         try tapVisibleButton("edit-item", in: app)
-        await enterText("Shirt", replacing: "Футболка", in: app.textFields["edit-type"], app: app)
-        await enterText("Red", replacing: "Синий", in: app.textFields["edit-colors"], app: app)
+        try chooseType("shirt", in: app)
+        try chooseColors(["red"], replacing: ["blue"], in: app)
         app.buttons["save-item-edits"].tap()
-        XCTAssertTrue(app.staticTexts["Shirt"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Рубашка"].waitForExistence(timeout: 5))
 
         try await control(mode: "offline")
         let problem = app.buttons["cutout-problem"].firstMatch
@@ -435,8 +487,8 @@ final class WardrobeFlowTests: XCTestCase {
         assertRecoveryDidNotOpenPhotoPicker(in: app)
         XCTAssertTrue(app.staticTexts["previous-result-notice"].exists)
         XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
-        XCTAssertTrue(app.staticTexts["Shirt"].exists)
-        XCTAssertTrue(app.staticTexts["Red"].exists)
+        XCTAssertTrue(app.staticTexts["Рубашка"].exists)
+        XCTAssertTrue(app.staticTexts["Красный"].exists)
         app.terminate()
 
         let restored = launch(reset: false, baseURL: testURL)
@@ -445,8 +497,8 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(restored.images["item-photo"].firstMatch.exists)
         try await control(mode: "online")
         XCTAssertTrue(restored.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 40))
-        XCTAssertTrue(restored.staticTexts["Shirt"].exists)
-        XCTAssertTrue(restored.staticTexts["Red"].exists)
+        XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
+        XCTAssertTrue(restored.staticTexts["Красный"].exists)
         XCTAssertFalse(restored.staticTexts["previous-result-notice"].exists)
         let state = try await transportState()
         XCTAssertEqual(state["acceptedOperations"] as? Int, 2)
@@ -497,10 +549,10 @@ final class WardrobeFlowTests: XCTestCase {
         await waitForSummary(app, ready: 1, pending: 0)
         app.swipeUp()
         try tapVisibleButton("edit-item", in: app)
-        await enterText("Shirt", replacing: "Футболка", in: app.textFields["edit-type"], app: app)
-        await enterText("White", replacing: "Синий", in: app.textFields["edit-colors"], app: app)
+        try chooseType("shirt", in: app)
+        try chooseColors(["white"], replacing: ["blue"], in: app)
         app.buttons["save-item-edits"].tap()
-        XCTAssertTrue(app.staticTexts["Shirt"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Рубашка"].waitForExistence(timeout: 5))
         let previousImage = app.images["item-photo"].firstMatch.screenshot().pngRepresentation
         try await control(mode: "offline")
         try tapVisibleButton("cutout-problem", in: app)
@@ -519,14 +571,14 @@ final class WardrobeFlowTests: XCTestCase {
         let restored = launch(reset: false, baseURL: testURL)
         restored.swipeUp()
         XCTAssertTrue(restored.staticTexts["previous-result-notice"].waitForExistence(timeout: 5))
-        XCTAssertTrue(restored.staticTexts["Shirt"].exists)
-        XCTAssertTrue(restored.staticTexts["White"].exists)
+        XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
+        XCTAssertTrue(restored.staticTexts["Белый"].exists)
         _ = try await providerControl(["nextCutout": "red"])
         try await control(mode: "online")
         XCTAssertTrue(restored.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 40))
         XCTAssertFalse(restored.staticTexts["previous-result-notice"].exists)
-        XCTAssertTrue(restored.staticTexts["Shirt"].exists)
-        XCTAssertTrue(restored.staticTexts["White"].exists)
+        XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
+        XCTAssertTrue(restored.staticTexts["Белый"].exists)
         XCTAssertFalse(restored.images["item-photo"].firstMatch.screenshot().pngRepresentation == previousImage,
                           "The new red cutout must replace the previous blue one after becoming ready")
         let state = try await transportState()
@@ -537,8 +589,8 @@ final class WardrobeFlowTests: XCTestCase {
         let offline = launch(reset: false, baseURL: testURL)
         offline.swipeUp()
         XCTAssertTrue(offline.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 5))
-        XCTAssertTrue(offline.staticTexts["Shirt"].exists)
-        XCTAssertTrue(offline.staticTexts["White"].exists)
+        XCTAssertTrue(offline.staticTexts["Рубашка"].exists)
+        XCTAssertTrue(offline.staticTexts["Белый"].exists)
         XCTAssertFalse(offline.staticTexts["previous-result-notice"].exists)
         offline.swipeDown()
         await waitForSummary(offline, ready: 1, pending: 0, timeout: 5)
@@ -626,13 +678,33 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func enterText(_ text: String, replacing previous: String, in field: XCUIElement, app: XCUIApplication) async {
-        field.tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: previous.count) + text)
-        // Synthesized input can arrive after typeText returns; saving must observe the entered value.
-        let entered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", text), object: field)
-        await fulfillment(of: [entered], timeout: 10)
+    private func chooseType(_ id: String, in app: XCUIApplication) throws {
+        try tapVisibleButton("choose-type", in: app)
+        try tapVisibleButton("type-\(id)", in: app)
+    }
+
+    @MainActor
+    private func chooseColors(_ selected: [String], replacing previous: [String], in app: XCUIApplication) throws {
+        try tapVisibleButton("choose-colors", in: app)
+        for id in previous where !selected.contains(id) {
+            try tapColor(id, in: app)
+        }
+        for id in selected where !previous.contains(id) {
+            try tapColor(id, in: app)
+        }
+        app.buttons["done-colors"].tap()
+    }
+
+    @MainActor
+    private func tapColor(_ id: String, in app: XCUIApplication) throws {
+        // List may remove offscreen rows from accessibility. Start from its known first row
+        // before searching down, including when the previous choice was near the bottom.
+        for _ in 0..<4 {
+            let first = app.buttons["color-black"]
+            if first.exists && first.isHittable { break }
+            app.swipeDown()
+        }
+        try tapVisibleButton("color-\(id)", in: app)
     }
 
     private func transportState() async throws -> [String: Any] {
