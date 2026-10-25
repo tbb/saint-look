@@ -80,6 +80,26 @@ build_options=(
   -derivedDataPath build/DerivedData
   CODE_SIGNING_ALLOWED=NO
 )
+if [[ "${SAINT_LOOK_LIVE_TRIAL:-0}" == '1' ]]; then
+  # Validate the exact committed public inputs before any UI action can consume quota.
+  python3 - <<'TRIAL_PHOTOS'
+import hashlib, json, os, re
+from pathlib import Path
+count = int(os.environ.get('SAINT_LOOK_TRIAL_PHOTO_COUNT', '0'))
+if count not in (2, 3):
+    raise SystemExit('Select two or three approved photos.')
+folder = Path('SaintLook/TrialPhotos')
+manifest = json.loads((folder / 'manifest.json').read_text())
+photos = manifest['photos'][:count]
+if manifest.get('format') != 1 or len(photos) != count:
+    raise SystemExit('Trial photo manifest is incomplete.')
+for photo in photos:
+    if not re.fullmatch(r'photo-[1-3]\.(png|jpg)', photo.get('file', '')) or not all(photo.get(k) for k in ('source', 'license', 'author')):
+        raise SystemExit('Trial photo provenance is incomplete.')
+    if hashlib.sha256((folder / photo['file']).read_bytes()).hexdigest() != photo['sha256']:
+        raise SystemExit('Trial photo differs from the reviewed manifest.')
+TRIAL_PHOTOS
+fi
 xcodebuild "${build_options[@]}" build-for-testing
 
 # XCTest runs in its own generated host, so the app's ATS settings do not apply
@@ -107,7 +127,7 @@ if [[ "${SAINT_LOOK_RECORD_VIDEO:-0}" == '1' ]]; then
 fi
 
 test_options=("${build_options[@]}")
-if [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" == '1' ]]; then
+if [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" == '1' || "${SAINT_LOOK_LIVE_TRIAL:-0}" == '1' ]]; then
   # Shell variables are not a portable way to configure a Simulator test host.
   # Give XCTest an explicit manifest; never print or upload this secret-bearing file.
   remote_manifest="$(pwd)/build/DerivedData/Build/Products/RemoteSmoke.xctestrun"
@@ -126,6 +146,8 @@ else:
     targets = [value for key, value in manifest.items() if not key.startswith('__') and isinstance(value, dict)]
 keys = ('SAINT_LOOK_REMOTE_SMOKE', 'SAINT_LOOK_REMOTE_URL', 'SAINT_LOOK_REMOTE_TOKEN',
         'SAINT_LOOK_REMOTE_REVISION', 'SAINT_LOOK_REMOTE_DEPLOYMENT_ID')
+if os.environ.get('SAINT_LOOK_LIVE_TRIAL') == '1':
+    keys = tuple(key for key in keys if key != 'SAINT_LOOK_REMOTE_SMOKE') + ('SAINT_LOOK_LIVE_TRIAL', 'SAINT_LOOK_TRIAL_PHOTO_COUNT')
 if any(not os.environ.get(key) for key in keys):
     raise SystemExit('Remote smoke configuration is incomplete.')
 matched = 0

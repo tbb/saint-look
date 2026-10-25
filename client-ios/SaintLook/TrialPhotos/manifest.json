@@ -1,0 +1,56 @@
+{
+  "format": 1,
+  "photos": [
+    {
+      "file": "photo-1.png",
+      "title": "Worn T-shirt white",
+      "description": "Белая короткорукавная футболка на тёмной поверхности, одна вещь без человека.",
+      "source": "https://commons.wikimedia.org/wiki/File:Worn_T-shirt_white.png",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "author": "Taylor 49",
+      "authorUrl": "https://meta.wikimedia.org/wiki/User:Taylor_49",
+      "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/2/23/Worn_T-shirt_white.png",
+      "width": 1200,
+      "height": 1200,
+      "sha256": "fbc6e902898915c554187d961515c7db2505954c4e46d4a090528de4348cdb50",
+      "bytes": 688834,
+      "changes": "Unmodified original file; renamed locally.",
+      "verifiedAt": "2026-10-25"
+    },
+    {
+      "file": "photo-2.jpg",
+      "title": "Jeans",
+      "description": "Синие джинсы на светлом ковре, одна вещь без человека.",
+      "source": "https://commons.wikimedia.org/wiki/File:Jeans.jpg",
+      "license": "Public domain (author dedication)",
+      "licenseUrl": "https://commons.wikimedia.org/wiki/File:Jeans.jpg",
+      "author": "Oktaeder",
+      "authorUrl": "https://de.wikipedia.org/wiki/Benutzer:Oktaeder",
+      "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/5/5a/Jeans.jpg",
+      "width": 435,
+      "height": 650,
+      "sha256": "b316902ad85e8ff46b164ceb7f2c38d3c1424c9d789703e0267e3dfce68fbe1c",
+      "bytes": 100403,
+      "changes": "Unmodified original file; renamed locally.",
+      "verifiedAt": "2026-10-25"
+    },
+    {
+      "file": "photo-3.jpg",
+      "title": "Classical polo shirt",
+      "description": "Светлое поло с тёмной отделкой на коричневой поверхности, одна вещь без человека.",
+      "source": "https://commons.wikimedia.org/wiki/File:Classical_polo_shirt.jpg",
+      "license": "CC BY-SA 3.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "author": "Elkagye",
+      "authorUrl": "https://commons.wikimedia.org/wiki/User:Elkagye",
+      "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/7/7b/Classical_polo_shirt.jpg",
+      "width": 1582,
+      "height": 1468,
+      "sha256": "609a842b50d1d15c7ca1800143649769ad817c3b6929e31ee283ef024784b0e2",
+      "bytes": 740322,
+      "changes": "Unmodified original file; renamed locally.",
+      "verifiedAt": "2026-10-25"
+    }
+  ]
+}

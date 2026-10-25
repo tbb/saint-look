@@ -15,8 +15,10 @@ const pause = milliseconds => new Promise(resolve => setTimeout(resolve, millise
 try {
   const mode = process.argv[2] || 'smoke';
   const stateFile = process.argv[3];
-  if (!['smoke', 'seed', 'verify', 'cleanup'].includes(mode) || (mode !== 'smoke' && !stateFile)) throw new Error('Use smoke, seed FILE, verify FILE or cleanup FILE.');
+  if (!['smoke', 'seed', 'verify', 'cleanup', 'health'].includes(mode) || (!['smoke', 'health'].includes(mode) && !stateFile)) throw new Error('Use smoke, seed FILE, verify FILE or cleanup FILE.');
   if (mode === 'seed' && existsSync(stateFile)) throw new Error('Canary state file already exists.');
+  const expectedMode = env.SAINT_LOOK_DEPLOYMENT_PROFILE === 'live' ? 'live' : 'demo';
+  if (expectedMode === 'live' && mode !== 'health') throw new Error('Live deployment allows only health checks; run the explicit photo trial separately.');
   const base = origin();
   const revision = env.SAINT_LOOK_EXPECTED_REVISION;
   const deploymentId = env.SAINT_LOOK_EXPECTED_DEPLOYMENT_ID;
@@ -29,13 +31,14 @@ try {
     try {
       const response = await fetch(base + '/health', { redirect: 'error', signal: AbortSignal.timeout(5000) });
       const health = response.ok ? await response.json() : null;
-      if (health?.status === 'ok' && health.mode === 'demo' && health.revision === revision && health.dataVersion === 1 && health.deploymentId === deploymentId) {
+      if (health?.status === 'ok' && health.mode === expectedMode && health.revision === revision && health.dataVersion === 1 && health.deploymentId === deploymentId) {
         ready = true; break;
       }
     } catch { /* The existing Machine may restart while the new version is deployed. */ }
     await pause(env.NODE_ENV === 'test' ? 20 : 2000);
   } while (Date.now() < deadline);
   if (!ready) throw new Error('Selected deployment did not become ready.');
+  if (mode === 'health') { console.log(JSON.stringify({ revision, deploymentId, mode: expectedMode, ready: true })); process.exit(0); }
   if (!env.SAINT_LOOK_DEV_OWNER_TOKEN || env.SAINT_LOOK_DEV_OWNER_TOKEN.length < 32) throw new Error('Owner token is missing or too short.');
   async function api(path, method = 'GET', body) {
     const response = await fetch(base + path, {

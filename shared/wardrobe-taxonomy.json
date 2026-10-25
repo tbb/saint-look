@@ -1,0 +1,247 @@
+{
+  "version": 1,
+  "types": [
+    {
+      "id": "t_shirt",
+      "label": "Футболка",
+      "description": "A T-shirt with short or long sleeves; exclude polos and sweatshirts."
+    },
+    {
+      "id": "polo",
+      "label": "Поло",
+      "description": "A polo shirt with collar and short button placket."
+    },
+    {
+      "id": "shirt",
+      "label": "Рубашка",
+      "description": "A shirt with a full front button opening."
+    },
+    {
+      "id": "blouse",
+      "label": "Блузка",
+      "description": "A blouse, typically lightweight and dressy."
+    },
+    {
+      "id": "top",
+      "label": "Топ",
+      "description": "A tank top, camisole or other sleeveless top."
+    },
+    {
+      "id": "sweater",
+      "label": "Свитер",
+      "description": "A knitted pullover, jumper or turtleneck without a full front opening."
+    },
+    {
+      "id": "cardigan",
+      "label": "Кардиган",
+      "description": "A knitted cardigan with a full front opening."
+    },
+    {
+      "id": "sweatshirt",
+      "label": "Свитшот",
+      "description": "A sweatshirt without a hood."
+    },
+    {
+      "id": "hoodie",
+      "label": "Худи",
+      "description": "A sweatshirt with a hood."
+    },
+    {
+      "id": "vest",
+      "label": "Жилет",
+      "description": "A sleeveless vest or waistcoat, including insulated vests."
+    },
+    {
+      "id": "blazer",
+      "label": "Пиджак",
+      "description": "A tailored blazer or suit jacket, one standalone item."
+    },
+    {
+      "id": "jacket",
+      "label": "Куртка",
+      "description": "An outerwear jacket, including denim, leather and insulated jackets."
+    },
+    {
+      "id": "coat",
+      "label": "Пальто",
+      "description": "A coat or overcoat."
+    },
+    {
+      "id": "raincoat",
+      "label": "Плащ",
+      "description": "A raincoat or trench coat."
+    },
+    {
+      "id": "jeans",
+      "label": "Джинсы",
+      "description": "Denim jeans."
+    },
+    {
+      "id": "trousers",
+      "label": "Брюки",
+      "description": "Trousers or leggings, excluding denim jeans."
+    },
+    {
+      "id": "shorts",
+      "label": "Шорты",
+      "description": "Shorts."
+    },
+    {
+      "id": "skirt",
+      "label": "Юбка",
+      "description": "A skirt."
+    },
+    {
+      "id": "dress",
+      "label": "Платье",
+      "description": "A one-piece dress."
+    },
+    {
+      "id": "jumpsuit",
+      "label": "Комбинезон",
+      "description": "A one-piece jumpsuit or overalls, not separate top and trousers."
+    },
+    {
+      "id": "sneakers",
+      "label": "Кроссовки",
+      "description": "Sneakers or canvas trainers; a matching pair counts as one item."
+    },
+    {
+      "id": "shoes",
+      "label": "Туфли",
+      "description": "Dress shoes, loafers, pumps or ballet flats; a matching pair is one item."
+    },
+    {
+      "id": "boots",
+      "label": "Ботинки и сапоги",
+      "description": "Ankle boots or tall boots; a matching pair counts as one item."
+    },
+    {
+      "id": "sandals",
+      "label": "Сандалии",
+      "description": "Sandals or open-toed footwear; a matching pair counts as one item."
+    },
+    {
+      "id": "slippers",
+      "label": "Тапочки",
+      "description": "Slippers; a matching pair counts as one item."
+    },
+    {
+      "id": "bag",
+      "label": "Сумка",
+      "description": "A bag or backpack."
+    },
+    {
+      "id": "headwear",
+      "label": "Головной убор",
+      "description": "A hat, cap or beanie."
+    },
+    {
+      "id": "scarf",
+      "label": "Шарф",
+      "description": "A scarf or shawl."
+    },
+    {
+      "id": "belt",
+      "label": "Ремень",
+      "description": "A belt."
+    },
+    {
+      "id": "gloves",
+      "label": "Перчатки",
+      "description": "Gloves or mittens; a matching pair counts as one item."
+    },
+    {
+      "id": "socks",
+      "label": "Носки",
+      "description": "Socks or tights; a matching pair counts as one item."
+    },
+    {
+      "id": "underwear",
+      "label": "Нижнее бельё",
+      "description": "One standalone underwear item."
+    },
+    {
+      "id": "swimwear",
+      "label": "Купальник",
+      "description": "One standalone swimwear item; reject separate garments laid together."
+    },
+    {
+      "id": "unknown",
+      "label": "Не определён",
+      "description": "The item is a wardrobe item but its type is uncertain or not covered by the other options."
+    }
+  ],
+  "colors": [
+    {
+      "id": "black",
+      "label": "Чёрный",
+      "description": "black"
+    },
+    {
+      "id": "white",
+      "label": "Белый",
+      "description": "white"
+    },
+    {
+      "id": "gray",
+      "label": "Серый",
+      "description": "gray"
+    },
+    {
+      "id": "beige",
+      "label": "Бежевый",
+      "description": "beige"
+    },
+    {
+      "id": "brown",
+      "label": "Коричневый",
+      "description": "brown"
+    },
+    {
+      "id": "red",
+      "label": "Красный",
+      "description": "red"
+    },
+    {
+      "id": "orange",
+      "label": "Оранжевый",
+      "description": "orange"
+    },
+    {
+      "id": "yellow",
+      "label": "Жёлтый",
+      "description": "yellow"
+    },
+    {
+      "id": "green",
+      "label": "Зелёный",
+      "description": "green"
+    },
+    {
+      "id": "light_blue",
+      "label": "Голубой",
+      "description": "light blue"
+    },
+    {
+      "id": "blue",
+      "label": "Синий",
+      "description": "blue"
+    },
+    {
+      "id": "purple",
+      "label": "Фиолетовый",
+      "description": "purple"
+    },
+    {
+      "id": "pink",
+      "label": "Розовый",
+      "description": "pink"
+    },
+    {
+      "id": "burgundy",
+      "label": "Бордовый",
+      "description": "burgundy"
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 // Controlled external HTTP providers for Simulator and the isolated dev profile; never live AI.
 import { createServer } from 'node:http';
 import sharp from 'sharp';
+import { jevAnswer, validateJevRequest } from './jev.mjs';
 import { demoResult } from '../../src/demo-provider.mjs';
 
 if (process.env.NODE_ENV !== 'test') throw new Error('UI providers require NODE_ENV=test.');
@@ -46,15 +47,18 @@ const server = createServer(async (request, response) => {
       return reply(response, 200, { attributesCalls, cutoutCalls });
     }
     if (request.method !== 'POST') return reply(response, 404, { error: 'not_found' });
-    await bodyOf(request, 8 * 1024 * 1024);
-    if (request.url === '/v1beta/models/gemini-3.1-flash-lite:generateContent') {
+    const body = await bodyOf(request, 16 * 1024 * 1024);
+    if (request.url === '/v1/systemone') {
+      const key = process.env.TYPESAFE_API_KEY || 'fixture-typesafe-key';
+      if (!['fixture-typesafe-key', 'controlled-fixture-typesafe'].includes(key)) throw new Error('Only dummy provider credentials are allowed');
+      await validateJevRequest(request, body, key);
       attributesCalls++;
       const reason = nextAttributes;
       nextAttributes = null;
-      const attributes = reason
-        ? { suitable: false, reason: reason === 'photo_on_person' ? 'on_person' : 'multiple_items', type: null, colors: [] }
-        : { suitable: true, reason: null, type: 'Футболка', colors: ['Синий'] };
-      return reply(response, 200, { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(attributes) }] } }] });
+      return reply(response, 200, jevAnswer({
+        reason: reason === 'photo_on_person' ? 'on_person' : reason === 'photo_multiple_items' ? 'multiple_items' : 'suitable',
+        type: 't_shirt', colors: { blue: 0.98 },
+      }));
     }
     if (request.url === '/v1/segment') {
       cutoutCalls++;

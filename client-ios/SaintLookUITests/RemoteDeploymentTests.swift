@@ -76,3 +76,72 @@ final class RemoteDeploymentTests: XCTestCase {
         try await Task.sleep(nanoseconds: 2_000_000_000)
     }
 }
+
+/// Paid-provider work is opt-in; ordinary CI skips this test before touching the app or API.
+final class LiveTrialTests: XCTestCase {
+    @MainActor
+    func testPublicPhotosBecomeRealCardsAndSurviveOfflineRelaunch() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["SAINT_LOOK_LIVE_TRIAL"] == "1" else { throw XCTSkip("Live trial requires explicit account and photo preflight.") }
+        continueAfterFailure = false
+        let count = try XCTUnwrap(Int(env["SAINT_LOOK_TRIAL_PHOTO_COUNT"] ?? ""))
+        guard [2, 3].contains(count) else { XCTFail("Select two or three approved photos."); return }
+        let origin = try XCTUnwrap(env["SAINT_LOOK_REMOTE_URL"])
+        let url = try XCTUnwrap(URL(string: origin))
+        guard url.scheme == "https", url.host != nil, url.user == nil, url.password == nil,
+              url.query == nil, url.fragment == nil, ["", "/"].contains(url.path) else { XCTFail("Use an HTTPS origin."); return }
+        let token = try XCTUnwrap(env["SAINT_LOOK_REMOTE_TOKEN"])
+        guard token.count >= 32 else { XCTFail("Owner token is missing."); return }
+        let revision = try XCTUnwrap(env["SAINT_LOOK_REMOTE_REVISION"])
+        let marker = try XCTUnwrap(env["SAINT_LOOK_REMOTE_DEPLOYMENT_ID"])
+        var request = URLRequest(url: url.appendingPathComponent("health"))
+        request.timeoutInterval = 15
+        let (data, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        let health = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(health["mode"] as? String, "live")
+        XCTAssertEqual(health["revision"] as? String, revision)
+        XCTAssertEqual(health["deploymentId"] as? String, marker)
+        XCTAssertEqual(health["dataVersion"] as? Int, 1)
+        defer { XCUIApplication().terminate() }
+        func launch(reset: Bool, online: Bool, index: Int) -> XCUIApplication {
+            let app = XCUIApplication()
+            app.launchEnvironment = ["SAINT_LOOK_BASE_URL": online ? origin : "http://127.0.0.1:1",
+                "SAINT_LOOK_OWNER_TOKEN": token, "SAINT_LOOK_UI_TESTING": "1", "SAINT_LOOK_RESET_DATA": reset ? "1" : "0",
+                "SAINT_LOOK_LIVE_TRIAL": "1", "SAINT_LOOK_TRIAL_PHOTO_INDEX": String(index)]
+            app.launch()
+            return app
+        }
+        for index in 0..<count {
+            let app = launch(reset: index == 0, online: true, index: index)
+            let add = app.buttons["add-trial-photo"]
+            XCTAssertTrue(add.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["add-demo-photo"].exists)
+            // Exactly one upload action per selected photo. Never retry a failed provider result.
+            add.tap()
+            let expected = "Всего: \(index + 1). Готово: \(index + 1). Ожидают: 0."
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", expected), object: app.staticTexts["wardrobe-summary"])
+            await fulfillment(of: [ready], timeout: 180)
+            XCTAssertEqual(app.staticTexts["ready-status"].firstMatch.label, "Готово")
+            XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
+            let type = app.staticTexts["item-type"].firstMatch.label
+            let colors = app.staticTexts["item-colors"].firstMatch.label
+            XCTAssertFalse(type.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            XCTAssertFalse(colors.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            let image = app.images["item-photo"].firstMatch.screenshot().pngRepresentation
+            app.terminate()
+            let offline = launch(reset: false, online: false, index: index)
+            XCTAssertTrue(offline.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 5))
+            XCTAssertEqual(offline.staticTexts["wardrobe-summary"].label, expected)
+            XCTAssertEqual(offline.staticTexts["item-type"].firstMatch.label, type)
+            XCTAssertEqual(offline.staticTexts["item-colors"].firstMatch.label, colors)
+            XCTAssertEqual(offline.images["item-photo"].firstMatch.screenshot().pngRepresentation, image)
+            print("Live trial photo \(index + 1)/\(count): ready and retained offline; backend \(revision), deployment \(marker)")
+            offline.terminate()
+        }
+        // Reconnect so durable acknowledgements drain. Keep cards for visual/manual quality review.
+        let final = launch(reset: false, online: true, index: count - 1)
+        XCTAssertTrue(final.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 5))
+        try await Task.sleep(nanoseconds: 2_000_000_000)
+    }
+}

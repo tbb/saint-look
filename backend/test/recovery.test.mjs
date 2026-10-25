@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
+import { join } from 'node:path';
 import { environment, photoRequest, upload, waitForItem } from './support.mjs';
 import { providerFixture } from './providers/fixture.mjs';
 
@@ -74,4 +76,25 @@ test('a crash during an external stage preserves unknown outcome without calling
   assert.equal(fixture.calls.attributes.length, 1);
   assert.equal(fixture.calls.cutout.length, 1);
   assert.equal((await restarted.request(`/v1/items/${photo.itemId}/result`)).status, 409);
+});
+
+
+test('pending Gemini operations, including saved attributes, never resume into Jev', async t => {
+  for (const attributesDone of [false, true]) {
+    const fixture = await providerFixture(t); const env = await environment(t);
+    const old = await env.launch({ ...fixture.env, SAINT_LOOK_STAGE_DELAY_MS: '60000' });
+    const photo = await photoRequest(); await upload(old, photo); await old.stop();
+    // Historical persisted input simulates the previous release; assertions use HTTP/process exit.
+    const legacy = new DatabaseSync(join(env.directory, 'wardrobe.sqlite'));
+    legacy.prepare("UPDATE items SET provider_id='live-test',attributes_state=?,attributes=?")
+      .run(attributesDone ? 'done' : 'pending', attributesDone ? '{"type":"Old Gemini type","colors":["Old color"]}' : null);
+    legacy.close();
+    await assert.rejects(env.launch({ ...fixture.env, SAINT_LOOK_DEPLOYMENT_PROFILE: 'controlled-http' }), /Pending work belongs to another provider profile/);
+    const local = await env.launch(fixture.env);
+    const failed = await waitForItem(local, photo.itemId, 'failed');
+    assert.equal(failed.error, 'provider_configuration_changed');
+    assert.equal(failed.type, null); assert.equal(failed.resultPath, null);
+    assert.equal(fixture.calls.attributes.length, 0); assert.equal(fixture.calls.cutout.length, 0);
+    await local.stop();
+  }
 });

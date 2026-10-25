@@ -10,3 +10,6 @@
 !backend/test/
 !backend/test/providers/
 !backend/test/providers/ui-server.mjs
+!backend/test/providers/jev.mjs
+!shared/
+!shared/wardrobe-taxonomy.json

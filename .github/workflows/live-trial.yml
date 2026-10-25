@@ -1,0 +1,158 @@
+name: Deploy live profile and optionally run approved photo trial
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: 'Full 40-character SHA with successful main CI'
+        required: true
+        type: string
+      run_trial:
+        description: 'Consume provider quota on the approved public photos (no automatic retry)'
+        required: true
+        default: false
+        type: boolean
+      photo_count:
+        description: 'Number of reviewed public photos; verify remaining provider quota and approved budget first'
+        required: true
+        default: '2'
+        type: choice
+        options: ['2', '3']
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: fly-dev-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: vars.AI_TRIAL_PREFLIGHT_VERIFIED == 'true' && github.ref == 'refs/heads/main' && vars.FLY_BUDGET_VERIFIED == 'true' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SAINT_LOOK_DEPLOYMENT_PROFILE: live
+    outputs:
+      revision: ${{ steps.upload.outputs.revision }}
+      deployment_id: ${{ steps.upload.outputs.deployment_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Verify deployment configuration
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          OWNER_TOKEN: ${{ secrets.SAINT_LOOK_DEV_OWNER_TOKEN }}
+          DEV_URL: ${{ vars.SAINT_LOOK_DEV_URL }}
+          FLY_APP_NAME: ${{ vars.FLY_APP_NAME }}
+        run: |
+          node - <<'JS'
+          const e = process.env;
+          if (!e.FLY_API_TOKEN || (e.OWNER_TOKEN || '').length < 32) throw new Error('Configure app-scoped Fly and owner secrets first.');
+          if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(e.FLY_APP_NAME || '')) throw new Error('Configure the Fly app name first.');
+          const u = new URL(e.DEV_URL);
+          if (u.protocol !== 'https:' || u.username || u.password || u.pathname !== '/' || u.search || u.hash) throw new Error('Configure an HTTPS dev origin.');
+          JS
+      - name: Verify exact main CI and prepare source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SELECTED_SHA: ${{ inputs.revision }}
+        run: |
+          node scripts/deploy/prepare-release.mjs "$SELECTED_SHA" "$RUNNER_TEMP/release" > "$RUNNER_TEMP/release-proof.json"
+      - name: Install pinned Fly CLI
+        run: |
+          mkdir -p "$RUNNER_TEMP/fly-bin"
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/flyctl.tar.gz" https://github.com/superfly/flyctl/releases/download/v0.4.122/flyctl_0.4.122_Linux_x86_64.tar.gz
+          printf '%s  %s\n' '3d6ae2e2e24df47b46132e8920eebb7aec4ed0930dae2074369e59db89493cf2' "$RUNNER_TEMP/flyctl.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/flyctl.tar.gz" -C "$RUNNER_TEMP/fly-bin" flyctl
+          "$RUNNER_TEMP/fly-bin/flyctl" version
+          echo "$RUNNER_TEMP/fly-bin" >> "$GITHUB_PATH"
+      - name: Upload checked release
+        id: upload
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_APP_NAME: ${{ vars.FLY_APP_NAME }}
+          AI_TRIAL_PREFLIGHT_VERIFIED: ${{ vars.AI_TRIAL_PREFLIGHT_VERIFIED }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          PHOTOROOM_API_KEY: ${{ secrets.PHOTOROOM_API_KEY }}
+        run: |
+          node scripts/deploy/upload.mjs "$RUNNER_TEMP/release" > "$RUNNER_TEMP/deployment.json"
+          node - <<'JS'
+          const fs = require('node:fs');
+          const d = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/deployment.json', 'utf8'));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `revision=${d.revision}\ndeployment_id=${d.deploymentId}\n`);
+          JS
+      - name: Verify live identity without uploading a photo
+        env:
+          SAINT_LOOK_DEV_URL: ${{ vars.SAINT_LOOK_DEV_URL }}
+          SAINT_LOOK_DEV_OWNER_TOKEN: ${{ secrets.SAINT_LOOK_DEV_OWNER_TOKEN }}
+          SAINT_LOOK_EXPECTED_REVISION: ${{ steps.upload.outputs.revision }}
+          SAINT_LOOK_EXPECTED_DEPLOYMENT_ID: ${{ steps.upload.outputs.deployment_id }}
+        run: node scripts/deploy/probe.mjs health
+      - name: Record deployment identity
+        env:
+          REVISION: ${{ steps.upload.outputs.revision }}
+          DEPLOYMENT_ID: ${{ steps.upload.outputs.deployment_id }}
+          OPERATION: live-deploy
+        run: |
+          node - <<'JS'
+          const fs = require('node:fs');
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Operation: ${process.env.OPERATION}\n\nRevision: ${process.env.REVISION}\n\nDeployment attempt marker: ${process.env.DEPLOYMENT_ID}\n\nLive health passed without uploading a photo. Real provider readiness and account quota still require the explicit trial and operator evidence.\n`);
+          JS
+
+  live-trial:
+    if: inputs.run_trial && vars.AI_TRIAL_PREFLIGHT_VERIFIED == 'true' && github.ref == 'refs/heads/main' && vars.FLY_BUDGET_VERIFIED == 'true' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    needs: deploy
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.deploy.outputs.revision }}
+          persist-credentials: false
+      - name: Explicit public-photo trial against live providers
+        env:
+          SAINT_LOOK_LIVE_TRIAL: '1'
+          SAINT_LOOK_TRIAL_PHOTO_COUNT: ${{ inputs.photo_count }}
+          SAINT_LOOK_REMOTE_URL: ${{ vars.SAINT_LOOK_DEV_URL }}
+          SAINT_LOOK_REMOTE_TOKEN: ${{ secrets.SAINT_LOOK_DEV_OWNER_TOKEN }}
+          SAINT_LOOK_REMOTE_REVISION: ${{ needs.deploy.outputs.revision }}
+          SAINT_LOOK_REMOTE_DEPLOYMENT_ID: ${{ needs.deploy.outputs.deployment_id }}
+          SAINT_LOOK_UI_TEST_ONLY: SaintLookUITests/LiveTrialTests
+          SAINT_LOOK_RECORD_VIDEO: '1'
+        run: bash client-ios/scripts/test-simulator.sh
+      - name: Preserve trial video and photo provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: live-trial-evidence
+          path: |
+            client-ios/build/videos/*.mp4
+            client-ios/SaintLook/TrialPhotos/ATTRIBUTION.md
+            client-ios/SaintLook/TrialPhotos/manifest.json
+            docs/live-trial.md
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 0
+      - name: Record trial scope
+        if: always()
+        env:
+          CLIENT_REVISION: ${{ needs.deploy.outputs.revision }}
+          BACKEND_REVISION: ${{ needs.deploy.outputs.revision }}
+          DEPLOYMENT_ID: ${{ needs.deploy.outputs.deployment_id }}
+          PHOTO_COUNT: ${{ inputs.photo_count }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          text = f"Client: {os.environ['CLIENT_REVISION']}\n\nBackend: {os.environ['BACKEND_REVISION']}\n\nDeployment: {os.environ['DEPLOYMENT_ID']}\n\nSelected photos: {os.environ['PHOTO_COUNT']}. Each is submitted once; failed processing is not automatically retried. This is an automated trial, not the deferred manual PhotosPicker check. Record actual provider quota before/after and observed quality separately; selected photo count is not billing evidence.\n"
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write(text)
+          PY

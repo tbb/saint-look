@@ -9,6 +9,9 @@ struct WardrobeView: View {
     @State private var showSettings = false
     @State private var importing = false
     @State private var editingItem: WardrobeItem?
+    #if DEBUG
+    @State private var trialImported = false
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -38,9 +41,22 @@ struct WardrobeView: View {
                     .accessibilityIdentifier("add-photo")
                     .disabled(importing || !store.storageAvailable)
                     #if DEBUG
-                    Button("Добавить тестовое фото") { store.addPhoto(PhotoData.demoPhoto()) }
-                        .accessibilityIdentifier("add-demo-photo")
-                        .disabled(!store.storageAvailable)
+                    if ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1",
+                       ProcessInfo.processInfo.environment["SAINT_LOOK_LIVE_TRIAL"] == "1" {
+                        Button("Добавить фото пробы") {
+                            do {
+                                let photo = try PhotoData.trialPhoto()
+                                trialImported = true
+                                store.addPhoto(photo)
+                            } catch { store.notice = "Не удалось прочитать фото пробы." }
+                        }
+                        .accessibilityIdentifier("add-trial-photo")
+                        .disabled(trialImported || !store.storageAvailable)
+                    } else {
+                        Button("Добавить тестовое фото") { store.addPhoto(PhotoData.demoPhoto()) }
+                            .accessibilityIdentifier("add-demo-photo")
+                            .disabled(!store.storageAvailable)
+                    }
                     #endif
                     if importing { ProgressView("Сохраняем фото…") }
                 }
@@ -130,8 +146,8 @@ private struct ItemCard: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("previous-result-notice")
             }
-            if let type = item.displayedType { Text(type).font(.headline) }
-            if !item.displayedColors.isEmpty { Text(item.displayedColors.joined(separator: ", ")) }
+            if let type = item.displayedType { Text(type).font(.headline).accessibilityIdentifier("item-type") }
+            if !item.displayedColors.isEmpty { Text(item.displayedColors.joined(separator: ", ")).accessibilityIdentifier("item-colors") }
             if let error = item.errorMessage {
                 Text(error).font(.footnote).foregroundStyle(.secondary)
                     .accessibilityIdentifier("item-error")
@@ -205,26 +221,32 @@ private struct ItemEditView: View {
     let item: WardrobeItem
     @Environment(\.dismiss) private var dismiss
     @State private var type: String
-    @State private var colors: String
+    @State private var colors: [String]
     @State private var error: String?
 
     init(store: WardrobeStore, item: WardrobeItem) {
         self.store = store
         self.item = item
         _type = State(initialValue: item.displayedType ?? "")
-        _colors = State(initialValue: item.displayedColors.joined(separator: ", "))
+        _colors = State(initialValue: item.displayedColors)
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Тип вещи", text: $type)
-                        .autocorrectionDisabled()
-                        .accessibilityIdentifier("edit-type")
-                    TextField("Цвета через запятую", text: $colors)
-                        .autocorrectionDisabled()
-                        .accessibilityIdentifier("edit-colors")
+                    NavigationLink {
+                        TypeSelectionView(selection: $type)
+                    } label: {
+                        LabeledContent("Тип вещи", value: type.isEmpty ? "Выбрать" : type)
+                    }
+                    .accessibilityIdentifier("choose-type")
+                    NavigationLink {
+                        ColorSelectionView(selection: $colors)
+                    } label: {
+                        LabeledContent("Цвета", value: colors.isEmpty ? "Выбрать" : colors.joined(separator: ", "))
+                    }
+                    .accessibilityIdentifier("choose-colors")
                 } footer: {
                     Text("Правки сохраняются на устройстве без интернета. Повторная обработка фото не нужна.")
                 }
@@ -244,27 +266,90 @@ private struct ItemEditView: View {
     }
 
     private func save() {
-        let editedType = type.trimmingCharacters(in: .whitespacesAndNewlines)
-        let editedColors = colors.split(separator: ",").map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty }
-        // An untouched field must remain automatic, even if a result arrived with the editor open.
+        // Untouched fields stay automatic, including when a result arrives with the editor open.
+        // Legacy labels are retained until the user explicitly replaces that field.
         let changedType = type != (item.displayedType ?? "")
-        let changedColors = colors != item.displayedColors.joined(separator: ", ")
-        guard !changedType || !editedType.isEmpty else {
-            error = "Укажите тип вещи или отмените изменение."
-            return
-        }
-        guard !changedColors || !editedColors.isEmpty else {
-            error = "Укажите хотя бы один цвет или отмените изменение."
+        let changedColors = Set(colors) != Set(item.displayedColors)
+        guard !changedColors || WardrobeTaxonomy.shared.contains(colors: colors) else {
+            error = "Выберите от одного до пяти цветов."
             return
         }
         do {
-            try store.saveEdits(for: item.id, type: changedType ? editedType : nil, colors: changedColors ? editedColors : nil)
+            try store.saveEdits(for: item.id, type: changedType ? type : nil, colors: changedColors ? colors : nil)
             dismiss()
         } catch {
             self.error = "Не удалось сохранить правки на устройстве. Попробуйте ещё раз."
         }
+    }
+}
+
+private struct TypeSelectionView: View {
+    @Binding var selection: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        List(WardrobeTaxonomy.shared.types) { option in
+            Button {
+                selection = option.label
+                dismiss()
+            } label: {
+                HStack {
+                    Text(option.label)
+                    Spacer()
+                    if selection == option.label { Image(systemName: "checkmark") }
+                }
+            }
+            .accessibilityIdentifier("type-\(option.id)")
+            .accessibilityValue(selection == option.label ? "Выбран" : "Не выбран")
+        }
+        .navigationTitle("Тип вещи")
+    }
+}
+
+private struct ColorSelectionView: View {
+    @Binding var selection: [String]
+    @Environment(\.dismiss) private var dismiss
+    private let taxonomy = WardrobeTaxonomy.shared
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(taxonomy.colors) { option in
+                    let selected = selection.contains(option.label)
+                    Button {
+                        // Selecting a new palette explicitly replaces any legacy free-form labels.
+                        var labels = Set(selection.filter { label in taxonomy.colors.contains { $0.label == label } })
+                        if selected { labels.remove(option.label) } else { labels.insert(option.label) }
+                        selection = taxonomy.colors.filter { labels.contains($0.label) }.map(\.label)
+                    } label: {
+                        HStack {
+                            Text(option.label)
+                            Spacer()
+                            if selected { Image(systemName: "checkmark") }
+                        }
+                    }
+                    .accessibilityIdentifier("color-\(option.id)")
+                    .accessibilityValue(selected ? "Выбран" : "Не выбран")
+                    .disabled(!selected && canonicalSelectionCount >= 5)
+                }
+            } header: {
+                Text("Выберите от 1 до 5 цветов")
+            } footer: {
+                if selection.contains(where: { label in !taxonomy.colors.contains { $0.label == label } }) {
+                    Text("Сохранённые цвета: \(selection.joined(separator: ", ")). Новый выбор заменит их цветами из списка.")
+                }
+            }
+        }
+        .navigationTitle("Цвета")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Готово") { dismiss() }.accessibilityIdentifier("done-colors")
+            }
+        }
+    }
+
+    private var canonicalSelectionCount: Int {
+        taxonomy.colors.filter { selection.contains($0.label) }.count
     }
 }
 

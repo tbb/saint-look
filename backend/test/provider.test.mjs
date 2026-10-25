@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { environment, photoRequest, upload, waitForItem } from './support.mjs';
 import { providerFixture } from './providers/fixture.mjs';
+import { jevAnswer } from './providers/jev.mjs';
+import sharp from 'sharp';
 
 test('a photo gets validated attributes and a cutout through both external HTTP protocols', async (t) => {
   const fixture = await providerFixture(t);
@@ -15,10 +17,11 @@ test('a photo gets validated attributes and a cutout through both external HTTP 
   assert.equal(ready.mode, 'demo'); // Controlled transport must not claim real AI.
   assert.deepEqual(ready.processing, { attributes: 'done', cutout: 'done' });
   assert.deepEqual(Buffer.from(await (await server.request(ready.resultPath)).arrayBuffer()), fixture.cutout);
-  const gemini = JSON.parse(fixture.calls.attributes[0].body);
-  assert.equal(gemini.contents[0].parts[1].inlineData.mimeType, 'image/png');
-  assert.equal(gemini.generationConfig.responseMimeType, 'application/json');
-  assert.equal(fixture.calls.attributes[0].headers['x-goog-api-key'], 'fixture-gemini-key');
+  const jev = JSON.parse(fixture.calls.attributes[0].body);
+  assert.equal(jev.model, 'jev-1.14.0');
+  assert.equal(jev.questions.item_type.criteria.shirt.length > 0, true);
+  assert.equal(fixture.calls.attributes.length, 1);
+  assert.equal(fixture.calls.attributes[0].headers.authorization, 'Bearer fixture-typesafe-key');
   const multipart = await new Request('http://fixture', { method: 'POST', headers: fixture.calls.cutout[0].headers, body: fixture.calls.cutout[0].body }).formData();
   assert.equal(multipart.get('format'), 'png');
   assert.equal(multipart.get('despill'), 'false');
@@ -28,7 +31,7 @@ test('a photo gets validated attributes and a cutout through both external HTTP 
 
 test('missing credentials or preflight approval fails without contacting either provider or falling back to demo', async (t) => {
   const fixture = await providerFixture(t);
-  for (const [override, code] of [[{ GEMINI_API_KEY: '' }, 'provider_not_configured'], [{ SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED: '' }, 'provider_preflight_required']]) {
+  for (const [override, code] of [[{ TYPESAFE_API_KEY: '' }, 'provider_not_configured'], [{ SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED: '' }, 'provider_preflight_required']]) {
     const env = await environment(t);
     const server = await env.launch({ ...fixture.env, ...override });
     const request = await photoRequest();
@@ -43,12 +46,18 @@ test('missing credentials or preflight approval fails without contacting either 
   assert.equal(fixture.calls.cutout.length, 0);
 });
 
-test('incomplete, blocked or unsuitable attributes never publish a card or call cutout', async (t) => {
+test('incomplete or unsuitable Jev answers never publish a card or call cutout', async (t) => {
+  const incomplete = jevAnswer(); delete incomplete.answers.color_black;
+  const invalidColor = jevAnswer(); invalidColor.answers.color_red.noul = '0.99';
+  const invalidChoice = jevAnswer(); invalidChoice.answers.item_type.choice = 'invented-type';
+  const invalidDistribution = jevAnswer(); invalidDistribution.answers.item_type.probabilities.shirt = 0.3;
+  const uncertainPhoto = jevAnswer(); uncertainPhoto.answers.suitability.confidence = 0.69;
   for (const [payload, expected] of [
-    [{ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '{"suitable":true,"reason":null,"type":"","colors":[]}' }] } }] }, 'invalid_provider_response'],
-    [{ candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [{ text: '{"suitable":true,"reason":null,"type":"Рубашка","colors":["Красный"]}' }] } }] }, 'invalid_provider_response'],
-    [{ promptFeedback: { blockReason: 'SAFETY' } }, 'inappropriate_photo'],
-    [{ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '{"suitable":false,"reason":"multiple_items","type":null,"colors":[]}' }] } }] }, 'photo_multiple_items'],
+    [incomplete, 'invalid_provider_response'], [invalidColor, 'invalid_provider_response'],
+    [invalidChoice, 'invalid_provider_response'], [invalidDistribution, 'invalid_provider_response'],
+    [{ ...jevAnswer(), model: 'jev-1.13.0' }, 'invalid_provider_response'],
+    [uncertainPhoto, 'photo_unclear'], [jevAnswer({ colors: {} }), 'photo_unclear'],
+    ...['on_person', 'multiple_items', 'no_item', 'unclear'].map(reason => [jevAnswer({ reason }), `photo_${reason}`]),
   ]) {
     const fixture = await providerFixture(t, { attributes(_request, response) { response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(payload)); } });
     const env = await environment(t);
@@ -57,7 +66,42 @@ test('incomplete, blocked or unsuitable attributes never publish a card or call 
     const failed = await waitForItem(server, request.itemId, 'failed');
     assert.equal(failed.error, expected);
     assert.equal(failed.type, null); assert.deepEqual(failed.colors, []); assert.equal(failed.resultPath, null);
-    assert.equal(fixture.calls.cutout.length, 0);
+    assert.equal(fixture.calls.attributes.length, 1); assert.equal(fixture.calls.cutout.length, 0);
+    await server.stop();
+  }
+});
+
+test('uncertain type stays unknown and main colors use canonical labels in score order, limited to five', async t => {
+  const fixture = await providerFixture(t, { attributes(_request, response) {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(jevAnswer({ confidence: 0.69,
+      colors: { red: 0.99, blue: 0.98, black: 0.97, white: 0.96, gray: 0.7, beige: 0.7, yellow: 0.69 } })));
+  } });
+  const env = await environment(t); const server = await env.launch(fixture.env);
+  const request = await photoRequest(); await upload(server, request);
+  const ready = await waitForItem(server, request.itemId);
+  assert.equal(ready.type, 'Не определён');
+  assert.deepEqual(ready.colors, ['Красный', 'Синий', 'Чёрный', 'Белый', 'Серый']);
+  assert.equal(fixture.calls.attributes.length, 1); assert.equal(fixture.calls.cutout.length, 1);
+});
+
+test('wide and small sources fit Jev limits without stretching or changing the Photoroom source', async t => {
+  for (const [width, height, expectedWidth, expectedHeight] of [[2048, 100, 1568, 280], [100, 2048, 280, 1568], [16, 16, 280, 280]]) {
+    const source = await sharp({ create: { width, height, channels: 3, background: '#ff0000' } }).png().toBuffer();
+    const fixture = await providerFixture(t); const env = await environment(t); const server = await env.launch(fixture.env);
+    const request = { ...await photoRequest(), imageBase64: source.toString('base64') }; await upload(server, request);
+    await waitForItem(server, request.itemId);
+    const payload = JSON.parse(fixture.calls.attributes[0].body);
+    const image = Buffer.from(payload.assets[payload.state.photo].data_base64, 'base64');
+    const metadata = await sharp(image).metadata();
+    assert.deepEqual([metadata.width, metadata.height], [expectedWidth, expectedHeight]);
+    const { data } = await sharp(image).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    assert.deepEqual([...data.subarray(0, 3)], [255, 255, 255]);
+    const center = ((Math.floor(expectedHeight / 2) * expectedWidth) + Math.floor(expectedWidth / 2)) * 3;
+    assert.deepEqual([...data.subarray(center, center + 3)], [255, 0, 0]);
+    const multipart = await new Request('http://fixture', { method: 'POST', headers: fixture.calls.cutout[0].headers, body: fixture.calls.cutout[0].body }).formData();
+    const cutoutInput = await sharp(Buffer.from(await multipart.get('image_file').arrayBuffer())).metadata();
+    assert.deepEqual([cutoutInput.width, cutoutInput.height], [width, height]);
     await server.stop();
   }
 });
@@ -127,7 +171,7 @@ test('a delayed provider leaves the card pending while the API remains usable', 
   const fixture = await providerFixture(t, { async attributes(_request, response, { attributes }) {
     await pending;
     response.writeHead(200, { 'Content-Type': 'application/json' });
-    response.end(JSON.stringify({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(attributes) }] } }] }));
+    response.end(JSON.stringify(attributes));
   } });
   const env = await environment(t); const server = await env.launch(fixture.env);
   const request = await photoRequest(); await upload(server, request);
@@ -142,7 +186,7 @@ test('a delayed provider leaves the card pending while the API remains usable', 
 
 test('live mode with missing credentials stays live and fails closed instead of silently using demo', async (t) => {
   const env = await environment(t);
-  const server = await env.launch({ SAINT_LOOK_PROVIDER: 'live', SAINT_LOOK_TEST_PROVIDER_ORIGIN: '', NODE_ENV: 'production', GEMINI_API_KEY: '', PHOTOROOM_API_KEY: '', SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED: '' });
+  const server = await env.launch({ SAINT_LOOK_PROVIDER: 'live', SAINT_LOOK_TEST_PROVIDER_ORIGIN: '', NODE_ENV: 'production', TYPESAFE_API_KEY: '', PHOTOROOM_API_KEY: '', SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED: '' });
   assert.equal((await (await server.request('/health')).json()).mode, 'live');
   const request = await photoRequest(); await upload(server, request);
   const item = await waitForItem(server, request.itemId, 'failed');

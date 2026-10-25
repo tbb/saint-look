@@ -43,11 +43,17 @@ try {
       throw new Error(`Required CI job did not pass: ${name}.`);
     }
   }
+  const profile = process.env.SAINT_LOOK_DEPLOYMENT_PROFILE || 'controlled-http';
+  if (!['controlled-http', 'live'].includes(profile)) throw new Error('Unsupported deployment profile.');
   let manifest;
   try { manifest = JSON.parse(git('show', `${sha}:backend/release.json`)); }
   catch { throw new Error('Selected commit has no supported release manifest.'); }
   if (manifest.format !== 1 || manifest.profile !== 'controlled-http' || manifest.dataVersion !== 1
     || manifest.minDataVersion !== 1 || manifest.maxDataVersion !== 1) throw new Error('Selected release is not supported by this deployment workflow.');
+  if (profile === 'live' && !manifest.profiles?.includes('live')) throw new Error('Selected release does not support the selected profile.');
+  if (profile === 'live' && manifest.providerConfig !== 'photoroom-jev-1.14.0-taxonomy-1') {
+    throw new Error('Selected release has an incompatible provider configuration.');
+  }
   try { git('show', `${sha}:fly.toml`); }
   catch { throw new Error('Selected release has no Fly deployment configuration.'); }
   if (git('ls-tree', '-r', sha).split('\n').some(entry => entry.startsWith('120000 '))) throw new Error('Release symlinks are not supported.');
@@ -62,7 +68,7 @@ try {
     rmSync(output, { recursive: true, force: true });
     throw error;
   }
-  console.log(JSON.stringify({ revision: sha, ciRunId: run.id, dataVersion: manifest.dataVersion }));
+  console.log(JSON.stringify({ revision: sha, ciRunId: run.id, profile, dataVersion: manifest.dataVersion }));
 } catch (error) {
   console.error(error instanceof Error && !error.message.includes('Command failed') ? error.message : 'Release verification failed.');
   process.exitCode = 1;

@@ -39,7 +39,7 @@ function start(path, env, stdout = 'inherit') {
 const env = {
   ...process.env, NODE_ENV: 'test', SAINT_LOOK_PROVIDER: 'live',
   SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED: 'true',
-  GEMINI_API_KEY: 'controlled-fixture-gemini', PHOTOROOM_API_KEY: 'controlled-fixture-photoroom',
+  TYPESAFE_API_KEY: 'controlled-fixture-typesafe', PHOTOROOM_API_KEY: 'controlled-fixture-photoroom',
   SAINT_LOOK_UI_PROVIDER_PORT: '0', SAINT_LOOK_UI_PROVIDER_CONTROL_TOKEN: randomBytes(32).toString('hex'),
   SAINT_LOOK_STAGE_DELAY_MS: '100', SAINT_LOOK_PROVIDER_TIMEOUT_MS: '5000',
   SAINT_LOOK_DATA_DIR: process.env.SAINT_LOOK_DATA_DIR || '/data',
