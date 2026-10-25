@@ -193,3 +193,31 @@ test('a failed thing can be deleted without retrying its paid provider stages', 
   assert.equal(fixture.calls.attributes.length, 1);
   assert.equal(fixture.calls.cutout.length, 1);
 });
+
+test('replacement deleted during its provider request stays deleted after the late result and restart', async t => {
+  let calls = 0, release;
+  const fixture = await providerFixture(t, { cutout(request, response, { cutout }) {
+    calls++;
+    const send = () => { response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(cutout); };
+    if (calls === 1) send(); else release = send;
+  } });
+  const env = await environment(t);
+  const server = await env.launch({ ...fixture.env, SAINT_LOOK_PROVIDER_TIMEOUT_MS: '10000' });
+  const original = await photoRequest();
+  await upload(server, original);
+  await waitForItem(server, original.itemId);
+  const replacement = { ...await photoRequest(), itemId: original.itemId, revision: 1, action: 'replace' };
+  assert.equal((await attempt(server, replacement)).status, 202);
+  await waitUntil(() => release);
+  assert.equal((await server.request(`/v1/items/${original.itemId}`, { method: 'DELETE' })).status, 204);
+  release();
+  await new Promise(resolve => setTimeout(resolve, 150));
+  await assertDeleted(server, original);
+  await assertDeleted(server, replacement);
+  await server.stop();
+  const restarted = await env.launch(fixture.env);
+  await assertDeleted(restarted, replacement);
+  await assertRejected(await attempt(restarted, replacement));
+  assert.equal(fixture.calls.attributes.length, 2);
+  assert.equal(fixture.calls.cutout.length, 2);
+});

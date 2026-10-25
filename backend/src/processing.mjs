@@ -10,6 +10,9 @@ export function initializeProcessing(database) {
 }
 
 export function createWorker(database, provider, env, retention) {
+  if (env.SAINT_LOOK_DEPLOYMENT_PROFILE && database.prepare("SELECT 1 FROM items WHERE status='pending' AND provider_id != ? LIMIT 1").get(provider.id)) {
+    throw new Error('Pending work belongs to another provider profile. Finish or delete it before switching.');
+  }
   const timers = new Map();
   const abort = new AbortController();
   let closing = false;

@@ -90,3 +90,14 @@ test('a retained synthetic result survives a new deployment identity and is expl
   assert.equal(result.code, 0, result.stderr);
   assert.equal(f.requests.filter(r => r.method === 'DELETE').length, 1);
 });
+
+test('live readiness checks only health and refuses a synthetic smoke', async t => {
+  const f = await fixture(t, { status: 'ok', mode: 'live', revision, dataVersion: 1, deploymentId: 'deployment-new' });
+  const result = await f.run({ SAINT_LOOK_DEPLOYMENT_PROFILE: 'live' }, ['health']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).mode, 'live');
+  assert.ok(f.requests.length > 0);
+  assert.ok(f.requests.every(r => r.url === '/health' && r.method === 'GET' && !r.authorization));
+  assert.equal((await f.run({ SAINT_LOOK_DEPLOYMENT_PROFILE: 'live' })).code, 1);
+  assert.ok(f.requests.every(r => r.url === '/health' && r.method === 'GET'));
+});

@@ -11,4 +11,4 @@ RUN node --input-type=module -e "import {readRevision} from './src/revision.mjs'
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8080 SAINT_LOOK_DATA_DIR=/data
 EXPOSE 8080
 STOPSIGNAL SIGTERM
-CMD ["node", "src/start-controlled.mjs"]
+CMD ["node", "src/start-release.mjs"]

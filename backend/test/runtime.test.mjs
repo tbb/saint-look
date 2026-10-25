@@ -41,8 +41,8 @@ async function controlledRelease(t) {
   });
   return {
     directory, revision,
-    async launch(extra = {}) {
-      const child = spawn(process.execPath, [join(directory, 'src/start-controlled.mjs')], {
+    async launch(extra = {}, entry = 'start-controlled.mjs') {
+      const child = spawn(process.execPath, [join(directory, 'src', entry)], {
         env: { ...process.env, PORT: '0', SAINT_LOOK_DATA_DIR: join(directory, 'data'),
           SAINT_LOOK_OWNER_TOKEN: token, ...extra }, stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -118,4 +118,40 @@ test('an unexpected provider process exit stops the controlled runtime instead o
   const [code] = await stopped;
   assert.equal(code, 1);
   await assert.rejects(fetch(server.url + '/health', { signal: AbortSignal.timeout(1000) }));
+});
+
+
+test('release entry stays controlled by default even when real provider credentials are configured', async t => {
+  const release = await controlledRelease(t);
+  const server = await release.launch({ GEMINI_API_KEY: 'unused-real-key', PHOTOROOM_API_KEY: 'unused-real-key' }, 'start-release.mjs');
+  assert.equal((await (await server.request('/health')).json()).mode, 'demo');
+  const item = await photoRequest();
+  assert.equal((await upload(server, item)).status, 202);
+  assert.equal((await waitForItem(server, item.itemId)).mode, 'demo');
+});
+
+test('explicit live entry requires preflight and credentials and announces live without making an upload', async t => {
+  const release = await controlledRelease(t);
+  const live = { SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED: 'true', GEMINI_API_KEY: 'fixture-unused', PHOTOROOM_API_KEY: 'fixture-unused' };
+  await assert.rejects(release.launch({ ...live, GEMINI_API_KEY: '' }, 'start-release.mjs'), /Live provider configuration is incomplete/);
+  await assert.rejects(release.launch({ ...live, SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED: 'false' }, 'start-release.mjs'), /Live provider configuration is incomplete/);
+  await assert.rejects(release.launch({ ...live, SAINT_LOOK_TEST_PROVIDER_ORIGIN: 'http:\/\/127.0.0.1:1' }, 'start-release.mjs'), /Test overrides are not allowed/);
+  const server = await release.launch(live, 'start-release.mjs');
+  const health = await (await server.request('/health')).json();
+  assert.equal(health.mode, 'live');
+  assert.equal(health.revision, release.revision);
+});
+
+test('switching deployed provider profiles refuses pending work instead of mutating it', async t => {
+  const env = await environment(t);
+  const old = await env.launch({ SAINT_LOOK_DEMO_DELAY_MS: '60000' });
+  const item = await photoRequest();
+  assert.equal((await upload(old, item)).status, 202);
+  await old.stop();
+  const release = await controlledRelease(t);
+  await assert.rejects(release.launch({ SAINT_LOOK_DATA_DIR: env.directory }, 'start-release.mjs'), /Pending work belongs to another provider profile/);
+  const original = await env.launch({ SAINT_LOOK_DEMO_DELAY_MS: '60000' });
+  const state = await (await original.request(`/v1/items/${item.itemId}`)).json();
+  assert.equal(state.status, 'pending');
+  assert.equal(state.operationId, item.operationId);
 });
