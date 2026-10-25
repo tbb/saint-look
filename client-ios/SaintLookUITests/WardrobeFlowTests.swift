@@ -143,11 +143,7 @@ final class WardrobeFlowTests: XCTestCase {
         try await control(mode: "accept-upload-then-offline")
         let app = launch(reset: true, baseURL: testURL)
         app.buttons["add-demo-photo"].tap()
-        var accepted = false
-        for _ in 0..<200 {
-            if (try await transportState())["acceptedOperations"] as? Int == 1 { accepted = true; break }
-            try await Task.sleep(nanoseconds: 100_000_000)
-        }
+        let accepted = try await waitForTransportCount("acceptedOperations", equalTo: 1, timeout: 20)
         XCTAssertTrue(accepted, "The real backend must accept the photo before delivery is disconnected")
         await waitForSummary(app, ready: 0, pending: 1, timeout: 5)
         XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
@@ -304,12 +300,7 @@ final class WardrobeFlowTests: XCTestCase {
         let restored = launch(reset: false, baseURL: testURL)
         await waitForSummary(restored, ready: 0, pending: 0, timeout: 5)
         try await control(mode: "online")
-        var delivered = false
-        for _ in 0..<200 {
-            let state = try await transportState()
-            if state["deletedItems"] as? Int == 1 { delivered = true; break }
-            try await Task.sleep(nanoseconds: 100_000_000)
-        }
+        let delivered = try await waitForTransportCount("deletedItems", equalTo: 1, timeout: 20)
         XCTAssertTrue(delivered, "Deletion of a failed thing must resume after connectivity returns")
         XCTAssertFalse(restored.staticTexts["failed-status"].exists)
         XCTAssertFalse(restored.images["item-photo"].exists)
@@ -432,15 +423,7 @@ final class WardrobeFlowTests: XCTestCase {
         try chooseColors(["red"], replacing: [], in: app)
         // Prepare input before starting delivery, but save only while the result is in flight.
         try await control(mode: "hold-next-result")
-        var held = false
-        for _ in 0..<400 {
-            let state = try await transportState()
-            if state["heldResultResponses"] as? Int == 1 {
-                held = true
-                break
-            }
-            try await Task.sleep(nanoseconds: 100_000_000)
-        }
+        let held = try await waitForTransportCount("heldResultResponses", equalTo: 1, timeout: 40)
         XCTAssertTrue(held, "The result response must be in flight before saving the edit")
         app.buttons["save-item-edits"].tap()
         let waiting = try await transportState()
@@ -604,20 +587,12 @@ final class WardrobeFlowTests: XCTestCase {
         try await control(mode: "hold-next-result")
         try tapVisibleButton("cutout-problem", in: app)
         try tapVisibleButton("replace-demo-photo", in: app)
-        var held = false
-        for _ in 0..<100 {
-            if (try await transportState())["heldResultResponses"] as? Int == 1 { held = true; break }
-            try await Task.sleep(nanoseconds: 100_000_000)
-        }
+        let held = try await waitForTransportCount("heldResultResponses", equalTo: 1, timeout: 10)
         XCTAssertTrue(held, "The replacement result must be held before deleting the thing")
         try tapVisibleButton("delete-item", in: app)
         await waitForSummary(app, ready: 0, pending: 0, timeout: 5)
         try await control(mode: "online")
-        var deleted = false
-        for _ in 0..<100 {
-            if (try await transportState())["deletedItems"] as? Int == 1 { deleted = true; break }
-            try await Task.sleep(nanoseconds: 100_000_000)
-        }
+        let deleted = try await waitForTransportCount("deletedItems", equalTo: 1, timeout: 10)
         XCTAssertTrue(deleted)
         XCTAssertFalse(app.images["item-photo"].exists)
         let state = try await transportState()
@@ -705,6 +680,16 @@ final class WardrobeFlowTests: XCTestCase {
             app.swipeDown()
         }
         try tapVisibleButton("color-\(id)", in: app)
+    }
+
+    private func waitForTransportCount(_ key: String, equalTo expected: Int, timeout: TimeInterval) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(timeout))
+        while clock.now < deadline {
+            if (try await transportState())[key] as? Int == expected { return true }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return false
     }
 
     private func transportState() async throws -> [String: Any] {
