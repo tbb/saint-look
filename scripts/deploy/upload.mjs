@@ -10,7 +10,7 @@ try {
   const profile = env.SAINT_LOOK_DEPLOYMENT_PROFILE || 'controlled-http';
   if (!['controlled-http', 'live'].includes(profile)) throw new Error('Unsupported deployment profile.');
   if (profile === 'live' && (env.AI_TRIAL_PREFLIGHT_VERIFIED !== 'true'
-    || ![env.GEMINI_API_KEY, env.PHOTOROOM_API_KEY].every(key => /^[A-Za-z0-9_+/.=-]{8,1024}$/.test(key || '')))) {
+    || ![env.TYPESAFE_API_KEY, env.PHOTOROOM_API_KEY].every(key => /^[A-Za-z0-9_+/.=-]{8,1024}$/.test(key || '')))) {
     throw new Error('Live deployment requires verified account conditions and provider secrets.');
   }
   if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(app || '')) throw new Error('Configure an explicit Fly app name.');
@@ -19,12 +19,16 @@ try {
   const release = resolve(process.argv[2]);
   const revision = readFileSync(join(release, 'backend/REVISION'), 'utf8').trim();
   if (!/^[a-f0-9]{40}$/.test(revision) || !lstatSync(join(release, 'fly.toml')).isFile()) throw new Error('Verified Fly release is incomplete.');
-  if (profile === 'live' && !JSON.parse(readFileSync(join(release, 'backend/release.json'), 'utf8')).profiles?.includes('live')) {
-    throw new Error('Selected release does not support live.');
+  if (profile === 'live') {
+    const manifest = JSON.parse(readFileSync(join(release, 'backend/release.json'), 'utf8'));
+    if (!manifest.profiles?.includes('live')) throw new Error('Selected release does not support live.');
+    if (manifest.providerConfig !== 'photoroom-jev-1.14.0-taxonomy-1') {
+      throw new Error('Selected release has an incompatible provider configuration.');
+    }
   }
   const cliEnvironment = { ...env, NO_COLOR: '1' };
   for (const name of Object.keys(cliEnvironment)) {
-    if (name.startsWith('RAILWAY_') || name.startsWith('SAINT_LOOK_') || ['GEMINI_API_KEY', 'PHOTOROOM_API_KEY', 'GH_TOKEN', 'GITHUB_TOKEN'].includes(name)) delete cliEnvironment[name];
+    if (name.startsWith('RAILWAY_') || name.startsWith('SAINT_LOOK_') || ['TYPESAFE_API_KEY', 'GEMINI_API_KEY', 'PHOTOROOM_API_KEY', 'GH_TOKEN', 'GITHUB_TOKEN'].includes(name)) delete cliEnvironment[name];
   }
   function fly(args, timeout = 30000, input) {
     return execFileSync('flyctl', args, { env: cliEnvironment, encoding: 'utf8', timeout, maxBuffer: 4 * 1024 * 1024, input, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
@@ -65,7 +69,7 @@ try {
   if (profile === 'live') {
     try {
       fly(['secrets', 'import', '--stage', '--app', app], 30000,
-        `GEMINI_API_KEY=${env.GEMINI_API_KEY}\nPHOTOROOM_API_KEY=${env.PHOTOROOM_API_KEY}\n`);
+        `TYPESAFE_API_KEY=${env.TYPESAFE_API_KEY}\nPHOTOROOM_API_KEY=${env.PHOTOROOM_API_KEY}\n`);
     } catch { throw new Error('Could not stage provider secrets. No deployment was started.'); }
   }
   const deploymentId = randomUUID();
