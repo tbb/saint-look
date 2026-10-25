@@ -54,7 +54,7 @@ const server = createServer(async (request, response) => {
   try {
     const path = new URL(request.url, 'http://localhost').pathname;
     if (request.method === 'GET' && path === '/health') return send(response, 200, { status: 'ok', mode: provider.mode, revision, dataVersion: release.dataVersion,
-      ...(process.env.RAILWAY_DEPLOYMENT_ID ? { deploymentId: process.env.RAILWAY_DEPLOYMENT_ID } : {}) });
+      ...(process.env.SAINT_LOOK_DEPLOYMENT_ID ? { deploymentId: process.env.SAINT_LOOK_DEPLOYMENT_ID } : {}) });
     if (!authorized(request)) return send(response, 401, { error: 'unauthorized' });
     retention.sweep();
     const acknowledgement = path.match(/^\/v1\/items\/([^/]+)\/operations\/([^/]+)\/ack$/);
