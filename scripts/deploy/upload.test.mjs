@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 const state = JSON.parse(fs.readFileSync(process.env.FIXTURE_STATE));
 const secretInput = args[0] === 'secrets' ? fs.readFileSync(0, 'utf8') : undefined;
-fs.appendFileSync(process.env.CAPTURE, JSON.stringify({ args, secretInput, token: process.env.FLY_API_TOKEN, ownerTokenPresent: !!process.env.SAINT_LOOK_DEV_OWNER_TOKEN, railwayTokenPresent: !!process.env.RAILWAY_TOKEN, configText: args[0] === 'deploy' ? fs.readFileSync(args[args.indexOf('--config') + 1], 'utf8') : undefined }) + '\\n');
+fs.appendFileSync(process.env.CAPTURE, JSON.stringify({ args, secretInput, token: process.env.FLY_API_TOKEN, ownerTokenPresent: !!process.env.SAINT_LOOK_DEV_OWNER_TOKEN, railwayTokenPresent: !!process.env.RAILWAY_TOKEN, providerKeyPresent: !!(process.env.TYPESAFE_API_KEY || process.env.PHOTOROOM_API_KEY || process.env.GEMINI_API_KEY), configText: args[0] === 'deploy' ? fs.readFileSync(args[args.indexOf('--config') + 1], 'utf8') : undefined }) + '\\n');
 if (args[0] === 'deploy') {
   if (state.fail) { console.error(process.env.FLY_API_TOKEN); process.exit(1); }
   process.exit(0);
@@ -120,14 +120,15 @@ test('deploying the same source again produces a different attempt marker', t =>
 
 test('live upload stages provider secrets only on stdin and ordinary deploy explicitly resets controlled mode', t => {
   const f = fixture(t);
-  writeFileSync(join(f.release, 'backend/release.json'), JSON.stringify({ profiles: ['controlled-http', 'live'] }));
-  const result = f.run({ SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', AI_TRIAL_PREFLIGHT_VERIFIED: 'true', GEMINI_API_KEY: 'gemini-fixture-secret', PHOTOROOM_API_KEY: 'photoroom-fixture-secret' });
+  writeFileSync(join(f.release, 'backend/release.json'), JSON.stringify({ profiles: ['controlled-http', 'live'], providerConfig: 'photoroom-jev-1.14.0-taxonomy-1' }));
+  const result = f.run({ SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', AI_TRIAL_PREFLIGHT_VERIFIED: 'true', TYPESAFE_API_KEY: 'typesafe-fixture-secret', PHOTOROOM_API_KEY: 'photoroom-fixture-secret' });
   assert.equal(result.status, 0, result.stderr);
   const secret = f.calls().find(call => call.args[0] === 'secrets');
   assert.ok(secret);
-  assert.match(secret.secretInput, /GEMINI_API_KEY=gemini-fixture-secret/);
+  assert.match(secret.secretInput, /TYPESAFE_API_KEY=typesafe-fixture-secret/);
   assert.match(secret.secretInput, /PHOTOROOM_API_KEY=photoroom-fixture-secret/);
   assert.ok(!JSON.stringify(secret.args).includes('fixture-secret'));
+  assert.ok(f.calls().every(call => !call.providerKeyPresent));
   assert.ok(f.calls().find(call => call.args[0] === 'deploy').args.includes('SAINT_LOOK_DEPLOYMENT_PROFILE=live'));
   assert.equal(JSON.parse(result.stdout).profile, 'live');
   assert.equal(f.run().status, 0);
@@ -140,5 +141,15 @@ test('live upload refuses absent account attestation or keys before invoking Fly
   const f = fixture(t);
   const r = f.run({ SAINT_LOOK_DEPLOYMENT_PROFILE: 'live' });
   assert.equal(r.status, 1);
+  assert.equal(f.calls().length, 0);
+});
+
+
+test('live upload refuses the previous provider configuration before any Fly call', t => {
+  const f = fixture(t);
+  writeFileSync(join(f.release, 'backend/release.json'), JSON.stringify({ profiles: ['controlled-http', 'live'] }));
+  const result = f.run({ SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', AI_TRIAL_PREFLIGHT_VERIFIED: 'true', TYPESAFE_API_KEY: 'typesafe-fixture-secret', PHOTOROOM_API_KEY: 'photoroom-fixture-secret' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /provider configuration/);
   assert.equal(f.calls().length, 0);
 });

@@ -139,9 +139,25 @@ test('live selection requires a release explicitly supporting the live profile',
     const path = join(directory, 'backend/release.json');
     const manifest = JSON.parse(await readFile(path));
     manifest.profiles = ['controlled-http', 'live'];
+    manifest.providerConfig = 'photoroom-jev-1.14.0-taxonomy-1';
     await writeFile(path, JSON.stringify(manifest));
   });
   const result = await capable.run(capable.sha, { SAINT_LOOK_DEPLOYMENT_PROFILE: 'live' });
   assert.equal(result.code, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).profile, 'live');
+});
+
+
+test('live selection rejects an older recognition provider while controlled rollback remains supported', async t => {
+  const f = await fixture(t, true, async directory => {
+    const path = join(directory, 'backend/release.json');
+    const manifest = JSON.parse(await readFile(path));
+    manifest.profiles = ['controlled-http', 'live'];
+    await writeFile(path, JSON.stringify(manifest));
+  });
+  const rejected = await f.run(f.sha, { SAINT_LOOK_DEPLOYMENT_PROFILE: 'live' });
+  assert.equal(rejected.code, 1);
+  assert.match(rejected.stderr, /provider configuration/);
+  await assert.rejects(access(f.output));
+  assert.equal((await f.run()).code, 0);
 });
