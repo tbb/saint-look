@@ -57,7 +57,7 @@ printf '{"offsetMs":0}\n' > /tmp/saint-look-ui-clock.json
 ```bash
 NODE_ENV=test SAINT_LOOK_TEST_CLOCK_FILE=/tmp/saint-look-ui-clock.json SAINT_LOOK_PROVIDER=live \
 SAINT_LOOK_TEST_PROVIDER_ORIGIN=http://127.0.0.1:8789 \
-GEMINI_API_KEY=fixture-gemini-key PHOTOROOM_API_KEY=fixture-photoroom-key \
+TYPESAFE_API_KEY=fixture-typesafe-key PHOTOROOM_API_KEY=fixture-photoroom-key \
 SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED=true SAINT_LOOK_STAGE_DELAY_MS=100 \
 SAINT_LOOK_OWNER_TOKEN=saint-look-ui-tests-owner-token-00000001 \
 SAINT_LOOK_DATA_DIR="$(mktemp -d)" node backend/src/server.mjs

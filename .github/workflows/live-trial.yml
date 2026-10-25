@@ -13,7 +13,7 @@ on:
         default: false
         type: boolean
       photo_count:
-        description: 'Number of reviewed public photos; verify remaining free calls first'
+        description: 'Number of reviewed public photos; verify remaining provider quota and approved budget first'
         required: true
         default: '2'
         type: choice
