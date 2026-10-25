@@ -154,7 +154,7 @@ for (const stage of ['attributes', 'cutout']) {
           else if (stage === 'cutout') { response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(cutout); }
           else {
             response.writeHead(200, { 'Content-Type': 'application/json' });
-            response.end(JSON.stringify({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(attributes) }] } }] }));
+            response.end(JSON.stringify(attributes));
           }
         };
       } });

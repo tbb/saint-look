@@ -8,7 +8,7 @@ if (profile === 'controlled-http') {
   await import('./start-controlled.mjs');
 } else {
   if (process.env.SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED !== 'true'
-    || !process.env.GEMINI_API_KEY?.trim() || !process.env.PHOTOROOM_API_KEY?.trim()) {
+    || !process.env.TYPESAFE_API_KEY?.trim() || !process.env.PHOTOROOM_API_KEY?.trim()) {
     throw new Error('Live provider configuration is incomplete.');
   }
   if (Object.keys(process.env).some(key => key.startsWith('SAINT_LOOK_TEST_') && process.env[key])) {

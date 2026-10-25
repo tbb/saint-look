@@ -4,7 +4,8 @@ WORKDIR /app/backend
 COPY backend/package.json backend/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY backend/src ./src
-COPY backend/test/providers/ui-server.mjs ./test/providers/ui-server.mjs
+COPY backend/test/providers/ui-server.mjs backend/test/providers/jev.mjs ./test/providers/
+COPY shared/wardrobe-taxonomy.json /app/shared/wardrobe-taxonomy.json
 COPY backend/release.json backend/REVISION ./
 RUN node --input-type=module -e "import {readRevision} from './src/revision.mjs'; readRevision(true)"
 # UID 0 is intentional for the mounted volume's root ownership.
