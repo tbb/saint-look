@@ -14,6 +14,7 @@ async function fixture(t, checked = false, prepare = async () => {}) {
   const git = (...args) => execFileSync('git', args, { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   git('init', '-b', 'main'); git('config', 'user.name', 'Release Test'); git('config', 'user.email', 'test@example.invalid');
   await mkdir(join(directory, 'backend'));
+  await writeFile(join(directory, 'fly.toml'), '# checked Fly release\n');
   await writeFile(join(directory, 'backend/release.json'), JSON.stringify({ format: 1, dataVersion: 1, minDataVersion: 1, maxDataVersion: 1, profile: 'controlled-http' }));
   await writeFile(join(directory, 'backend/source.txt'), 'checked source\n');
   await prepare(directory);
@@ -118,5 +119,13 @@ test('a checked historical release without the compatibility manifest cannot be 
   const f = await fixture(t, true, directory => rm(join(directory, 'backend/release.json')));
   const result = await f.run();
   assert.equal(result.code, 1); assert.match(result.stderr, /no supported release manifest/);
+  await assert.rejects(access(f.output));
+});
+
+
+test('a checked Railway-only historical commit is not a Fly rollback target', async t => {
+  const f = await fixture(t, true, directory => rm(join(directory, 'fly.toml')));
+  const result = await f.run();
+  assert.equal(result.code, 1); assert.match(result.stderr, /no Fly deployment configuration/);
   await assert.rejects(access(f.output));
 });

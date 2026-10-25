@@ -48,6 +48,8 @@ try {
   catch { throw new Error('Selected commit has no supported release manifest.'); }
   if (manifest.format !== 1 || manifest.profile !== 'controlled-http' || manifest.dataVersion !== 1
     || manifest.minDataVersion !== 1 || manifest.maxDataVersion !== 1) throw new Error('Selected release is not supported by this deployment workflow.');
+  try { git('show', `${sha}:fly.toml`); }
+  catch { throw new Error('Selected release has no Fly deployment configuration.'); }
   if (git('ls-tree', '-r', sha).split('\n').some(entry => entry.startsWith('120000 '))) throw new Error('Release symlinks are not supported.');
   const output = resolve(destination);
   mkdirSync(output, { mode: 0o700 });
