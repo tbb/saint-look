@@ -20,7 +20,7 @@ function fixture(t) {
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 const state = JSON.parse(fs.readFileSync(process.env.FIXTURE_STATE));
-fs.appendFileSync(process.env.CAPTURE, JSON.stringify({ args, token: process.env.FLY_API_TOKEN, ownerTokenPresent: !!process.env.SAINT_LOOK_DEV_OWNER_TOKEN, railwayTokenPresent: !!process.env.RAILWAY_TOKEN }) + '\\n');
+fs.appendFileSync(process.env.CAPTURE, JSON.stringify({ args, token: process.env.FLY_API_TOKEN, ownerTokenPresent: !!process.env.SAINT_LOOK_DEV_OWNER_TOKEN, railwayTokenPresent: !!process.env.RAILWAY_TOKEN, configText: args[0] === 'deploy' ? fs.readFileSync(args[args.indexOf('--config') + 1], 'utf8') : undefined }) + '\\n');
 if (args[0] === 'deploy') {
   if (state.fail) { console.error(process.env.FLY_API_TOKEN); process.exit(1); }
   process.exit(0);
@@ -55,7 +55,9 @@ test('a checked release deploys to its explicit app and existing volume with a f
   const deploy = calls[3].args;
   assert.equal(deploy[0], 'deploy'); assert.equal(deploy[1], f.release);
   assert.equal(deploy[deploy.indexOf('--app') + 1], app);
-  assert.equal(deploy[deploy.indexOf('--config') + 1], resolve('fly.toml'));
+  assert.equal(deploy[deploy.indexOf('--config') + 1], join(f.release, 'fly.toml'));
+  assert.equal(calls[3].configText, readFileSync(resolve('fly.toml'), 'utf8'));
+  assert.doesNotMatch(calls[3].configText, /selected historical config/);
   assert.ok(deploy.includes('--local-only')); assert.ok(deploy.includes('--ha=false'));
   assert.equal(deploy[deploy.indexOf('--strategy') + 1], 'immediate');
   assert.equal(deploy[deploy.indexOf('--env') + 1], `SAINT_LOOK_DEPLOYMENT_ID=${identity.deploymentId}`);

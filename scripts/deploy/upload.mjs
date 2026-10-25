@@ -1,6 +1,6 @@
 // Upload a checked archive using trusted deployment configuration. Never log CLI diagnostics.
 import { execFileSync } from 'node:child_process';
-import { readFileSync, lstatSync } from 'node:fs';
+import { readFileSync, lstatSync, copyFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,9 +49,13 @@ try {
       throw new Error('The Fly Machine does not match the reviewed single-instance configuration.');
     }
   }
+  // flyctl resolves the Dockerfile relative to --config, so keep trusted operational
+  // config inside the clean archive: both Dockerfile and build context stay at the selected SHA.
+  const deploymentConfig = join(release, 'fly.toml');
+  copyFileSync(fileURLToPath(new URL('../../fly.toml', import.meta.url)), deploymentConfig);
   const deploymentId = randomUUID();
   try {
-    fly(['deploy', release, '--app', app, '--config', fileURLToPath(new URL('../../fly.toml', import.meta.url)),
+    fly(['deploy', release, '--app', app, '--config', deploymentConfig,
       '--local-only', '--ha=false', '--strategy', 'immediate', '--deploy-retries', '0',
       '--env', `SAINT_LOOK_DEPLOYMENT_ID=${deploymentId}`, '--yes'], 600000);
   } catch { throw new Error('Fly deploy did not complete. Check Fly before attempting another deployment.'); }
