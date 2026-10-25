@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { environment, photoRequest, upload, waitForItem } from './support.mjs';
 import { providerFixture } from './providers/fixture.mjs';
+import { jevAnswer } from './providers/jev.mjs';
 
 function attempt(server, input) {
   return server.request(`/v1/items/${input.itemId}/attempts`, {
@@ -54,7 +55,7 @@ async function waitUntil(predicate) {
 
 function attributesReply(response, attributes) {
   response.writeHead(200, { 'Content-Type': 'application/json' });
-  response.end(JSON.stringify({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(attributes) }] } }] }));
+  response.end(JSON.stringify(attributes));
 }
 
 for (const outcome of ['success', 'failure']) {
@@ -64,7 +65,7 @@ test(`late old cutout ${outcome} cannot replace the newer photo, its pinned resu
   let attributesCalls = 0;
   const fixture = await providerFixture(t, {
     attributes(request, response, { attributes }) {
-      attributesReply(response, { ...attributes, type: attributesCalls++ === 0 ? 'Пальто' : 'Рубашка' });
+      attributesReply(response, jevAnswer({ type: attributesCalls++ === 0 ? 'coat' : 'shirt' }));
     },
     cutout(request, response, { cutout }) {
       if (calls++ === 0) releaseOld = () => {
@@ -114,7 +115,7 @@ for (const outcome of ['success', 'failure']) {
     const fixture = await providerFixture(t, { attributes(request, response, { attributes }) {
       if (calls++ === 0) releaseOld = () => {
         if (outcome === 'failure') { response.writeHead(429); response.end(); }
-        else attributesReply(response, { ...attributes, type: 'Пальто' });
+        else attributesReply(response, jevAnswer({ type: 'coat' }));
       };
       else attributesReply(response, attributes);
     } });

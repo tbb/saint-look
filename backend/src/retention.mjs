@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { providerConfig } from './jev.mjs';
 import { RequestError, uuid } from './upload.mjs';
 
 const clearedFields = `retention_state=?, status='failed', source=X'', result=NULL,
@@ -29,7 +30,7 @@ function clock(env, provider) {
   if (!env.SAINT_LOOK_TEST_CLOCK_FILE) return Date.now;
   let origin;
   try { origin = new URL(env.SAINT_LOOK_TEST_PROVIDER_ORIGIN); } catch { throw new Error('Invalid test clock configuration.'); }
-  if (env.NODE_ENV !== 'test' || provider.id !== 'live-test' || origin.protocol !== 'http:'
+  if (env.NODE_ENV !== 'test' || provider.id !== `live-test-${providerConfig}` || origin.protocol !== 'http:'
     || !['127.0.0.1', '[::1]'].includes(origin.hostname) || origin.username || origin.password
     || origin.search || origin.hash || origin.pathname !== '/') throw new Error('Invalid test clock configuration.');
   return () => {
