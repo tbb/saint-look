@@ -112,6 +112,8 @@ final class WardrobeStore: ObservableObject {
 
     func saveEdits(for id: UUID, type: String?, colors: [String]?) throws {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        if let type, !WardrobeTaxonomy.shared.contains(type: type) { throw ClientError.invalidAttributes }
+        if let colors, !WardrobeTaxonomy.shared.contains(colors: colors) { throw ClientError.invalidAttributes }
         var updated = items
         if let type { updated[index].manualType = type }
         if let colors { updated[index].manualColors = colors }

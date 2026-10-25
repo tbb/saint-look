@@ -76,7 +76,7 @@ const server = createServer(async (request, response) => {
       if (request.headers.authorization !== `Bearer ${controlToken}`) return reply(response, 401, { error: 'unauthorized' });
       if (request.method === 'POST') {
         const input = JSON.parse((await readBody(request, 1024)).toString());
-        if (!['online', 'offline', 'drop-next-upload-response', 'drop-next-delete-response', 'block-acks', 'drop-next-ack-response', 'accept-upload-then-offline', 'hold-next-result'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
+        if (!['online', 'offline', 'drop-next-upload-response', 'drop-next-delete-response', 'block-acks', 'drop-next-ack-response', 'accept-upload-then-offline', 'hold-next-result', 'legacy-attributes'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
         let nextOffset;
         if (input.advanceTimeMs !== undefined) {
           if (!clockFile || !Number.isSafeInteger(input.advanceTimeMs) || input.advanceTimeMs < 0) {
@@ -116,7 +116,17 @@ const server = createServer(async (request, response) => {
       body: body.length ? body : undefined,
       redirect: 'error', signal: AbortSignal.timeout(15000),
     });
-    const data = Buffer.from(await result.arrayBuffer());
+    let data = Buffer.from(await result.arrayBuffer());
+    if (mode === 'legacy-attributes' && result.ok
+      && result.headers.get('content-type')?.includes('application/json')) {
+      const payload = JSON.parse(data);
+      if (payload.status === 'ready') {
+        // Public response shape used by older releases before the finite taxonomy.
+        payload.type = 'Накидка';
+        payload.colors = ['Сиреневый'];
+        data = Buffer.from(JSON.stringify(payload));
+      }
+    }
     if (isDelete && result.status === 204) deletedItems.add(request.url);
     if (isUpload && result.ok) {
       const accepted = JSON.parse(data);
