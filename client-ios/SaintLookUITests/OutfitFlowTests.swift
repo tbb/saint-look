@@ -160,6 +160,56 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testPickerMarksCurrentThingAndFiltersTypesWithoutChangingTheSlotOnCancel() async throws {
+        let app = launch(reset: true)
+        for (index, type) in ["t_shirt", "hoodie"].enumerated() {
+            tap(app.buttons["add-demo-photo"], in: app)
+            await summary(app, ready: index + 1, pending: 0)
+            openFirstItem(in: app)
+            tap(app.buttons["edit-item"], in: app)
+            tap(app.buttons["choose-type"], in: app)
+            tap(app.buttons["type-\(type)"], in: app)
+            app.buttons["save-item-edits"].tap()
+            await summary(app, ready: index + 1, pending: 0)
+        }
+        let before = try await activityCounts()
+        app.tabBars.buttons["Луки"].tap()
+        app.buttons["create-first-outfit"].tap()
+        let body = button(prefix: "outfit-slot-body-", in: app)
+        tap(body, in: app)
+        let shirt = app.buttons.matching(NSPredicate(format:
+            "identifier BEGINSWITH 'outfit-candidate-' AND label CONTAINS 'Футболка'")).firstMatch
+        let shirtID = shirt.identifier
+        chooseCandidate(shirt, in: app)
+        XCTAssertTrue(body.label.contains("Футболка"))
+        tap(body, in: app)
+        XCTAssertTrue(app.buttons[shirtID].isSelected,
+                      "Reopening the picker must identify the thing currently occupying this slot")
+        capture("outfit-picker-current-selection")
+        app.buttons["outfit-type-filter"].tap()
+        app.buttons["outfit-filter-hoodie"].tap()
+        XCTAssertFalse(app.buttons[shirtID].exists, "The hoodie filter must hide the selected T-shirt without changing the slot")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-'")).count, 1)
+        XCTAssertTrue(button(prefix: "outfit-candidate-", in: app).label.contains("Худи"))
+        capture("outfit-picker-type-filter")
+        app.buttons["outfit-type-filter"].tap()
+        app.buttons["outfit-filter-all"].tap()
+        XCTAssertTrue(app.buttons[shirtID].isSelected)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-'")).count, 2)
+        app.buttons["cancel-outfit-picker"].tap()
+        XCTAssertTrue(body.label.contains("Футболка"))
+        XCTAssertFalse(app.buttons["save-outfit"].isEnabled, "Filtering must not select a second thing")
+        let after = try await activityCounts()
+        XCTAssertEqual(after, before, "Choosing and filtering existing things must stay local")
+        app.buttons["cancel-outfit"].tap()
+        let discard = app.alerts.buttons.matching(identifier: "discard-outfit-changes").firstMatch
+        XCTAssertTrue(discard.waitForExistence(timeout: 5))
+        discard.tap()
+        XCUIDevice.shared.press(.home)
+        app.terminate()
+    }
+
+    @MainActor
     func testMissingBodyLayerOpensItsPickerDirectlyAndCancelPreservesTheLook() async throws {
         let app = launch(reset: true)
         for count in 1...2 {
