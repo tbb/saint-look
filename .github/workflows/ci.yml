@@ -20,7 +20,12 @@ on:
         description: Local Simulator suite
         type: choice
         default: all
-        options: [all, wardrobe, outfits]
+        options: [all, wardrobe, outfits, visual]
+      visual_profiles:
+        description: Visual evidence profiles (only used by the visual suite)
+        type: choice
+        default: all
+        options: [all, iphone-light, iphone-dark, iphone-max-text, ipad-light]
 
 permissions:
   contents: read
@@ -80,16 +85,16 @@ jobs:
       - run: npm --prefix backend test
 
   ios:
-    name: ${{ matrix.suite == 'wardrobe' && 'ios' || 'ios-outfits' }}
+    name: ${{ matrix.suite == 'wardrobe' && 'ios' || format('ios-{0}', matrix.suite) }}
     if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.ios == 'true'
     needs: changes
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(inputs.ios_suite == 'outfits' && '["outfits"]' || inputs.ios_suite == 'wardrobe' && '["wardrobe"]' || '["wardrobe","outfits"]') }}
+        suite: ${{ fromJSON(inputs.ios_suite == 'outfits' && '["outfits"]' || inputs.ios_suite == 'wardrobe' && '["wardrobe"]' || inputs.ios_suite == 'visual' && '["visual"]' || '["wardrobe","outfits","visual"]') }}
     runs-on: macos-26
     # Eleven outfit scenarios, maximum Dynamic Type, and a fresh Simulator startup.
-    timeout-minutes: ${{ matrix.suite == 'outfits' && 60 || 30 }}
+    timeout-minutes: ${{ matrix.suite == 'visual' && 90 || matrix.suite == 'outfits' && 60 || 30 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,9 +106,11 @@ jobs:
           cache-dependency-path: backend/package-lock.json
       - run: npm --prefix backend ci --ignore-scripts
       - run: bash client-ios/scripts/test-outfit-core.sh
+      - run: bash client-ios/scripts/test-visual-fixtures.sh
       - name: Real Simulator and local backend (controlled providers)
         env:
           TEST_SUITE: ${{ matrix.suite }}
+          SAINT_LOOK_VISUAL_PROFILES: ${{ inputs.visual_profiles || 'all' }}
           SAINT_LOOK_UI_TEST_ONLY: ${{ matrix.suite == 'outfits' && 'SaintLookUITests/OutfitFlowTests' || 'SaintLookUITests/WardrobeFlowTests' }}
           NODE_ENV: test
           SAINT_LOOK_TEST_CLOCK_FILE: ${{ runner.temp }}/saint-look-clock.json
@@ -152,6 +159,10 @@ jobs:
           node client-ios/scripts/ui-test-proxy.mjs > "$RUNNER_TEMP/ui-proxy.log" 2>&1 &
           proxy_pid=$!
           wait_for_health http://127.0.0.1:8788/health
+          if [[ "$TEST_SUITE" == "visual" ]]; then
+            bash client-ios/scripts/test-visual-acceptance.sh
+            exit $?
+          fi
           if [[ "$TEST_SUITE" == "outfits" ]]; then
             # Run both independent font-size checks, preserving failure and cancellation.
             trap 'exit 130' INT
@@ -194,6 +205,9 @@ jobs:
         if: always()
         run: |
           mkdir -p client-ios/build/screenshots
+          for evidence in client-ios/build/*-profile.json client-ios/build/*-devices.json; do
+            [[ -f "$evidence" ]] && cp "$evidence" client-ios/build/screenshots/
+          done
           for result in client-ios/build/*.xcresult; do
             [[ -d "$result" ]] || continue
             output="client-ios/build/screenshots/$(basename "$result" .xcresult)"
