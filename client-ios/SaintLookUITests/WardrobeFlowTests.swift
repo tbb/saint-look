@@ -48,6 +48,7 @@ final class WardrobeFlowTests: XCTestCase {
 
     @MainActor
     private func waitForSummary(_ app: XCUIApplication, ready: Int, pending: Int, timeout: TimeInterval = 40) async {
+        returnToCollection(in: app)
         let summary = app.staticTexts["wardrobe-summary"]
         let expected = "Всего: \(ready + pending). Готово: \(ready). Ожидают: \(pending)."
         let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", expected), object: summary)
@@ -103,7 +104,7 @@ final class WardrobeFlowTests: XCTestCase {
     func testPhotoBecomesReadyThroughBackendAndSurvivesOfflineRelaunch() async throws {
         let app = launch(reset: true, baseURL: testURL, trialIndex: 1)
         XCTAssertTrue(app.staticTexts["demo-notice"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["Подключить локальный backend"].exists, "UI test credentials must load independently of Keychain state")
+        XCTAssertFalse(app.buttons["configure-processing"].exists, "UI test credentials must load independently of Keychain state")
         // Hold delivery until pending is observed; backend processing may finish before XCTest's first poll.
         try await control(mode: "offline")
         app.buttons["add-trial-photo"].tap()
@@ -388,7 +389,7 @@ final class WardrobeFlowTests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
         keepEditing.tap()
-        XCTAssertTrue(app.staticTexts["Рубашка"].exists)
+        XCTAssertTrue(app.buttons["choose-type"].label.contains("Рубашка"))
         let header = app.navigationBars["Тип и цвета"]
         header.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05))
             .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
@@ -406,7 +407,7 @@ final class WardrobeFlowTests: XCTestCase {
         app.terminate()
         let restored = launch(reset: false, baseURL: testURL)
         try tapVisibleButton("edit-item", in: restored)
-        XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
+        XCTAssertTrue(restored.buttons["choose-type"].label.contains("Рубашка"))
         let after = try await transportState()
         XCTAssertEqual(after["forwardedUploads"] as? Int, before["forwardedUploads"] as? Int)
         XCTAssertEqual(after["acceptedOperations"] as? Int, before["acceptedOperations"] as? Int)
@@ -418,9 +419,8 @@ final class WardrobeFlowTests: XCTestCase {
         let app = launch(reset: true, baseURL: testURL)
         app.buttons["add-demo-photo"].tap()
         XCTAssertTrue(app.staticTexts["pending-status"].firstMatch.waitForExistence(timeout: 5))
-        app.swipeUp()
-        let edit = app.buttons["edit-item"].firstMatch
-        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        try openFirstItem(in: app)
+        XCTAssertTrue(app.buttons["edit-item"].waitForExistence(timeout: 5))
         try tapVisibleButton("edit-item", in: app)
         XCTAssertFalse(app.textFields["edit-type"].exists)
         try chooseType("shirt", in: app)
@@ -472,7 +472,7 @@ final class WardrobeFlowTests: XCTestCase {
         try tapColor("green", in: app)
         XCTAssertTrue(app.buttons["done-colors"].isEnabled)
         app.buttons["done-colors"].tap()
-        XCTAssertTrue(app.staticTexts["Зелёный"].exists)
+        XCTAssertTrue(app.buttons["choose-colors"].label.contains("Зелёный"))
         app.navigationBars["Тип и цвета"].buttons["Отмена"].tap()
         XCTAssertTrue(app.alerts.buttons.matching(identifier: "discard-item-changes").firstMatch.waitForExistence(timeout: 5))
         app.alerts.buttons.matching(identifier: "discard-item-changes").firstMatch.tap()
@@ -485,7 +485,7 @@ final class WardrobeFlowTests: XCTestCase {
         app.terminate()
         let restored = launch(reset: false, baseURL: testURL)
         try tapVisibleButton("edit-item", in: restored)
-        XCTAssertTrue(restored.staticTexts["Зелёный"].exists)
+        XCTAssertTrue(restored.buttons["choose-colors"].label.contains("Зелёный"))
         let after = try await transportState()
         XCTAssertEqual(after["forwardedUploads"] as? Int, before["forwardedUploads"] as? Int)
         XCTAssertEqual(after["acceptedOperations"] as? Int, before["acceptedOperations"] as? Int)
@@ -599,8 +599,6 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Рубашка"].waitForExistence(timeout: 5))
 
         try await control(mode: "offline")
-        let problem = app.buttons["cutout-problem"].firstMatch
-        XCTAssertTrue(problem.waitForExistence(timeout: 5))
         try tapVisibleButton("cutout-problem", in: app)
         try tapVisibleButton("retry-processing", in: app)
         XCTAssertTrue(app.staticTexts["pending-status"].firstMatch.waitForExistence(timeout: 5))
@@ -689,8 +687,10 @@ final class WardrobeFlowTests: XCTestCase {
         app.terminate()
 
         let restored = launch(reset: false, baseURL: testURL)
-        restored.swipeUp()
+        try openFirstItem(in: restored)
         XCTAssertTrue(restored.staticTexts["previous-result-notice"].waitForExistence(timeout: 5))
+        XCTAssertTrue(restored.images["item-photo"].firstMatch.screenshot().pngRepresentation == previousImage,
+                      "The same previous cutout must survive offline relaunch")
         XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
         XCTAssertTrue(restored.staticTexts["Белый"].exists)
         _ = try await providerControl(["nextCutout": "red"])
@@ -762,9 +762,9 @@ final class WardrobeFlowTests: XCTestCase {
     @MainActor
     private func assertRecoveryDidNotOpenPhotoPicker(in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         // Accessibility still exposes the underlying card while a system picker covers it.
-        // The wardrobe toolbar must remain directly tappable after retry/debug replacement.
-        XCTAssertTrue(app.navigationBars.buttons["Настройки"].firstMatch.isHittable,
-                      "Recovery must leave the wardrobe interactive, without opening PhotosPicker",
+        // The detail toolbar must remain tappable after retry/debug replacement.
+        XCTAssertTrue(app.navigationBars.buttons["item-actions"].firstMatch.isHittable,
+                      "Recovery must leave the item detail interactive, without opening PhotosPicker",
                       file: file, line: line)
     }
 
@@ -772,6 +772,20 @@ final class WardrobeFlowTests: XCTestCase {
 
     @MainActor
     private func tapVisibleButton(_ identifier: String, in app: XCUIApplication) throws {
+        let itemActions = ["edit-item", "cutout-problem", "retry-processing", "replace-demo-photo", "replace-photo", "delete-item"]
+        if itemActions.contains(identifier) {
+            try openFirstItem(in: app)
+            if identifier != "edit-item", !app.buttons[identifier].firstMatch.isHittable {
+                app.buttons["item-actions"].tap()
+                let action = app.buttons[identifier].firstMatch
+                guard action.waitForExistence(timeout: 5), action.isHittable else {
+                    XCTFail("The item menu must offer \(identifier)")
+                    throw InteractionError.buttonNotVisible(identifier)
+                }
+                action.tap()
+                return
+            }
+        }
         let button = app.buttons[identifier].firstMatch
         // A ready update can push a row below the home indicator after a previous scroll.
         // Do not tap a merely existing or partially visible accessibility element.
@@ -787,6 +801,26 @@ final class WardrobeFlowTests: XCTestCase {
         }
         XCTFail("Button \(identifier) did not become fully visible")
         throw InteractionError.buttonNotVisible(identifier)
+    }
+
+    @MainActor
+    private func openFirstItem(in app: XCUIApplication) throws {
+        if app.buttons["item-actions"].exists { return }
+        let photo = app.images["item-photo"].firstMatch
+        guard photo.waitForExistence(timeout: 5) else { throw InteractionError.buttonNotVisible("item-photo") }
+        for _ in 0..<4 where !photo.isHittable { app.swipeDown() }
+        XCTAssertTrue(photo.isHittable)
+        photo.tap()
+        XCTAssertTrue(app.buttons["item-actions"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    private func returnToCollection(in app: XCUIApplication) {
+        if app.buttons["item-actions"].exists {
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(app.navigationBars["Гардероб"].waitForExistence(timeout: 5))
+        }
+        for _ in 0..<4 where !app.staticTexts["wardrobe-summary"].isHittable { app.swipeDown() }
     }
 
     @MainActor

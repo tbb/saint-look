@@ -84,8 +84,20 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
+    private func openFirstItem(in app: XCUIApplication) {
+        if app.buttons["item-actions"].exists { return }
+        let photo = app.images["item-photo"].firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: 5))
+        guard reveal(photo, in: app, towardTop: true) else { return }
+        photo.tap()
+        XCTAssertTrue(app.buttons["item-actions"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     private func deleteFirstItem(in app: XCUIApplication) {
-        tap(app.buttons["delete-item"].firstMatch, in: app)
+        openFirstItem(in: app)
+        app.buttons["item-actions"].tap()
+        app.buttons["delete-item"].firstMatch.tap()
         let confirmation = app.alerts.buttons.matching(identifier: "confirm-delete-item").firstMatch
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
         confirmation.tap()
@@ -112,6 +124,10 @@ final class OutfitFlowTests: XCTestCase {
 
     @MainActor
     private func summary(_ app: XCUIApplication, ready: Int, pending: Int) async {
+        if app.buttons["item-actions"].exists {
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(app.navigationBars["Гардероб"].waitForExistence(timeout: 5))
+        }
         for _ in 0..<4 where !app.staticTexts["wardrobe-summary"].isHittable { app.swipeDown() }
         let predicate = NSPredicate(format: "label == %@", "Всего: \(ready + pending). Готово: \(ready). Ожидают: \(pending).")
         await fulfillment(of: [XCTNSPredicateExpectation(predicate: predicate, object: app.staticTexts["wardrobe-summary"])], timeout: 40)
@@ -132,6 +148,7 @@ final class OutfitFlowTests: XCTestCase {
         await summary(app, ready: 1, pending: 0)
         app.buttons["add-demo-photo"].tap()
         await summary(app, ready: 2, pending: 0)
+        openFirstItem(in: app)
         tap(app.buttons["edit-item"].firstMatch, in: app)
         tap(app.buttons["choose-type"], in: app)
         tap(app.buttons["type-trousers"], in: app)
@@ -183,7 +200,9 @@ final class OutfitFlowTests: XCTestCase {
         // Delete the newest (unselected) thing, then trousers belonging to the outfit.
         deleteFirstItem(in: offline)
         await summary(offline, ready: 2, pending: 0)
-        tap(offline.buttons["delete-item"].firstMatch, in: offline)
+        openFirstItem(in: offline)
+        offline.buttons["item-actions"].tap()
+        offline.buttons["delete-item"].firstMatch.tap()
         let cancelDeletion = offline.alerts.buttons.matching(identifier: "cancel-delete-item").firstMatch
         XCTAssertTrue(cancelDeletion.waitForExistence(timeout: 5))
         cancelDeletion.tap()
@@ -216,6 +235,7 @@ final class OutfitFlowTests: XCTestCase {
         for (index, type) in ["t_shirt", "hoodie", "jacket", "sweater", "trousers"].enumerated() {
             app.buttons["add-demo-photo"].tap()
             await summary(app, ready: index + 1, pending: 0)
+            openFirstItem(in: app)
             tap(app.buttons["edit-item"].firstMatch, in: app)
             tap(app.buttons["choose-type"], in: app)
             tap(app.buttons["type-\(type)"], in: app)
@@ -363,6 +383,7 @@ final class OutfitFlowTests: XCTestCase {
         for (index, type) in ["t_shirt", "trousers"].enumerated() {
             app.buttons["add-demo-photo"].tap()
             await summary(app, ready: index + 1, pending: 0)
+            openFirstItem(in: app)
             tap(app.buttons["edit-item"].firstMatch, in: app)
             tap(app.buttons["choose-type"], in: app)
             tap(app.buttons["type-\(type)"], in: app)

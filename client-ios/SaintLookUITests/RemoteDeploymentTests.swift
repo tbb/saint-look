@@ -63,13 +63,15 @@ final class RemoteDeploymentTests: XCTestCase {
 
         // Resume acknowledgement and delete the synthetic card through the normal UI.
         let cleanup = launch(reset: false, baseURL: origin)
-        let button = cleanup.buttons["delete-item"].firstMatch
-        for _ in 0..<5 {
-            if button.exists && button.isHittable && button.frame.maxY < cleanup.frame.maxY - 50 { break }
-            cleanup.swipeUp()
-        }
-        XCTAssertTrue(button.isHittable)
-        button.tap()
+        let photo = cleanup.images["item-photo"].firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: 5))
+        photo.tap()
+        XCTAssertTrue(cleanup.buttons["item-actions"].waitForExistence(timeout: 5))
+        cleanup.buttons["item-actions"].tap()
+        cleanup.buttons["delete-item"].tap()
+        let confirmation = cleanup.alerts.buttons.matching(identifier: "confirm-delete-item").firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.tap()
         let empty = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Всего: 0. Готово: 0. Ожидают: 0."), object: cleanup.staticTexts["wardrobe-summary"])
         await fulfillment(of: [empty], timeout: 10)
         // This allows the durable command to drain; API smoke separately verifies server cleanup.
@@ -79,6 +81,11 @@ final class RemoteDeploymentTests: XCTestCase {
 
 /// Paid-provider work is opt-in; ordinary CI skips this test before touching the app or API.
 final class LiveTrialTests: XCTestCase {
+    @MainActor
+    private func readyCard(in app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'wardrobe-item-' AND value == 'Готово'")).firstMatch
+    }
+
     @MainActor
     func testPublicPhotosBecomeRealCardsAndSurviveOfflineRelaunch() async throws {
         let env = ProcessInfo.processInfo.environment
@@ -122,7 +129,8 @@ final class LiveTrialTests: XCTestCase {
             let expected = "Всего: \(index + 1). Готово: \(index + 1). Ожидают: 0."
             let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", expected), object: app.staticTexts["wardrobe-summary"])
             await fulfillment(of: [ready], timeout: 180)
-            XCTAssertEqual(app.staticTexts["ready-status"].firstMatch.label, "Готово")
+            XCTAssertEqual(readyCard(in: app).value as? String, "Готово")
+            XCTAssertFalse(app.staticTexts["Тестовая вырезка"].exists, "Real provider results must not be demo fixtures")
             XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
             let type = app.staticTexts["item-type"].firstMatch.label
             let colors = app.staticTexts["item-colors"].firstMatch.label
@@ -131,7 +139,7 @@ final class LiveTrialTests: XCTestCase {
             let image = app.images["item-photo"].firstMatch.screenshot().pngRepresentation
             app.terminate()
             let offline = launch(reset: false, online: false, index: index)
-            XCTAssertTrue(offline.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 5))
+            XCTAssertTrue(readyCard(in: offline).waitForExistence(timeout: 5))
             XCTAssertEqual(offline.staticTexts["wardrobe-summary"].label, expected)
             XCTAssertEqual(offline.staticTexts["item-type"].firstMatch.label, type)
             XCTAssertEqual(offline.staticTexts["item-colors"].firstMatch.label, colors)
@@ -141,7 +149,7 @@ final class LiveTrialTests: XCTestCase {
         }
         // Reconnect so durable acknowledgements drain. Keep cards for visual/manual quality review.
         let final = launch(reset: false, online: true, index: count - 1)
-        XCTAssertTrue(final.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(readyCard(in: final).waitForExistence(timeout: 5))
         try await Task.sleep(nanoseconds: 2_000_000_000)
     }
 }
