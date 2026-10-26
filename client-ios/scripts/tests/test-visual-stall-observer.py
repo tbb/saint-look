@@ -2,6 +2,7 @@
 """Exercise the observer's subprocess boundary without Xcode or production services."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import signal
 import subprocess
@@ -47,6 +48,36 @@ class ObserverTests(unittest.TestCase):
                 if process.poll() is None:
                     process.kill()
                     process.communicate()
+
+    def test_log_failure_terminates_and_reaps_detached_child(self):
+        real_popen = subprocess.Popen
+        children = []
+
+        def start_ready_child(command, **kwargs):
+            process = real_popen(command, **kwargs)
+            children.append(process)
+            self.assertEqual(process.stdout.readline(), 'ready\n')
+            return process
+
+        with tempfile.TemporaryDirectory() as folder:
+            # A deterministic I/O exception after Popen, with a child that ignores TERM.
+            (Path(folder) / 'xcodebuild.log').mkdir()
+            command = [sys.executable, '-u', '-c',
+                       'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print("ready"); time.sleep(30)']
+            try:
+                with patch.object(observer.subprocess, 'Popen', side_effect=start_ready_child):
+                    with self.assertRaises(IsADirectoryError):
+                        observer.observe(command, UDID, Path(folder))
+                self.assertEqual(len(children), 1)
+                self.assertEqual(children[0].returncode, -signal.SIGKILL)
+                with self.assertRaises(ChildProcessError):
+                    os.waitpid(children[0].pid, os.WNOHANG)
+            finally:
+                for child in children:
+                    if child.poll() is None:
+                        os.killpg(child.pid, signal.SIGKILL)
+                        child.wait(timeout=3)
+                    child.stdout.close()
 
     def test_completion_stops_and_reaps_sample_worker(self):
         real_popen = subprocess.Popen

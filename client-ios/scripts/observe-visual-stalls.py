@@ -113,10 +113,28 @@ def observe(command, udid, folder):
         status = process.wait()
     finally:
         stop.set()
-        for worker in workers:
-            worker.join()  # Discovery <=2s, sample <=8s; stop also kills an active sample.
-        for signum, handler in previous_handlers.items():
-            signal.signal(signum, handler)
+        try:
+            # I/O/decoding/output errors must not leave the detached test command running.
+            # Normal completion has already reaped it and does not enter this branch.
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait(timeout=2)
+        finally:
+            process.stdout.close()
+            for worker in workers:
+                worker.join()  # Discovery <=2s, sample <=8s; stop also kills an active sample.
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
     return status if status >= 0 else 128 - status
 
 
