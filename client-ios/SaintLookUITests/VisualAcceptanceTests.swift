@@ -189,22 +189,11 @@ final class VisualAcceptanceTests: XCTestCase {
             return
         }
         if populated {
-            // Select the complete value without assuming the current caret position.
+            // This single-line name is one paragraph: native triple tap selects its full text.
+            // Long press instead repositions the insertion point through the magnifier.
             let failures = testRun?.failureCount ?? 0
-            field.press(forDuration: 1.1)
-            try requireEqual(testRun?.failureCount ?? 0, failures, "Native text selection gesture failed")
-            let labels = ["Select All", "Выбрать всё", "Выбрать все"]
-            let selectAllMenu = app.menuItems.matching(NSPredicate(format: "label IN %@", labels)).firstMatch
-            let selectAllButton = app.buttons.matching(NSPredicate(format: "label IN %@", labels)).firstMatch
-            let menuReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                (selectAllMenu.exists && selectAllMenu.isHittable) || (selectAllButton.exists && selectAllButton.isHittable)
-            }, object: app)
-            guard XCTWaiter.wait(for: [menuReady], timeout: 10) == .completed else {
-                diagnose("select-all-unavailable", app: app)
-                try require(false, "The native text-edit menu must offer Select All before replacement")
-                return
-            }
-            try nativeTap(selectAllMenu.exists && selectAllMenu.isHittable ? selectAllMenu : selectAllButton, in: app)
+            field.tap(withNumberOfTaps: 3, numberOfTouches: 1)
+            try requireEqual(testRun?.failureCount ?? 0, failures, "Native paragraph selection gesture failed")
         }
         let failures = testRun?.failureCount ?? 0
         field.typeText(name)
