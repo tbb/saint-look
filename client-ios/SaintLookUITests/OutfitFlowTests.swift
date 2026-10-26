@@ -37,41 +37,37 @@ final class OutfitFlowTests: XCTestCase {
             XCTFail("Finish name entry with Done before interacting with the constructor")
             return false
         }
+        var lastFrame = CGRect.zero
+        var lastViewport = CGRect.zero
         for _ in 0..<7 {
-            let top = (app.navigationBars.allElementsBoundByIndex.map { $0.frame.maxY }.max() ?? app.frame.minY) + 8
+            let bars = app.navigationBars.allElementsBoundByIndex
+            let foregroundBar = bars.reversed().first { $0.isHittable } ?? bars.last
+            let top = foregroundBar?.frame.maxY ?? app.frame.minY
             var bottom = app.frame.maxY - 24
-            if let tabTop = app.tabBars.allElementsBoundByIndex.map({ $0.frame.minY }).min() {
-                bottom = min(bottom, tabTop - 8)
+            if let tabTop = app.tabBars.allElementsBoundByIndex.filter({ $0.isHittable }).map({ $0.frame.minY }).min() {
+                bottom = min(bottom, tabTop)
             }
-            if app.keyboards.firstMatch.exists { bottom = min(bottom, app.keyboards.firstMatch.frame.minY - 8) }
+            if app.keyboards.firstMatch.exists { bottom = min(bottom, app.keyboards.firstMatch.frame.minY) }
             let viewport = CGRect(x: app.frame.minX + 16, y: top, width: app.frame.width - 32,
                                   height: max(0, bottom - top))
-            if element.exists {
-                // A native tap chooses the actual hit region, unlike a guessed bounding-box midpoint.
-                // Keep ordinary controls fully clear of bars. Oversized outfit rows explicitly make
-                // their whole surface tappable, so a safe visible centre is sufficient for those rows.
-                let frame = element.frame
-                let fullRow = element.identifier.hasPrefix("outfit-slot-") || element.identifier.hasPrefix("outfit-candidate-")
-                let fits = frame.minY >= viewport.minY && frame.maxY <= viewport.maxY
-                let oversized = fullRow && frame.height > viewport.height
-                    && frame.midY >= viewport.minY + 24 && frame.midY <= viewport.maxY - 24
-                if element.isHittable && (fits || oversized) { return true }
+            let present = element.exists
+            let frame = present ? element.frame : .zero
+            lastFrame = frame
+            lastViewport = viewport
+            // Visibility is a gate, not a tap coordinate. Native tap chooses the real hit region.
+            // A row starting at the navigation boundary is usable; its entire AX box need not fit.
+            if present, frame.midY > viewport.minY, frame.midY < viewport.maxY, element.isHittable {
+                return true
             }
-            var distance: CGFloat = -180
-            if element.exists {
-                let frame = element.frame
-                if frame.height > viewport.height { distance = viewport.midY - frame.midY }
-                else if frame.minY < viewport.minY { distance = viewport.minY + 8 - frame.minY }
-                else { distance = viewport.maxY - 8 - frame.maxY }
-            }
-            let limit = min(180, viewport.height * 0.35)
+            let distance = present ? viewport.midY - frame.midY : -180
+            let movement = (distance < 0 ? -1.0 : 1.0) * min(180, max(100, abs(distance)))
             let start = app.coordinate(withNormalizedOffset: .zero)
                 .withOffset(CGVector(dx: viewport.midX, dy: viewport.midY))
-            let end = start.withOffset(CGVector(dx: 0, dy: min(limit, max(-limit, distance))))
+            let end = start.withOffset(CGVector(dx: 0, dy: movement))
             start.press(forDuration: 0.05, thenDragTo: end)
         }
         capture("unreachable-\(element.identifier)")
-        XCTFail("Could not reveal \(element) inside the unobscured content viewport")
+        XCTFail("Could not reveal \(element); target frame \(lastFrame), content viewport \(lastViewport)")
         return false
     }
 
