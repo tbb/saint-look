@@ -80,6 +80,7 @@ jobs:
       - run: npm --prefix backend test
 
   ios:
+    name: ${{ matrix.suite == 'wardrobe' && 'ios' || 'ios-outfits' }}
     if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.ios == 'true'
     needs: changes
     strategy:
@@ -173,6 +174,23 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+      - name: Export Simulator screenshots
+        if: always()
+        run: |
+          mkdir -p client-ios/build/screenshots
+          for result in client-ios/build/*.xcresult; do
+            [[ -d "$result" ]] || continue
+            output="client-ios/build/screenshots/$(basename "$result" .xcresult)"
+            xcrun xcresulttool export attachments --path "$result" --output-path "$output"
+          done
+      - name: Upload Simulator screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-screenshots-${{ matrix.suite }}
+          path: client-ios/build/screenshots
+          if-no-files-found: warn
+          retention-days: 7
       - name: Upload local XCTest results and screenshots
         if: always()
         uses: actions/upload-artifact@v4
