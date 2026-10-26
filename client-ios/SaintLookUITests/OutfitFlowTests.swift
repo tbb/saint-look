@@ -28,6 +28,8 @@ final class OutfitFlowTests: XCTestCase {
         app.launchEnvironment["SAINT_LOOK_UI_TESTING"] = "1"
         app.launchEnvironment["SAINT_LOOK_RESET_DATA"] = reset ? "1" : "0"
         app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10),
+                      "Launch must reach the foreground before UI interaction; current state: \(app.state.rawValue)")
         return app
     }
 
@@ -78,9 +80,33 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func expectGone(_ element: XCUIElement, _ message: String) {
+    private func requestOutfitDeletion(in app: XCUIApplication) {
+        app.buttons["outfit-actions"].tap()
+        let deletion = app.buttons["delete-outfit"]
+        XCTAssertTrue(deletion.waitForExistence(timeout: 5))
+        deletion.tap()
+    }
+
+    @MainActor
+    private func performSlotAction(_ action: String, slotID: String, in app: XCUIApplication) {
+        tap(app.buttons["outfit-slot-menu-\(slotID)"], in: app)
+        let option = app.buttons["\(action)-\(slotID)"]
+        XCTAssertTrue(option.waitForExistence(timeout: 5))
+        option.tap()
+    }
+
+    @MainActor
+    private func expectGone(_ element: XCUIElement, _ message: String, timeout: TimeInterval = 5) {
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
-        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 5), .completed, message)
+        let result = XCTWaiter.wait(for: [gone], timeout: timeout)
+        if result != .completed {
+            capture("outfit-dismissal-timeout")
+            let state = XCTAttachment(string: element.debugDescription)
+            state.name = "outfit-dismissal-accessibility-state"
+            state.lifetime = .keepAlways
+            add(state)
+        }
+        XCTAssertEqual(result, .completed, message)
     }
 
     @MainActor
@@ -104,6 +130,18 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
+    private func deleteWardrobeItem(_ itemID: String, in app: XCUIApplication) {
+        let card = app.descendants(matching: .any).matching(identifier: "wardrobe-item-\(itemID)").firstMatch
+        tap(card, in: app)
+        XCTAssertTrue(app.buttons["item-actions"].waitForExistence(timeout: 5))
+        app.buttons["item-actions"].tap()
+        app.buttons["delete-item"].firstMatch.tap()
+        let confirmation = app.alerts.buttons.matching(identifier: "confirm-delete-item").firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.tap()
+    }
+
+    @MainActor
     private func chooseCandidate(_ candidate: XCUIElement, in app: XCUIApplication) {
         tap(candidate, in: app)
         expectGone(app.buttons["cancel-outfit-picker"], "Selecting a thing must immediately return to the constructor")
@@ -114,7 +152,7 @@ final class OutfitFlowTests: XCTestCase {
         let field = app.textFields["outfit-name"]
         tap(field, in: app)
         field.typeText(text + "\n")
-        expectGone(app.keyboards.firstMatch, "Done must dismiss the keyboard before choosing a thing")
+        expectGone(app.keyboards.firstMatch, "Done must dismiss the keyboard before choosing a thing", timeout: 15)
     }
 
     @MainActor
@@ -128,7 +166,12 @@ final class OutfitFlowTests: XCTestCase {
             app.navigationBars.buttons.element(boundBy: 0).tap()
             XCTAssertTrue(app.navigationBars["Гардероб"].waitForExistence(timeout: 5))
         }
-        for _ in 0..<4 where !app.staticTexts["wardrobe-summary"].isHittable { app.swipeDown() }
+        for _ in 0..<4 where !app.staticTexts["wardrobe-summary"].isHittable && !app.staticTexts["wardrobe-empty"].isHittable { app.swipeDown() }
+        if ready + pending == 0 {
+            XCTAssertTrue(app.staticTexts["wardrobe-empty"].waitForExistence(timeout: 40))
+            XCTAssertFalse(app.images["item-photo"].exists, "An empty collection must contain no garment photos")
+            return
+        }
         let predicate = NSPredicate(format: "label == %@", "Всего: \(ready + pending). Готово: \(ready). Ожидают: \(pending).")
         await fulfillment(of: [XCTNSPredicateExpectation(predicate: predicate, object: app.staticTexts["wardrobe-summary"])], timeout: 40)
     }
@@ -139,6 +182,237 @@ final class OutfitFlowTests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    @MainActor
+    func testReplacementSavesTheAddressedLayerAndAnIncompleteRepairRemainsADiscardableDraft() async throws {
+        let app = launch(reset: true)
+        for count in 1...3 {
+            tap(app.buttons["add-demo-photo"], in: app)
+            await summary(app, ready: count, pending: 0)
+        }
+        app.tabBars.buttons["Луки"].tap()
+        app.buttons["create-first-outfit"].tap()
+        enterName("Для прогулки", in: app)
+        let firstLayer = button(prefix: "outfit-slot-body-", in: app)
+        let firstSlotID = firstLayer.identifier.replacingOccurrences(of: "outfit-slot-body-", with: "")
+        tap(firstLayer, in: app)
+        let firstChoice = button(prefix: "outfit-candidate-", in: app)
+        let firstItemID = firstChoice.identifier.replacingOccurrences(of: "outfit-candidate-", with: "")
+        chooseCandidate(firstChoice, in: app)
+        tap(app.buttons["add-body-layer"], in: app)
+        let secondLayer = app.buttons.matching(NSPredicate(format:
+            "identifier BEGINSWITH 'outfit-slot-body-' AND label BEGINSWITH 'Тело · слой 2'")).firstMatch
+        let secondSlotID = secondLayer.identifier.replacingOccurrences(of: "outfit-slot-body-", with: "")
+        tap(secondLayer, in: app)
+        let remaining = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-'"))
+        XCTAssertEqual(remaining.count, 2)
+        let secondChoiceID = remaining.element(boundBy: 0).identifier
+        let replacementChoiceID = remaining.element(boundBy: 1).identifier
+        chooseCandidate(app.buttons[secondChoiceID], in: app)
+        app.buttons["save-outfit"].tap()
+        let card = button(prefix: "outfit-card-", in: app)
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        let cardID = card.identifier
+
+        app.tabBars.buttons["Гардероб"].tap()
+        deleteWardrobeItem(firstItemID, in: app)
+        await summary(app, ready: 2, pending: 0)
+        let beforeRepair = try await activityCounts()
+        app.tabBars.buttons["Луки"].tap()
+        tap(app.buttons[cardID], in: app)
+        tap(app.buttons["repair-slot-\(firstSlotID)"], in: app)
+        XCTAssertTrue(app.navigationBars["Тело"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons[replacementChoiceID].exists)
+        XCTAssertFalse(app.buttons[secondChoiceID].exists, "The other layer's thing is unavailable for replacement")
+        chooseCandidate(app.buttons[replacementChoiceID], in: app)
+        XCTAssertTrue(app.buttons["edit-outfit"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Для прогулки"].exists)
+        XCTAssertFalse(button(prefix: "repair-slot-", in: app).exists)
+        capture("outfit-successful-targeted-repair")
+        app.buttons["edit-outfit"].tap()
+        tap(app.buttons["outfit-slot-body-\(firstSlotID)"], in: app)
+        XCTAssertTrue(app.buttons[replacementChoiceID].isSelected, "Only the addressed layer receives the replacement")
+        app.buttons["cancel-outfit-picker"].tap()
+        tap(app.buttons["outfit-slot-body-\(secondSlotID)"], in: app)
+        XCTAssertTrue(app.buttons[secondChoiceID].isSelected, "The independent layer keeps its original thing")
+        app.buttons["cancel-outfit-picker"].tap()
+        app.buttons["cancel-outfit"].tap()
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Inspecting the saved replacement must not create a draft change")
+        let afterRepair = try await activityCounts()
+        XCTAssertEqual(afterRepair, beforeRepair)
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.buttons[cardID].exists, "Repair retains the saved outfit identity")
+
+        app.tabBars.buttons["Гардероб"].tap()
+        deleteWardrobeItem(secondChoiceID.replacingOccurrences(of: "outfit-candidate-", with: ""), in: app)
+        await summary(app, ready: 1, pending: 0)
+        deleteWardrobeItem(replacementChoiceID.replacingOccurrences(of: "outfit-candidate-", with: ""), in: app)
+        await summary(app, ready: 0, pending: 0)
+        tap(app.buttons["add-demo-photo"], in: app)
+        await summary(app, ready: 1, pending: 0)
+        let beforeIncomplete = try await activityCounts()
+        app.tabBars.buttons["Луки"].tap()
+        tap(app.buttons[cardID], in: app)
+        tap(app.buttons["repair-slot-\(firstSlotID)"], in: app)
+        chooseCandidate(button(prefix: "outfit-candidate-", in: app), in: app)
+        XCTAssertTrue(app.navigationBars["Изменить лук"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["save-outfit"].isEnabled)
+        XCTAssertTrue(app.staticTexts["Выберите ещё одну вещь."].exists)
+        XCTAssertTrue(app.buttons["outfit-slot-body-\(firstSlotID)"].label.contains("Футболка"))
+        capture("outfit-incomplete-repair-draft")
+        app.buttons["cancel-outfit"].tap()
+        let keep = app.alerts.buttons.matching(identifier: "continue-outfit-editing").firstMatch
+        XCTAssertTrue(keep.waitForExistence(timeout: 5), "A replacement below the minimum must remain a dirty draft")
+        keep.tap()
+        XCTAssertTrue(app.buttons["outfit-slot-body-\(firstSlotID)"].label.contains("Футболка"))
+        app.buttons["cancel-outfit"].tap()
+        app.alerts.buttons.matching(identifier: "discard-outfit-changes").firstMatch.tap()
+        XCTAssertTrue(app.buttons["edit-outfit"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'repair-slot-'")).count, 2,
+                       "Discarding must not persist a one-thing composition")
+        let afterIncomplete = try await activityCounts()
+        XCTAssertEqual(afterIncomplete, beforeIncomplete)
+        try await control("offline")
+        XCUIDevice.shared.press(.home)
+        app.terminate()
+        let offline = launch(reset: false)
+        offline.tabBars.buttons["Луки"].tap()
+        tap(offline.buttons[cardID], in: offline)
+        XCTAssertTrue(offline.staticTexts["Для прогулки"].exists)
+        XCTAssertEqual(offline.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'repair-slot-'")).count, 2)
+        XCUIDevice.shared.press(.home)
+        offline.terminate()
+    }
+
+    @MainActor
+    func testEmptyLooksOfferWardrobeAndPendingChoicesExplainReadiness() async throws {
+        let app = launch(reset: true)
+        app.tabBars.buttons["Луки"].tap()
+        let wardrobe = app.buttons["В гардероб"]
+        XCTAssertTrue(wardrobe.waitForExistence(timeout: 5),
+                      "Before there are enough ready things, the empty collection must lead to the wardrobe")
+        wardrobe.tap()
+        XCTAssertTrue(app.navigationBars["Гардероб"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["add-photo"].exists)
+        try await control("offline")
+        tap(app.buttons["add-demo-photo"], in: app)
+        await summary(app, ready: 0, pending: 1)
+        app.tabBars.buttons["Луки"].tap()
+        app.buttons["create-first-outfit"].tap()
+        tap(button(prefix: "outfit-slot-body-", in: app), in: app)
+        XCTAssertTrue(app.staticTexts["Вещи ещё обрабатываются"].waitForExistence(timeout: 5),
+                      "A pending thing with an unknown type must be explained as processing")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-'")).count, 0)
+        capture("outfit-picker-processing-empty")
+        app.buttons["cancel-outfit-picker"].tap()
+        app.buttons["cancel-outfit"].tap()
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Looking at an empty picker must not dirty the draft")
+        XCUIDevice.shared.press(.home)
+        app.terminate()
+    }
+
+    @MainActor
+    func testPickerMarksCurrentThingAndFiltersTypesWithoutChangingTheSlotOnCancel() async throws {
+        let app = launch(reset: true)
+        for (index, type) in ["t_shirt", "hoodie"].enumerated() {
+            tap(app.buttons["add-demo-photo"], in: app)
+            await summary(app, ready: index + 1, pending: 0)
+            openFirstItem(in: app)
+            tap(app.buttons["edit-item"], in: app)
+            tap(app.buttons["choose-type"], in: app)
+            tap(app.buttons["type-\(type)"], in: app)
+            app.buttons["save-item-edits"].tap()
+            await summary(app, ready: index + 1, pending: 0)
+        }
+        let before = try await activityCounts()
+        app.tabBars.buttons["Луки"].tap()
+        app.buttons["create-first-outfit"].tap()
+        let body = button(prefix: "outfit-slot-body-", in: app)
+        tap(body, in: app)
+        let shirt = app.buttons.matching(NSPredicate(format:
+            "identifier BEGINSWITH 'outfit-candidate-' AND label CONTAINS 'Футболка'")).firstMatch
+        let shirtID = shirt.identifier
+        chooseCandidate(shirt, in: app)
+        XCTAssertTrue(body.label.contains("Футболка"))
+        tap(body, in: app)
+        XCTAssertTrue(app.buttons[shirtID].isSelected,
+                      "Reopening the picker must identify the thing currently occupying this slot")
+        capture("outfit-picker-current-selection")
+        app.buttons["outfit-type-filter"].tap()
+        app.buttons["outfit-filter-hoodie"].tap()
+        XCTAssertFalse(app.buttons[shirtID].exists, "The hoodie filter must hide the selected T-shirt without changing the slot")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-'")).count, 1)
+        XCTAssertTrue(button(prefix: "outfit-candidate-", in: app).label.contains("Худи"))
+        capture("outfit-picker-type-filter")
+        app.buttons["outfit-type-filter"].tap()
+        app.buttons["outfit-filter-all"].tap()
+        XCTAssertTrue(app.buttons[shirtID].isSelected)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-'")).count, 2)
+        app.buttons["cancel-outfit-picker"].tap()
+        XCTAssertTrue(body.label.contains("Футболка"))
+        XCTAssertFalse(app.buttons["save-outfit"].isEnabled, "Filtering must not select a second thing")
+        let after = try await activityCounts()
+        XCTAssertEqual(after, before, "Choosing and filtering existing things must stay local")
+        app.buttons["cancel-outfit"].tap()
+        let discard = app.alerts.buttons.matching(identifier: "discard-outfit-changes").firstMatch
+        XCTAssertTrue(discard.waitForExistence(timeout: 5))
+        discard.tap()
+        XCUIDevice.shared.press(.home)
+        app.terminate()
+    }
+
+    @MainActor
+    func testMissingBodyLayerOpensItsPickerDirectlyAndCancelPreservesTheLook() async throws {
+        let app = launch(reset: true)
+        for count in 1...2 {
+            tap(app.buttons["add-demo-photo"], in: app)
+            await summary(app, ready: count, pending: 0)
+        }
+        app.tabBars.buttons["Луки"].tap()
+        app.buttons["create-first-outfit"].tap()
+        tap(button(prefix: "outfit-slot-body-", in: app), in: app)
+        chooseCandidate(button(prefix: "outfit-candidate-", in: app), in: app)
+        tap(app.buttons["add-body-layer"], in: app)
+        let secondLayer = app.buttons.matching(NSPredicate(format:
+            "identifier BEGINSWITH 'outfit-slot-body-' AND label BEGINSWITH 'Тело · слой 2'")).firstMatch
+        tap(secondLayer, in: app)
+        chooseCandidate(button(prefix: "outfit-candidate-", in: app), in: app)
+        XCTAssertTrue(app.buttons["save-outfit"].isEnabled)
+        app.buttons["save-outfit"].tap()
+        let card = button(prefix: "outfit-card-", in: app)
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        let cardID = card.identifier
+
+        app.tabBars.buttons["Гардероб"].tap()
+        deleteFirstItem(in: app)
+        await summary(app, ready: 1, pending: 0)
+        let before = try await activityCounts()
+        app.tabBars.buttons["Луки"].tap()
+        tap(app.buttons[cardID], in: app)
+        let missingLayer = button(prefix: "repair-slot-", in: app)
+        guard reveal(missingLayer, in: app) else { return }
+        let missingLayerID = missingLayer.identifier
+        missingLayer.tap()
+
+        XCTAssertTrue(app.navigationBars["Тело"].waitForExistence(timeout: 5),
+                      "Replacing a deleted body layer must open that zone's picker directly")
+        XCTAssertTrue(app.buttons["cancel-outfit-picker"].exists)
+        XCTAssertFalse(app.buttons["save-outfit"].exists, "Repair must not begin in the general editor")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format:
+            "identifier BEGINSWITH 'outfit-candidate-'")).count, 0,
+                       "The surviving thing is already used by the other layer")
+        capture("outfit-targeted-replacement-empty")
+        app.buttons["cancel-outfit-picker"].tap()
+        XCTAssertTrue(app.buttons["edit-outfit"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons[missingLayerID].exists, "Cancelling must leave the original missing layer unchanged")
+        let after = try await activityCounts()
+        XCTAssertEqual(after, before, "Opening and cancelling repair must not upload photos or call AI")
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.buttons[cardID].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-'")).count, 1)
+        XCUIDevice.shared.press(.home)
+        app.terminate()
     }
 
     @MainActor
@@ -192,8 +466,9 @@ final class OutfitFlowTests: XCTestCase {
         let offline = launch(reset: false)
         offline.tabBars.buttons["Луки"].tap()
         XCTAssertTrue(offline.buttons[savedCardID].waitForExistence(timeout: 5))
-        offline.buttons[savedCardID].tap()
-        XCTAssertTrue(offline.navigationBars["Лук без названия"].exists)
+        tap(offline.buttons[savedCardID], in: offline)
+        XCTAssertTrue(offline.staticTexts["Лук без названия"].exists)
+        capture("outfit-detail-composition")
         XCTAssertTrue(offline.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Футболка'")).firstMatch.exists)
         offline.navigationBars.buttons.firstMatch.tap()
         offline.tabBars.buttons["Гардероб"].tap()
@@ -208,7 +483,7 @@ final class OutfitFlowTests: XCTestCase {
         cancelDeletion.tap()
         await summary(offline, ready: 2, pending: 0)
         offline.tabBars.buttons["Луки"].tap()
-        offline.buttons[savedCardID].tap()
+        tap(offline.buttons[savedCardID], in: offline)
         XCTAssertFalse(button(prefix: "repair-slot-", in: offline).exists,
                        "Cancelling wardrobe deletion must preserve the saved outfit's links")
         XCTAssertTrue(offline.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Брюки'")).firstMatch.exists)
@@ -217,13 +492,15 @@ final class OutfitFlowTests: XCTestCase {
         deleteFirstItem(in: offline)
         await summary(offline, ready: 1, pending: 0)
         offline.tabBars.buttons["Луки"].tap()
-        offline.buttons[savedCardID].tap()
+        tap(offline.buttons[savedCardID], in: offline)
         let missingSlot = button(prefix: "repair-slot-", in: offline)
         guard reveal(missingSlot, in: offline) else { return }
         capture("outfit-03-missing-item")
         missingSlot.tap()
-        XCTAssertFalse(offline.buttons["save-outfit"].isEnabled)
-        offline.buttons["cancel-outfit"].tap()
+        XCTAssertTrue(offline.navigationBars["Низ"].waitForExistence(timeout: 5))
+        XCTAssertEqual(offline.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-'")).count, 0)
+        offline.buttons["cancel-outfit-picker"].tap()
+        XCTAssertTrue(offline.buttons["edit-outfit"].waitForExistence(timeout: 5))
         XCUIDevice.shared.press(.home)
         offline.terminate()
     }
@@ -281,6 +558,12 @@ final class OutfitFlowTests: XCTestCase {
         app.buttons[firstID].swipeRight()
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists)
         XCTAssertTrue(app.buttons[firstID].label.contains("Свитер"))
+        let cycleSlotID = firstID.replacingOccurrences(of: "outfit-slot-body-", with: "")
+        performSlotAction("next-slot", slotID: cycleSlotID, in: app)
+        XCTAssertTrue(app.buttons[firstID].label.contains("Футболка"))
+        performSlotAction("previous-slot", slotID: cycleSlotID, in: app)
+        XCTAssertTrue(app.buttons[firstID].label.contains("Свитер"))
+        XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists)
         tap(app.buttons[firstID], in: app)
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-' ")).count, 2)
         app.buttons["cancel-outfit-picker"].tap()
@@ -298,14 +581,20 @@ final class OutfitFlowTests: XCTestCase {
         app.terminate()
         let offline = launch(reset: false)
         offline.tabBars.buttons["Луки"].tap()
-        offline.buttons[cardID].tap()
-        XCTAssertTrue(offline.staticTexts["Тело · слой 1"].exists)
-        XCTAssertTrue(offline.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Свитер'")).firstMatch.exists)
-        for _ in 0..<4 where !offline.staticTexts["Тело · слой 3"].isHittable { offline.swipeUp() }
-        XCTAssertTrue(offline.staticTexts["Тело · слой 3"].exists)
-        XCTAssertTrue(offline.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Куртка'")).firstMatch.exists)
-        for _ in 0..<4 where !offline.staticTexts["Тело · слой 4"].isHittable { offline.swipeUp() }
-        XCTAssertTrue(offline.staticTexts["Тело · слой 4"].exists)
+        tap(offline.buttons[cardID], in: offline)
+        offline.buttons["edit-outfit"].tap()
+        guard reveal(offline.buttons[firstID], in: offline) else { return }
+        XCTAssertTrue(offline.buttons[firstID].label.contains("Тело · слой 1"))
+        XCTAssertTrue(offline.buttons[firstID].label.contains("Свитер"))
+        guard reveal(offline.buttons[secondID], in: offline) else { return }
+        XCTAssertTrue(offline.buttons[secondID].label.contains("Худи"))
+        guard reveal(offline.buttons[thirdID], in: offline) else { return }
+        XCTAssertTrue(offline.buttons[thirdID].label.contains("Тело · слой 3"))
+        XCTAssertTrue(offline.buttons[thirdID].label.contains("Куртка"))
+        let emptyFourth = offline.buttons.matching(NSPredicate(format:
+            "identifier BEGINSWITH 'outfit-slot-body-' AND label BEGINSWITH 'Тело · слой 4'")).firstMatch
+        guard reveal(emptyFourth, in: offline) else { return }
+        XCTAssertTrue(emptyFourth.label.contains("Выбрать вещь"), "The deliberately empty final layer must survive relaunch")
         capture("outfit-05-layers-offline")
         XCUIDevice.shared.press(.home)
         offline.terminate()
@@ -316,19 +605,25 @@ final class OutfitFlowTests: XCTestCase {
         let app = launch(reset: true)
         app.tabBars.buttons["Луки"].tap()
         app.buttons["create-first-outfit"].tap()
+        for _ in 0..<5 { tap(app.buttons["add-body-layer"], in: app) }
         let head = button(prefix: "outfit-slot-head-", in: app)
+        guard reveal(head, in: app, towardTop: true) else { return }
         head.swipeLeft()
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "Horizontal drag must never open the picker")
         guard !app.buttons["cancel-outfit-picker"].exists else { return }
         let body = button(prefix: "outfit-slot-body-", in: app)
         let originalBodyY = body.frame.minY
-        head.swipeUp()
+        let dragStart = head.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+        dragStart.press(forDuration: 0.05, thenDragTo: dragStart.withOffset(CGVector(dx: 0, dy: -160)))
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "Vertical drag must never open the picker")
         XCTAssertLessThan(body.frame.minY, originalBodyY - 20, "Dragging through a row must still scroll the constructor")
         tap(body, in: app)
         XCTAssertTrue(app.buttons["cancel-outfit-picker"].waitForExistence(timeout: 5), "A real tap still opens the picker")
         app.buttons["cancel-outfit-picker"].tap()
         app.buttons["cancel-outfit"].tap()
+        let discard = app.alerts.buttons.matching(identifier: "discard-outfit-changes").firstMatch
+        XCTAssertTrue(discard.waitForExistence(timeout: 5))
+        discard.tap()
         XCUIDevice.shared.press(.home)
         app.terminate()
     }
@@ -346,6 +641,9 @@ final class OutfitFlowTests: XCTestCase {
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "A swipe must not activate the row's tap action")
         guard !app.buttons["cancel-outfit-picker"].exists else { return }
         XCTAssertEqual(head.label, originalHead)
+        tap(head, in: app)
+        XCTAssertTrue(app.staticTexts["Нет вещей для этой зоны"].waitForExistence(timeout: 5))
+        app.buttons["cancel-outfit-picker"].tap()
         let first = button(prefix: "outfit-slot-body-", in: app)
         tap(first, in: app)
         chooseCandidate(button(prefix: "outfit-candidate-", in: app), in: app)
@@ -357,18 +655,17 @@ final class OutfitFlowTests: XCTestCase {
         tap(app.buttons["add-body-layer"], in: app)
         let second = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-slot-body-' AND label BEGINSWITH 'Тело · слой 2' ")).firstMatch
         tap(second, in: app)
-        XCTAssertTrue(app.otherElements["outfit-picker-empty"].waitForExistence(timeout: 5)
-            || app.staticTexts["Подходящих вещей пока нет"].exists)
+        XCTAssertTrue(app.staticTexts["Все подходящие вещи уже выбраны"].waitForExistence(timeout: 5))
         app.buttons["cancel-outfit-picker"].tap()
         let secondID = second.identifier.replacingOccurrences(of: "outfit-slot-body-", with: "")
         second.swipeRight()
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "An empty-pool swipe must stay in the editor")
         XCTAssertTrue(second.label.contains("Выбрать вещь"))
-        tap(app.buttons["remove-body-layer-\(secondID)"], in: app)
+        performSlotAction("remove-body-layer", slotID: secondID, in: app)
         let firstSlotID = firstID.replacingOccurrences(of: "outfit-slot-body-", with: "")
-        tap(app.buttons["clear-slot-\(firstSlotID)"], in: app)
+        performSlotAction("clear-slot", slotID: firstSlotID, in: app)
         XCTAssertTrue(app.buttons[firstID].label.contains("Выбрать вещь"))
-        tap(app.buttons["remove-body-layer-\(firstSlotID)"], in: app)
+        performSlotAction("remove-body-layer", slotID: firstSlotID, in: app)
         XCTAssertTrue(app.buttons[firstID].exists, "Removing the last body row keeps an empty row")
         XCTAssertFalse(app.buttons["save-outfit"].isEnabled)
         capture("outfit-06-empty-last-layer")
@@ -389,6 +686,7 @@ final class OutfitFlowTests: XCTestCase {
             tap(app.buttons["type-\(type)"], in: app)
             XCTAssertTrue(app.buttons["save-item-edits"].waitForExistence(timeout: 5), "Choosing a visible type must return to the editor")
             app.buttons["save-item-edits"].tap()
+            await summary(app, ready: index + 1, pending: 0)
         }
         try await control("offline")
         app.tabBars.buttons["Луки"].tap()
@@ -405,7 +703,7 @@ final class OutfitFlowTests: XCTestCase {
             XCTAssertTrue(card.waitForExistence(timeout: 5))
             cardIDs.append(card.identifier)
         }
-        app.buttons[cardIDs[0]].tap()
+        tap(app.buttons[cardIDs[0]], in: app)
         XCTAssertTrue(app.buttons["edit-outfit"].waitForExistence(timeout: 5))
         app.buttons["edit-outfit"].tap()
         enterName(" изменён", in: app)
@@ -417,18 +715,18 @@ final class OutfitFlowTests: XCTestCase {
         XCTAssertTrue(app.textFields["outfit-name"].exists)
         app.buttons["cancel-outfit"].tap()
         app.alerts.buttons.matching(identifier: "discard-outfit-changes").firstMatch.tap()
-        XCTAssertTrue(app.navigationBars["Первый"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Первый"].waitForExistence(timeout: 5))
         app.buttons["edit-outfit"].tap()
         enterName(" сохранён", in: app)
         let bottom = button(prefix: "outfit-slot-bottom-", in: app)
         let bottomID = bottom.identifier.replacingOccurrences(of: "outfit-slot-bottom-", with: "")
-        tap(app.buttons["clear-slot-\(bottomID)"], in: app)
+        performSlotAction("clear-slot", slotID: bottomID, in: app)
         XCTAssertFalse(app.buttons["save-outfit"].isEnabled)
         tap(bottom, in: app)
         chooseCandidate(button(prefix: "outfit-candidate-", in: app), in: app)
         tap(app.buttons["add-body-layer"], in: app)
         app.buttons["save-outfit"].tap()
-        XCTAssertTrue(app.navigationBars["Первый сохранён"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Первый сохранён"].waitForExistence(timeout: 5))
         capture("outfit-07-edited")
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).count, 2)
@@ -436,19 +734,19 @@ final class OutfitFlowTests: XCTestCase {
         deleteFirstItem(in: app)
         await summary(app, ready: 1, pending: 0)
         app.tabBars.buttons["Луки"].tap()
-        app.buttons[cardIDs[0]].tap()
+        tap(app.buttons[cardIDs[0]], in: app)
         app.buttons["edit-outfit"].tap()
         enterName(" неполный", in: app)
         XCTAssertTrue(app.buttons["save-outfit"].isEnabled)
         app.buttons["save-outfit"].tap()
-        XCTAssertTrue(app.navigationBars["Первый сохранён неполный"].waitForExistence(timeout: 5))
-        tap(app.buttons["delete-outfit"], in: app)
+        XCTAssertTrue(app.staticTexts["Первый сохранён неполный"].waitForExistence(timeout: 5))
+        requestOutfitDeletion(in: app)
         XCTAssertTrue(app.alerts.buttons.matching(identifier: "cancel-delete-outfit").firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.alerts.buttons.matching(identifier: "confirm-delete-outfit").firstMatch.exists)
         capture("outfit-11-delete-confirmation")
         app.alerts.buttons.matching(identifier: "cancel-delete-outfit").firstMatch.tap()
         XCTAssertTrue(app.buttons["edit-outfit"].exists)
-        tap(app.buttons["delete-outfit"], in: app)
+        requestOutfitDeletion(in: app)
         XCTAssertTrue(app.alerts.buttons.matching(identifier: "confirm-delete-outfit").firstMatch.waitForExistence(timeout: 5))
         app.alerts.buttons.matching(identifier: "confirm-delete-outfit").firstMatch.tap()
         XCTAssertTrue(app.buttons[cardIDs[1]].waitForExistence(timeout: 5))
@@ -516,8 +814,9 @@ final class OutfitFlowTests: XCTestCase {
         app.buttons["edit-outfit"].tap()
         enterName("На прогулку", in: app)
         app.buttons["save-outfit"].tap()
-        XCTAssertTrue(app.navigationBars["На прогулку"].waitForExistence(timeout: 5))
-        tap(app.buttons["delete-outfit"], in: app)
+        XCTAssertTrue(app.staticTexts["На прогулку"].waitForExistence(timeout: 5))
+        capture("outfit-detail-renamed")
+        requestOutfitDeletion(in: app)
         XCTAssertTrue(app.alerts.buttons.matching(identifier: "confirm-delete-outfit").firstMatch.waitForExistence(timeout: 5))
         app.alerts.buttons.matching(identifier: "confirm-delete-outfit").firstMatch.tap()
         XCTAssertTrue(app.buttons["create-first-outfit"].waitForExistence(timeout: 5))
