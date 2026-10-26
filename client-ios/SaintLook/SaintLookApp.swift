@@ -8,7 +8,12 @@ struct SaintLookApp: App {
 
     var body: some Scene {
         WindowGroup {
-            WardrobeView(store: store)
+            TabView {
+                WardrobeView(store: store)
+                    .tabItem { Label("Гардероб", systemImage: "tshirt") }
+                OutfitsView(store: store)
+                    .tabItem { Label("Луки", systemImage: "square.grid.2x2") }
+            }
                 .task { store.resumePendingItems() }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { store.resumePendingItems() }
