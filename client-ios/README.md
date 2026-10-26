@@ -178,6 +178,10 @@ Artifacts `simulator-screenshots-visual` содержат PNG, no-AI и profile 
 `simulator-ui-video-visual` — запись светлого iPhone, `simulator-results-visual` —
 xcresult. Сохранение выполняется и после ошибок; срок хранения 7 дней. Скриншоты
 нужно открыть и оценить, наличие attachments само по себе не является приёмкой.
+При предупреждении XCTest о зависшем event loop visual runner сохраняет не более
+двух трёхсекундных стеков выбранного Simulator-приложения в
+`simulator-stall-diagnostics-visual` (жёсткий предел sampling — 8 секунд).
+Диагностика не повторяет действия и сохраняет исходный код завершения теста.
 Физический iPhone, живой VoiceOver и тактильность проверяются отдельно владельцем.
 
 Локальная проверка Foundation-bootstrap без UIKit:

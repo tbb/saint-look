@@ -5,19 +5,33 @@ import Foundation
 final class VisualAcceptanceTests: XCTestCase {
     private let baseURL = "http://127.0.0.1:8788"
     private var profile = ""
-    private enum InputFailure: Error { case unavailableField, keyboardUnavailable, keyboardNotDismissed }
     private let itemIDs = (1...4).map { String(format: "36000000-0000-0000-0000-%012d", $0) }
 
     override func setUp() async throws {
         continueAfterFailure = false
         profile = ProcessInfo.processInfo.environment["SAINT_LOOK_VISUAL_PROFILE"] ?? ""
         try XCTSkipIf(profile.isEmpty, "Visual profiles run explicitly; ordinary regressions do not seed catalogs")
-        XCTAssertTrue(["iphone-light", "iphone-dark", "iphone-max-text", "ipad-light"].contains(profile))
+        try require(["iphone-light", "iphone-dark", "iphone-max-text", "ipad-light"].contains(profile))
         try await control("online", reset: true)
     }
 
+    private enum JourneyFailure: Error { case failed }
+
+    private func require(_ condition: Bool, _ message: String = "Required public UI state was not observed",
+                         file: StaticString = #filePath, line: UInt = #line) throws {
+        guard condition else {
+            XCTFail(message, file: file, line: line)
+            throw JourneyFailure.failed
+        }
+    }
+
+    private func requireEqual<T: Equatable>(_ actual: T, _ expected: T, _ message: String = "Public UI value differs",
+                                            file: StaticString = #filePath, line: UInt = #line) throws {
+        try require(actual == expected, "\(message): actual=\(actual), expected=\(expected)", file: file, line: line)
+    }
+
     @MainActor
-    private func launch(_ scenario: String = "ready-four", reset: Bool = true) -> XCUIApplication {
+    private func launch(_ scenario: String = "ready-four", reset: Bool = true) throws -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment = ["SAINT_LOOK_BASE_URL": baseURL,
             "SAINT_LOOK_OWNER_TOKEN": "saint-look-ui-tests-owner-token-00000001",
@@ -25,16 +39,101 @@ final class VisualAcceptanceTests: XCTestCase {
             "SAINT_LOOK_VISUAL_SCENARIO": scenario]
         XCUIDevice.shared.orientation = .portrait
         app.launch()
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10), "Visual app must launch in foreground")
+        try require(app.wait(for: .runningForeground, timeout: 10), "Visual app must launch in foreground")
         return app
     }
 
     @MainActor
-    private func capture(_ name: String) {
+    private func capture(_ name: String) throws {
+        try requireEqual(testRun?.failureCount ?? 0, 0, "Do not label later screenshots as successful after a failed action")
+        recordScreen(name)
+    }
+
+    @MainActor
+    private func recordScreen(_ name: String) {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = "\(profile)-\(name)"
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    @MainActor
+    private func diagnose(_ name: String, app: XCUIApplication, detail: String = "") {
+        recordScreen(name)
+        let state = XCTAttachment(string: detail + "\n" + app.debugDescription)
+        state.name = "\(profile)-\(name)-accessibility"
+        state.lifetime = .keepAlways
+        add(state)
+    }
+
+    @MainActor
+    private func waitVisible(_ element: XCUIElement, in app: XCUIApplication) throws {
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            element.exists && element.isHittable && !element.frame.isEmpty && app.frame.intersects(element.frame)
+        }, object: element)
+        guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
+            diagnose("unavailable-native-control", app: app, detail: element.debugDescription)
+            try require(false, "The intended native control is not visible and hittable")
+            return
+        }
+    }
+
+    @MainActor
+    private func nativeTap(_ element: XCUIElement, in app: XCUIApplication) throws {
+        try waitVisible(element, in: app)
+        let failures = testRun?.failureCount ?? 0
+        element.tap()
+        try requireEqual(testRun?.failureCount ?? 0, failures, "Native tap failed; stop this journey")
+    }
+
+    @MainActor
+    private func hasReachableNavigationControl(_ bar: XCUIElement, in app: XCUIApplication) -> Bool {
+        guard bar.exists, !bar.frame.intersection(app.frame).isEmpty else { return false }
+        // Background bars remain in AX under sheets. Their native actions are not hittable.
+        return bar.buttons.allElementsBoundByIndex.contains {
+            $0.exists && $0.isHittable && !$0.frame.intersection(bar.frame.intersection(app.frame)).isEmpty
+        }
+    }
+
+    @MainActor
+    private func navigationBar(_ app: XCUIApplication) throws -> XCUIElement {
+        let bars = app.navigationBars.allElementsBoundByIndex.filter {
+            hasReachableNavigationControl($0, in: app)
+        }
+        guard bars.count == 1, let bar = bars.first else {
+            diagnose("missing-foreground-navigation", app: app,
+                     detail: "Expected one navigation bar with a reachable native action, found \(bars.count)")
+            try require(false, "The foreground navigation bar must be unambiguous")
+            throw JourneyFailure.failed
+        }
+        return bar
+    }
+
+    @MainActor
+    private func waitNavigation(_ title: String, in app: XCUIApplication) throws {
+        let bar = app.navigationBars[title]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            bar.exists && bar.identifier == title && self.hasReachableNavigationControl(bar, in: app)
+        }, object: bar)
+        guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
+            diagnose("unavailable-navigation", app: app, detail: "Expected destination: \(title)")
+            try require(false, "Expected navigation title must be visible")
+            return
+        }
+    }
+
+    @MainActor
+    private func selectTab(_ title: String, in app: XCUIApplication) throws {
+        let button: XCUIElement
+        if app.tabBars.firstMatch.exists {
+            button = app.tabBars.buttons.matching(identifier: title).firstMatch
+        } else {
+            // iPad's native top tabs have duplicate outer/inner Button representations.
+            let symbol = title == "Луки" ? "square.grid.2x2" : "tshirt"
+            button = app.buttons.matching(NSPredicate(format: "identifier == %@ AND label == %@", symbol, title)).firstMatch
+        }
+        try nativeTap(button, in: app)
+        try waitNavigation(title, in: app)
     }
 
     @MainActor
@@ -43,16 +142,19 @@ final class VisualAcceptanceTests: XCTestCase {
     }
 
     @MainActor
-    private func openItem(_ index: Int, in app: XCUIApplication) {
+    private func openItem(_ index: Int, in app: XCUIApplication) throws {
         let item = card(index, in: app)
-        guard reveal(item, in: app, towardTop: index == 0) else { return }
-        item.tap()
-        XCTAssertTrue(app.buttons["item-actions"].waitForExistence(timeout: 5))
+        try reveal(item, in: app, towardTop: index == 0)
+        try nativeTap(item, in: app)
+        try waitVisible(app.buttons["item-actions"], in: app)
     }
 
     @MainActor
-    private func back(_ app: XCUIApplication) {
-        app.navigationBars.buttons.firstMatch.tap()
+    private func back(_ app: XCUIApplication, to destination: String = "Гардероб") throws {
+        let bar = try navigationBar(app)
+        try require(bar.identifier != destination, "Back requires a detail screen, not the destination itself")
+        try nativeTap(bar.buttons.firstMatch, in: app)
+        try waitNavigation(destination, in: app)
     }
 
     @MainActor
@@ -61,47 +163,54 @@ final class VisualAcceptanceTests: XCTestCase {
     }
 
     @MainActor
-    private func choose(_ index: Int, in app: XCUIApplication) {
-        tap(app.buttons["outfit-candidate-\(itemIDs[index])"], in: app)
-        expectGone(app.buttons["cancel-outfit-picker"], "Selection returns to its addressed screen")
+    private func choose(_ index: Int, in app: XCUIApplication) throws {
+        try waitVisible(app.buttons["cancel-outfit-picker"], in: app)
+        try tap(app.buttons["outfit-candidate-\(itemIDs[index])"], in: app)
+        try expectGone(app.buttons["cancel-outfit-picker"], "Selection returns to its addressed screen")
     }
 
     @MainActor
     private func enterName(_ name: String, in app: XCUIApplication) throws {
         let field = app.textFields["outfit-name"]
-        guard reveal(field, in: app, towardTop: true) else { throw InputFailure.unavailableField }
-        field.tap()
-        // Simulator AX can retain a stale Keyboard node after the on-screen keyboard disappears.
+        try reveal(field, in: app, towardTop: true)
+        let current = (field.value as? String) ?? ""
+        let populated = !current.isEmpty && current != "Название — необязательно"
+        // Focus once, then perform the distinct selection gesture on the focused field.
+        try nativeTap(field, in: app)
         let keyboardReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             let keyboard = app.keyboards.firstMatch
-            return keyboard.exists && keyboard.isHittable && !keyboard.frame.isEmpty
-                && app.frame.intersects(keyboard.frame)
+            return keyboard.exists && keyboard.isHittable && !keyboard.frame.isEmpty && app.frame.intersects(keyboard.frame)
         }, object: app)
         guard XCTWaiter.wait(for: [keyboardReady], timeout: 15) == .completed else {
-            capture("keyboard-focus-unavailable")
-            let diagnostic = XCTAttachment(string: app.debugDescription)
-            diagnostic.name = "\(profile)-keyboard-focus-accessibility"
-            diagnostic.lifetime = .keepAlways
-            add(diagnostic)
-            XCTFail("The name field tap did not produce a visible, hittable Simulator keyboard; stop before typing")
-            throw InputFailure.keyboardUnavailable
+            diagnose("keyboard-focus-unavailable", app: app)
+            try require(false, "No visible, hittable Simulator keyboard; stop before typing")
+            return
         }
-        let current = (field.value as? String) ?? ""
-        // Empty fields expose their placeholder as value, not editable content.
-        if current != "Название — необязательно", !current.isEmpty {
-            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
+        if populated {
+            // Select the complete value without assuming the current caret position.
+            let failures = testRun?.failureCount ?? 0
+            field.press(forDuration: 1.1)
+            try requireEqual(testRun?.failureCount ?? 0, failures, "Native text selection gesture failed")
+            let labels = ["Select All", "Выбрать всё", "Выбрать все"]
+            let selectAllMenu = app.menuItems.matching(NSPredicate(format: "label IN %@", labels)).firstMatch
+            let selectAllButton = app.buttons.matching(NSPredicate(format: "label IN %@", labels)).firstMatch
+            let menuReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                (selectAllMenu.exists && selectAllMenu.isHittable) || (selectAllButton.exists && selectAllButton.isHittable)
+            }, object: app)
+            guard XCTWaiter.wait(for: [menuReady], timeout: 10) == .completed else {
+                diagnose("select-all-unavailable", app: app)
+                try require(false, "The native text-edit menu must offer Select All before replacement")
+                return
+            }
+            try nativeTap(selectAllMenu.exists && selectAllMenu.isHittable ? selectAllMenu : selectAllButton, in: app)
         }
-        field.typeText(name + "\n")
-        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
-        guard XCTWaiter.wait(for: [gone], timeout: 15) == .completed else {
-            capture("keyboard-dismissal-unavailable")
-            let diagnostic = XCTAttachment(string: app.debugDescription)
-            diagnostic.name = "\(profile)-keyboard-dismissal-accessibility"
-            diagnostic.lifetime = .keepAlways
-            add(diagnostic)
-            XCTFail("Done did not dismiss the keyboard; stop before later screenshots")
-            throw InputFailure.keyboardNotDismissed
-        }
+        let failures = testRun?.failureCount ?? 0
+        field.typeText(name)
+        try requireEqual(testRun?.failureCount ?? 0, failures, "Native text entry failed")
+        try requireEqual(field.value as? String, name, "Native replacement must produce the exact name before Done")
+        field.typeText("\n")
+        try requireEqual(testRun?.failureCount ?? 0, failures, "Native Done action failed")
+        try expectGone(app.keyboards.firstMatch, "Done must dismiss the keyboard", timeout: 15)
     }
 
     private func control(_ mode: String, reset: Bool = false) async throws {
@@ -111,71 +220,84 @@ final class VisualAcceptanceTests: XCTestCase {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["mode": mode, "reset": reset])
         let (_, response) = try await URLSession.shared.data(for: request)
-        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        try requireEqual((response as? HTTPURLResponse)?.statusCode, 200)
     }
 
+    /// Match a foreground scroll surface by its screen-specific public child, not by global order.
+    @MainActor
+    private func scrollSurface(in app: XCUIApplication, bar: XCUIElement) throws -> XCUIElement {
+        let query: XCUIElementQuery
+        switch bar.identifier {
+        case "Гардероб": query = app.scrollViews.containing(.staticText, identifier: "wardrobe-summary")
+        case "Тип и цвета": query = app.collectionViews.containing(.button, identifier: "choose-type")
+        case "Собрать лук", "Изменить лук": query = app.scrollViews.containing(.textField, identifier: "outfit-name")
+        case "Голова", "Тело", "Низ", "Обувь": query = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-'"))
+        case "Луки": query = app.scrollViews.containing(NSPredicate(format: "identifier == 'create-first-outfit' OR identifier BEGINSWITH 'outfit-card-'"))
+        case "Лук": query = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH 'repair-slot-'"))
+        default: query = app.scrollViews.containing(.button, identifier: "edit-item")
+        }
+        // A native Form's CollectionView is a layout/scroll surface, not a tappable control.
+        // Its visible child buttons can be hittable even when the container itself is not.
+        let visible = query.allElementsBoundByIndex.filter {
+            let frame = $0.frame
+            return $0.exists && !frame.intersection(app.frame).isEmpty
+                && frame.minX < bar.frame.maxX && frame.maxX > bar.frame.minX
+                && frame.maxY > bar.frame.maxY
+        }
+        guard let surface = visible.min(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
+            diagnose("missing-scroll-surface", app: app, detail: "Foreground navigation: \(bar.identifier)")
+            throw JourneyFailure.failed
+        }
+        return surface
+    }
 
     @MainActor
-    private func reveal(_ element: XCUIElement, in app: XCUIApplication, towardTop: Bool = false) -> Bool {
-        guard !app.keyboards.firstMatch.exists || element.elementType == .textField else {
-            XCTFail("Finish name entry with Done before interacting with the constructor")
-            return false
-        }
-        var lastFrame = CGRect.zero
-        var lastViewport = CGRect.zero
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication, towardTop: Bool = false) throws {
+        try require(!app.keyboards.firstMatch.exists || element.elementType == .textField,
+                    "Finish name entry before interacting with content")
+        let bar = try navigationBar(app)
+        let container = try scrollSurface(in: app, bar: bar)
+        var last = ""
         for _ in 0..<7 {
-            let bars = app.navigationBars.allElementsBoundByIndex
-            let foregroundBar = bars.reversed().first { $0.isHittable } ?? bars.last
-            let top = foregroundBar?.frame.maxY ?? app.frame.minY
-            var bottom = app.frame.maxY - 24
-            if let tabTop = app.tabBars.allElementsBoundByIndex.filter({ $0.isHittable }).map({ $0.frame.minY }).min() {
-                bottom = min(bottom, tabTop)
+            var viewport = container.frame.intersection(app.frame)
+            if bar.frame.intersects(viewport) { viewport.origin.y = max(viewport.minY, bar.frame.maxY); viewport.size.height = max(0, container.frame.intersection(app.frame).maxY - viewport.minY) }
+            let blockers = app.tabBars.allElementsBoundByIndex + app.keyboards.allElementsBoundByIndex
+                + app.staticTexts.matching(identifier: "color-selection-requirement").allElementsBoundByIndex
+            for blocker in blockers where blocker.isHittable && blocker.frame.intersects(viewport) && blocker.frame.midY > viewport.midY {
+                viewport.size.height = max(0, blocker.frame.minY - viewport.minY)
             }
-            if app.keyboards.firstMatch.exists { bottom = min(bottom, app.keyboards.firstMatch.frame.minY) }
-            let viewport = CGRect(x: app.frame.minX + 16, y: top, width: app.frame.width - 32,
-                                  height: max(0, bottom - top))
-            let present = element.exists
-            let frame = present ? element.frame : .zero
-            lastFrame = frame
-            lastViewport = viewport
-            // Visibility is a gate, not a tap coordinate. Native tap chooses the real hit region.
-            // A row starting at the navigation boundary is usable; its entire AX box need not fit.
-            if present, frame.midY > viewport.minY, frame.midY < viewport.maxY, element.isHittable {
-                return true
-            }
-            let distance = present ? viewport.midY - frame.midY : (towardTop ? 180 : -180)
-            let movement = (distance < 0 ? -1.0 : 1.0) * min(180, max(100, abs(distance)))
-            let start = app.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: viewport.midX, dy: viewport.midY))
-            let end = start.withOffset(CGVector(dx: 0, dy: movement))
+            viewport = viewport.insetBy(dx: 8, dy: 8)
+            try require(viewport.width > 40 && viewport.height > 60, "The foreground content viewport must be usable")
+            let frame = element.exists ? element.frame : .zero
+            last = "target=\(frame), container=\(container.frame), viewport=\(viewport), navigation=\(bar.identifier)"
+            if element.exists && element.isHittable && frame.intersects(viewport) { return }
+            let direction: CGFloat = element.exists ? (frame.midY < viewport.midY ? 1 : -1) : (towardTop ? 1 : -1)
+            let distance = min(viewport.height * 0.65, element.exists ? max(40, abs(viewport.midY - frame.midY)) : viewport.height * 0.65)
+            let y = direction < 0 ? viewport.maxY - 12 : viewport.minY + 12
+            let start = container.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: viewport.midX - container.frame.minX, dy: y - container.frame.minY))
+            let end = start.withOffset(CGVector(dx: 0, dy: direction * distance))
+            let failures = testRun?.failureCount ?? 0
             start.press(forDuration: 0.05, thenDragTo: end)
+            try requireEqual(testRun?.failureCount ?? 0, failures, "Native scroll failed; stop this journey")
         }
-        capture("unreachable-outfit-control")
-        XCTFail("Could not reveal control; last target frame \(lastFrame), content viewport \(lastViewport), searching toward top: \(towardTop)")
-        return false
+        diagnose("unreachable-content", app: app, detail: last)
+        try require(false, "Could not reveal intended content: \(last)")
     }
 
     @MainActor
-    private func tap(_ element: XCUIElement, in app: XCUIApplication) {
-        guard reveal(element, in: app) else { return }
-        element.tap()
+    private func tap(_ element: XCUIElement, in app: XCUIApplication) throws {
+        try reveal(element, in: app)
+        try nativeTap(element, in: app)
     }
 
-
     @MainActor
-    private func expectGone(_ element: XCUIElement, _ message: String, timeout: TimeInterval = 5) {
+    private func expectGone(_ element: XCUIElement, _ message: String, timeout: TimeInterval = 5) throws {
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
         let result = XCTWaiter.wait(for: [gone], timeout: timeout)
-        if result != .completed {
-            capture("outfit-dismissal-timeout")
-            let state = XCTAttachment(string: element.debugDescription)
-            state.name = "outfit-dismissal-accessibility-state"
-            state.lifetime = .keepAlways
-            add(state)
-        }
-        XCTAssertEqual(result, .completed, message)
+        if result != .completed { try capture("dismissal-timeout") }
+        try requireEqual(result, .completed, message)
     }
-
 
     private func activityCounts() async throws -> [String: Int] {
         var counts: [String: Int] = [:]
@@ -188,7 +310,7 @@ final class VisualAcceptanceTests: XCTestCase {
             request.timeoutInterval = 5
             request.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
             let (data, response) = try await URLSession.shared.data(for: request)
-            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            try requireEqual((response as? HTTPURLResponse)?.statusCode, 200)
             let state = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
             for key in keys { counts[key] = try XCTUnwrap(state[key] as? Int) }
         }
@@ -198,135 +320,146 @@ final class VisualAcceptanceTests: XCTestCase {
     @MainActor
     func testPublicPhotoJourney() async throws {
         let before = try await activityCounts()
-        let app = launch()
-        XCTAssertTrue(card(0, in: app).waitForExistence(timeout: 10))
-        XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'wardrobe-item-' ")).count, 4)
-        capture("01-wardrobe-grid")
-        openItem(1, in: app)
-        XCTAssertTrue(app.navigationBars["Джинсы"].exists)
-        capture("02-jeans-detail")
-        back(app)
-        openItem(0, in: app)
+        let app = try launch()
+        try require(card(0, in: app).waitForExistence(timeout: 10))
+        let summary = app.staticTexts["wardrobe-summary"]
+        try require(summary.waitForExistence(timeout: 5))
+        try requireEqual(summary.label, "Всего: 4. Готово: 4. Ожидают: 0.")
+        try capture("01-wardrobe-grid")
+        try openItem(1, in: app)
+        try require(app.navigationBars["Джинсы"].exists)
+        try capture("02-jeans-detail")
+        try back(app)
+        try openItem(0, in: app)
         let edit = app.buttons["edit-item"]
-        guard reveal(edit, in: app) else { return }
+        try reveal(edit, in: app)
         let hitEvidence = XCTAttachment(string: "edit-item accessibility frame: \(edit.frame); hittable: \(edit.isHittable)")
         hitEvidence.name = "\(profile)-item-edit-hit-frame"
         hitEvidence.lifetime = .keepAlways
         add(hitEvidence)
-        XCTAssertGreaterThanOrEqual(edit.frame.height, 44, "Item editing needs a native hit target at least 44 points tall")
-        edit.tap()
-        tap(app.buttons["choose-colors"], in: app)
-        XCTAssertTrue(app.buttons["color-white"].waitForExistence(timeout: 5))
-        capture("03-item-colors")
-        app.buttons["done-colors"].tap()
-        app.buttons["cancel-item-edits"].tap()
-        back(app)
-        app.tabBars.buttons["Луки"].tap()
-        tap(app.buttons["create-first-outfit"], in: app)
-        tap(slot("body", in: app), in: app)
-        choose(0, in: app)
-        XCTAssertFalse(app.buttons["save-outfit"].isEnabled)
-        XCTAssertTrue(app.staticTexts["outfit-save-explanation"].exists)
+        try require(edit.frame.height >= 44, "Item editing needs a native hit target at least 44 points tall")
+        try nativeTap(edit, in: app)
+        try waitVisible(app.buttons["cancel-item-edits"], in: app)
+        try tap(app.buttons["choose-colors"], in: app)
+        try require(app.buttons["color-white"].waitForExistence(timeout: 5))
+        try capture("03-item-colors")
+        try nativeTap(app.buttons["done-colors"], in: app)
+        try nativeTap(app.buttons["cancel-item-edits"], in: app)
+        try back(app)
+        try selectTab("Луки", in: app)
+        try tap(app.buttons["create-first-outfit"], in: app)
+        try waitVisible(app.buttons["cancel-outfit"], in: app)
+        try tap(slot("body", in: app), in: app)
+        try choose(0, in: app)
+        try require(!(app.buttons["save-outfit"].isEnabled))
+        try require(app.staticTexts["outfit-save-explanation"].exists)
         let firstLayer = slot("body", in: app)
         let firstID = firstLayer.identifier.replacingOccurrences(of: "outfit-slot-body-", with: "")
-        tap(slot("bottom", in: app), in: app)
-        choose(1, in: app)
-        XCTAssertTrue(app.buttons["save-outfit"].isEnabled)
-        tap(slot("shoes", in: app), in: app)
-        choose(3, in: app)
-        tap(firstLayer, in: app)
+        try tap(slot("bottom", in: app), in: app)
+        try choose(1, in: app)
+        try require(app.buttons["save-outfit"].isEnabled)
+        try tap(slot("shoes", in: app), in: app)
+        try choose(3, in: app)
+        try tap(firstLayer, in: app)
         let current = app.buttons["outfit-candidate-\(itemIDs[0])"]
-        XCTAssertTrue(current.waitForExistence(timeout: 5))
-        XCTAssertTrue(current.isSelected)
-        capture("04-body-picker-current")
-        app.buttons["outfit-type-filter"].tap()
-        app.buttons["outfit-filter-polo"].tap()
-        XCTAssertFalse(current.exists)
-        XCTAssertTrue(app.buttons["outfit-candidate-\(itemIDs[2])"].exists)
-        app.buttons["cancel-outfit-picker"].tap()
-        XCTAssertEqual(firstLayer.value as? String, "Футболка, Белый")
-        tap(app.buttons["add-body-layer"], in: app)
+        try require(current.waitForExistence(timeout: 5))
+        try require(current.isSelected)
+        try capture("04-body-picker-current")
+        try nativeTap(app.buttons["outfit-type-filter"], in: app)
+        try nativeTap(app.buttons["outfit-filter-polo"], in: app)
+        try require(!(current.exists))
+        try require(app.buttons["outfit-candidate-\(itemIDs[2])"].exists)
+        try nativeTap(app.buttons["cancel-outfit-picker"], in: app)
+        try requireEqual(firstLayer.value as? String, "Футболка, Белый")
+        try tap(app.buttons["add-body-layer"], in: app)
         let second = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-slot-body-' AND identifier != %@", firstLayer.identifier)).firstMatch
         let secondID = second.identifier.replacingOccurrences(of: "outfit-slot-body-", with: "")
-        tap(second, in: app)
-        choose(2, in: app)
-        XCTAssertEqual(firstLayer.value as? String, "Футболка, Белый")
-        XCTAssertEqual(second.value as? String, "Поло, Белый, Чёрный")
-        guard reveal(firstLayer, in: app, towardTop: true) else { return }
-        capture("05-multilayer-editor")
-        tap(app.buttons["outfit-slot-menu-\(secondID)"], in: app)
-        app.buttons["remove-body-layer-\(secondID)"].tap()
-        XCTAssertFalse(second.exists)
-        app.buttons["save-outfit"].tap()
+        try tap(second, in: app)
+        try choose(2, in: app)
+        try requireEqual(firstLayer.value as? String, "Футболка, Белый")
+        try requireEqual(second.value as? String, "Поло, Белый, Чёрный")
+        try reveal(firstLayer, in: app, towardTop: true)
+        try capture("05-multilayer-editor")
+        try tap(app.buttons["outfit-slot-menu-\(secondID)"], in: app)
+        try nativeTap(app.buttons["remove-body-layer-\(secondID)"], in: app)
+        try require(!(second.exists))
+        try nativeTap(app.buttons["save-outfit"], in: app)
         let outfit = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).firstMatch
-        XCTAssertTrue(outfit.waitForExistence(timeout: 5))
+        try require(outfit.waitForExistence(timeout: 5))
         let outfitID = outfit.identifier
-        XCTAssertEqual(outfit.label, "Лук без названия")
-        capture("06-outfit-collection")
-        outfit.tap()
-        app.buttons["edit-outfit"].tap()
+        try requireEqual(outfit.label, "Лук без названия")
+        try capture("06-outfit-collection")
+        try nativeTap(outfit, in: app)
+        try nativeTap(app.buttons["edit-outfit"], in: app)
+        try waitVisible(app.buttons["cancel-outfit"], in: app)
         let name = "Прогулка по осеннему городу после работы"
         try enterName(name, in: app)
-        app.buttons["save-outfit"].tap()
-        XCTAssertTrue(app.buttons["edit-outfit"].waitForExistence(timeout: 5))
-        capture("07-outfit-detail-long-name")
-        app.buttons["edit-outfit"].tap()
+        try nativeTap(app.buttons["save-outfit"], in: app)
+        try expectGone(app.textFields["outfit-name"], "Saved editor field must disappear")
+        try expectGone(app.buttons["cancel-outfit"], "Saved editor controls must disappear")
+        try require(app.staticTexts[name].waitForExistence(timeout: 5), "Detail must show the exact saved name")
+        try waitVisible(app.buttons["edit-outfit"], in: app)
+        try capture("07-outfit-detail-long-name")
+        try nativeTap(app.buttons["edit-outfit"], in: app)
+        try waitVisible(app.buttons["cancel-outfit"], in: app)
         try enterName("Черновик", in: app)
-        app.buttons["cancel-outfit"].tap()
+        try nativeTap(app.buttons["cancel-outfit"], in: app)
         let discardAlert = app.alerts["Отбросить изменения?"]
-        XCTAssertTrue(discardAlert.waitForExistence(timeout: 5))
-        XCTAssertTrue(discardAlert.buttons.matching(identifier: "continue-outfit-editing").firstMatch.exists)
-        capture("08-outfit-discard-dialog")
-        discardAlert.buttons.matching(identifier: "continue-outfit-editing").firstMatch.tap()
-        XCTAssertEqual(app.textFields["outfit-name"].value as? String, "Черновик")
-        app.buttons["cancel-outfit"].tap()
-        XCTAssertTrue(discardAlert.waitForExistence(timeout: 5))
-        discardAlert.buttons.matching(identifier: "discard-outfit-changes").firstMatch.tap()
-        back(app)
-        app.tabBars.buttons["Гардероб"].tap()
-        openItem(0, in: app)
-        app.buttons["item-actions"].tap()
-        app.buttons["delete-item"].tap()
+        try require(discardAlert.waitForExistence(timeout: 5))
+        try require(discardAlert.buttons.matching(identifier: "continue-outfit-editing").firstMatch.exists)
+        try capture("08-outfit-discard-dialog")
+        try nativeTap(discardAlert.buttons.matching(identifier: "continue-outfit-editing").firstMatch, in: app)
+        try requireEqual(app.textFields["outfit-name"].value as? String, "Черновик")
+        try nativeTap(app.buttons["cancel-outfit"], in: app)
+        try require(discardAlert.waitForExistence(timeout: 5))
+        try nativeTap(discardAlert.buttons.matching(identifier: "discard-outfit-changes").firstMatch, in: app)
+        try expectGone(app.textFields["outfit-name"], "Discarded editor must disappear")
+        try require(app.staticTexts[name].waitForExistence(timeout: 5), "Discard must retain the exact saved name")
+        try back(app, to: "Луки")
+        try selectTab("Гардероб", in: app)
+        try openItem(0, in: app)
+        try nativeTap(app.buttons["item-actions"], in: app)
+        try nativeTap(app.buttons["delete-item"], in: app)
         let deletionAlert = app.alerts["Удалить вещь?"]
-        XCTAssertTrue(deletionAlert.waitForExistence(timeout: 5))
-        XCTAssertTrue(deletionAlert.buttons.matching(identifier: "cancel-delete-item").firstMatch.exists)
-        capture("09-item-delete-dialog")
-        deletionAlert.buttons.matching(identifier: "cancel-delete-item").firstMatch.tap()
-        XCTAssertTrue(app.buttons["item-actions"].exists)
-        app.buttons["item-actions"].tap()
-        app.buttons["delete-item"].tap()
-        XCTAssertTrue(deletionAlert.waitForExistence(timeout: 5))
-        deletionAlert.buttons.matching(identifier: "confirm-delete-item").firstMatch.tap()
-        expectGone(app.buttons["item-actions"], "Confirmed wardrobe deletion dismisses its detail")
-        XCTAssertFalse(card(0, in: app).exists)
-        app.tabBars.buttons["Луки"].tap()
+        try require(deletionAlert.waitForExistence(timeout: 5))
+        try require(deletionAlert.buttons.matching(identifier: "cancel-delete-item").firstMatch.exists)
+        try capture("09-item-delete-dialog")
+        try nativeTap(deletionAlert.buttons.matching(identifier: "cancel-delete-item").firstMatch, in: app)
+        try require(app.buttons["item-actions"].exists)
+        try nativeTap(app.buttons["item-actions"], in: app)
+        try nativeTap(app.buttons["delete-item"], in: app)
+        try require(deletionAlert.waitForExistence(timeout: 5))
+        try nativeTap(deletionAlert.buttons.matching(identifier: "confirm-delete-item").firstMatch, in: app)
+        try expectGone(app.buttons["item-actions"], "Confirmed wardrobe deletion dismisses its detail")
+        try require(!(card(0, in: app).exists))
+        try selectTab("Луки", in: app)
         let saved = app.descendants(matching: .any).matching(identifier: outfitID).firstMatch
-        tap(saved, in: app)
+        try tap(saved, in: app)
         let repair = app.buttons["repair-slot-\(firstID)"]
-        guard reveal(repair, in: app) else { return }
-        capture("10-outfit-missing-body")
-        repair.tap()
-        XCTAssertTrue(app.buttons["outfit-candidate-\(itemIDs[2])"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["outfit-candidate-\(itemIDs[1])"].exists)
-        XCTAssertFalse(app.buttons["outfit-candidate-\(itemIDs[3])"].exists)
-        capture("11-targeted-replacement-picker")
-        choose(2, in: app)
-        XCTAssertFalse(repair.exists)
-        capture("12-repaired-outfit")
-        back(app)
-        XCTAssertEqual(saved.label, name)
+        try reveal(repair, in: app)
+        try capture("10-outfit-missing-body")
+        try nativeTap(repair, in: app)
+        try require(app.buttons["outfit-candidate-\(itemIDs[2])"].waitForExistence(timeout: 5))
+        try require(!(app.buttons["outfit-candidate-\(itemIDs[1])"].exists))
+        try require(!(app.buttons["outfit-candidate-\(itemIDs[3])"].exists))
+        try capture("11-targeted-replacement-picker")
+        try choose(2, in: app)
+        try require(!(repair.exists))
+        try capture("12-repaired-outfit")
+        try back(app, to: "Луки")
+        try requireEqual(saved.label, name)
         let composition = saved.value as? String ?? ""
-        for label in ["Поло", "Джинсы", "Туфли"] { XCTAssertTrue(composition.contains(label)) }
+        for label in ["Поло", "Джинсы", "Туфли"] { try require(composition.contains(label)) }
         XCUIDevice.shared.press(.home)
         app.terminate()
-        let relaunched = launch(reset: false)
-        relaunched.tabBars.buttons["Луки"].tap()
+        let relaunched = try launch(reset: false)
+        try selectTab("Луки", in: relaunched)
         let persistent = relaunched.descendants(matching: .any).matching(identifier: outfitID).firstMatch
-        XCTAssertTrue(persistent.waitForExistence(timeout: 5))
-        XCTAssertEqual(persistent.value as? String, composition)
-        XCTAssertEqual(persistent.label, name)
+        try require(persistent.waitForExistence(timeout: 5))
+        try requireEqual(persistent.value as? String, composition)
+        try requireEqual(persistent.label, name)
         let after = try await activityCounts()
-        XCTAssertEqual(after, before, "Visual UI commands must not upload photos or invoke either provider")
+        try requireEqual(after, before, "Visual UI commands must not upload photos or invoke either provider")
         let counts = XCTAttachment(string: String(data: try JSONSerialization.data(withJSONObject: ["before": before, "after": after], options: .sortedKeys), encoding: .utf8)!)
         counts.name = "\(profile)-no-ai-counters"; counts.lifetime = .keepAlways; add(counts)
         XCUIDevice.shared.press(.home)
@@ -337,80 +470,80 @@ final class VisualAcceptanceTests: XCTestCase {
     func testSecondaryStates() async throws {
         try XCTSkipUnless(profile == "iphone-light", "Secondary states are captured once; the main journey covers four profiles")
         let before = try await activityCounts()
-        var app = launch("empty")
-        XCTAssertTrue(app.staticTexts["wardrobe-empty"].waitForExistence(timeout: 10))
-        capture("secondary-01-wardrobe-empty")
-        app.tabBars.buttons["Луки"].tap()
-        XCTAssertTrue(app.buttons["open-wardrobe"].waitForExistence(timeout: 5))
-        capture("secondary-02-outfits-empty")
-        app.buttons["open-wardrobe"].tap()
-        XCTAssertTrue(app.staticTexts["wardrobe-empty"].exists)
+        var app = try launch("empty")
+        try require(app.staticTexts["wardrobe-empty"].waitForExistence(timeout: 10))
+        try capture("secondary-01-wardrobe-empty")
+        try selectTab("Луки", in: app)
+        try require(app.buttons["open-wardrobe"].waitForExistence(timeout: 5))
+        try capture("secondary-02-outfits-empty")
+        try nativeTap(app.buttons["open-wardrobe"], in: app)
+        try require(app.staticTexts["wardrobe-empty"].exists)
         XCUIDevice.shared.press(.home); app.terminate()
-        app = launch()
-        openItem(0, in: app)
-        tap(app.buttons["edit-item"], in: app)
-        XCTAssertTrue(app.buttons["choose-type"].waitForExistence(timeout: 5))
-        guard reveal(app.buttons["choose-type"], in: app) else { return }
-        XCTAssertTrue(app.buttons["cancel-item-edits"].isHittable)
-        capture("secondary-03-item-editor")
-        tap(app.buttons["choose-type"], in: app)
-        XCTAssertTrue(app.buttons["type-t_shirt"].waitForExistence(timeout: 5))
-        capture("secondary-04-type-picker")
-        app.buttons["type-t_shirt"].tap()
-        app.buttons["cancel-item-edits"].tap()
-        back(app)
-        app.buttons["settings"].tap()
-        XCTAssertTrue(app.staticTexts["connection-status"].waitForExistence(timeout: 5))
-        capture("secondary-05-settings")
-        app.descendants(matching: .any).matching(identifier: "connection-settings").firstMatch.tap()
-        XCTAssertTrue(app.textFields["backend-url"].waitForExistence(timeout: 5))
-        capture("secondary-06-connection-settings")
+        app = try launch()
+        try openItem(0, in: app)
+        try tap(app.buttons["edit-item"], in: app)
+        try require(app.buttons["choose-type"].waitForExistence(timeout: 5))
+        try reveal(app.buttons["choose-type"], in: app)
+        try require(app.buttons["cancel-item-edits"].isHittable)
+        try capture("secondary-03-item-editor")
+        try tap(app.buttons["choose-type"], in: app)
+        try require(app.buttons["type-t_shirt"].waitForExistence(timeout: 5))
+        try capture("secondary-04-type-picker")
+        try nativeTap(app.buttons["type-t_shirt"], in: app)
+        try nativeTap(app.buttons["cancel-item-edits"], in: app)
+        try back(app)
+        try nativeTap(app.buttons["settings"], in: app)
+        try require(app.staticTexts["connection-status"].waitForExistence(timeout: 5))
+        try capture("secondary-05-settings")
+        try nativeTap(app.descendants(matching: .any).matching(identifier: "connection-settings").firstMatch, in: app)
+        try require(app.textFields["backend-url"].waitForExistence(timeout: 5))
+        try capture("secondary-06-connection-settings")
         XCUIDevice.shared.press(.home); app.terminate()
         try await control("offline")
-        app = launch("mixed-offline")
-        XCTAssertTrue(card(0, in: app).waitForExistence(timeout: 10))
-        capture("secondary-07-processing-grid")
-        openItem(1, in: app)
-        XCTAssertTrue(app.staticTexts["pending-status"].waitForExistence(timeout: 5), "Jeans remain pending while the transport is offline")
-        XCTAssertFalse(app.staticTexts["previous-result-notice"].exists, "A first processing attempt has no earlier cutout")
-        guard reveal(app.staticTexts["pending-status"], in: app) else { return }
-        capture("secondary-07b-pending-jeans")
-        back(app)
-        openItem(3, in: app)
-        XCTAssertTrue(app.staticTexts["pending-status"].waitForExistence(timeout: 5), "Replacement remains pending offline")
-        XCTAssertTrue(app.staticTexts["previous-result-notice"].waitForExistence(timeout: 5), "Replacement retains the previous result's context")
-        XCTAssertTrue(app.images["item-photo"].exists, "The previous footwear image remains available")
-        guard reveal(app.staticTexts["previous-result-notice"], in: app) else { return }
-        capture("secondary-07c-previous-result-footwear")
-        back(app)
-        openItem(2, in: app)
-        XCTAssertTrue(app.staticTexts["item-error"].waitForExistence(timeout: 5))
-        capture("secondary-08-failed-detail")
+        app = try launch("mixed-offline")
+        try require(card(0, in: app).waitForExistence(timeout: 10))
+        try capture("secondary-07-processing-grid")
+        try openItem(1, in: app)
+        try require(app.staticTexts["pending-status"].waitForExistence(timeout: 5), "Jeans remain pending while the transport is offline")
+        try require(!(app.staticTexts["previous-result-notice"].exists), "A first processing attempt has no earlier cutout")
+        try reveal(app.staticTexts["pending-status"], in: app)
+        try capture("secondary-07b-pending-jeans")
+        try back(app)
+        try openItem(3, in: app)
+        try require(app.staticTexts["pending-status"].waitForExistence(timeout: 5), "Replacement remains pending offline")
+        try require(app.staticTexts["previous-result-notice"].waitForExistence(timeout: 5), "Replacement retains the previous result's context")
+        try require(app.images["item-photo"].exists, "The previous footwear image remains available")
+        try reveal(app.staticTexts["previous-result-notice"], in: app)
+        try capture("secondary-07c-previous-result-footwear")
+        try back(app)
+        try openItem(2, in: app)
+        try require(app.staticTexts["item-error"].waitForExistence(timeout: 5))
+        try capture("secondary-08-failed-detail")
         XCUIDevice.shared.press(.home); app.terminate()
-        app = launch("unreadable-catalog")
+        app = try launch("unreadable-catalog")
         let error = app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Не удалось открыть локальный гардероб'")).firstMatch
-        XCTAssertTrue(error.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["wardrobe-unavailable"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.staticTexts["wardrobe-empty"].exists)
-        XCTAssertFalse(app.buttons["add-photo"].exists)
-        XCTAssertTrue(app.buttons["settings"].isHittable, "Storage failure must not cover access to settings")
-        app.buttons["settings"].tap()
-        XCTAssertTrue(app.buttons["close-settings"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "connection-settings").firstMatch.isHittable)
-        app.buttons["close-settings"].tap()
-        expectGone(app.buttons["close-settings"], "Closing settings returns to the unavailable catalog")
-        capture("secondary-09-storage-error-wardrobe")
-        app.tabBars.buttons["Луки"].tap()
-        XCTAssertTrue(error.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["outfits-unavailable"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.staticTexts["Пока нет луков"].exists)
-        XCTAssertFalse(app.buttons["create-first-outfit"].exists)
-        XCTAssertFalse(app.buttons["create-outfit"].exists)
-        capture("secondary-10-storage-error-outfits")
+        try require(error.waitForExistence(timeout: 10))
+        try require(app.staticTexts["wardrobe-unavailable"].waitForExistence(timeout: 5))
+        try require(!(app.staticTexts["wardrobe-empty"].exists))
+        try require(!(app.buttons["add-photo"].exists))
+        try require(app.buttons["settings"].isHittable, "Storage failure must not cover access to settings")
+        try nativeTap(app.buttons["settings"], in: app)
+        try require(app.buttons["close-settings"].waitForExistence(timeout: 5))
+        try require(app.descendants(matching: .any).matching(identifier: "connection-settings").firstMatch.isHittable)
+        try nativeTap(app.buttons["close-settings"], in: app)
+        try expectGone(app.buttons["close-settings"], "Closing settings returns to the unavailable catalog")
+        try capture("secondary-09-storage-error-wardrobe")
+        try selectTab("Луки", in: app)
+        try require(error.waitForExistence(timeout: 5))
+        try require(app.staticTexts["outfits-unavailable"].waitForExistence(timeout: 5))
+        try require(!(app.staticTexts["Пока нет луков"].exists))
+        try require(!(app.buttons["create-first-outfit"].exists))
+        try require(!(app.buttons["create-outfit"].exists))
+        try capture("secondary-10-storage-error-outfits")
         XCUIDevice.shared.press(.home); app.terminate()
         try await control("online")
         let after = try await activityCounts()
-        XCTAssertEqual(after, before, "Secondary fixture states must not reach upload or provider processing")
+        try requireEqual(after, before, "Secondary fixture states must not reach upload or provider processing")
         let counts = XCTAttachment(string: String(data: try JSONSerialization.data(withJSONObject: ["before": before, "after": after], options: .sortedKeys), encoding: .utf8)!)
         counts.name = "\(profile)-secondary-no-ai-counters"
         counts.lifetime = .keepAlways

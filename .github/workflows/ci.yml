@@ -93,8 +93,9 @@ jobs:
       matrix:
         suite: ${{ fromJSON(inputs.ios_suite == 'outfits' && '["outfits"]' || inputs.ios_suite == 'wardrobe' && '["wardrobe"]' || inputs.ios_suite == 'visual' && '["visual"]' || '["wardrobe","outfits","visual"]') }}
     runs-on: macos-26
-    # Eleven outfit scenarios, maximum Dynamic Type, and a fresh Simulator startup.
-    timeout-minutes: ${{ matrix.suite == 'visual' && 90 || matrix.suite == 'outfits' && 60 || 30 }}
+    # Wardrobe includes cold Simulator startup (~9 min observed), 21 checks and manifest smoke.
+    # Keep a bounded 40 min for that job; outfits and four visual profiles retain their own caps.
+    timeout-minutes: ${{ matrix.suite == 'visual' && 90 || matrix.suite == 'outfits' && 60 || 40 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -107,6 +108,9 @@ jobs:
       - run: npm --prefix backend ci --ignore-scripts
       - run: bash client-ios/scripts/test-outfit-core.sh
       - run: bash client-ios/scripts/test-visual-fixtures.sh
+      - name: Check bounded visual diagnostic observer
+        if: matrix.suite == 'visual'
+        run: PYTHONDONTWRITEBYTECODE=1 python3 client-ios/scripts/tests/test-visual-stall-observer.py
       - name: Real Simulator and local backend (controlled providers)
         env:
           TEST_SUITE: ${{ matrix.suite }}
@@ -219,6 +223,14 @@ jobs:
         with:
           name: simulator-screenshots-${{ matrix.suite }}
           path: client-ios/build/screenshots
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload visual stall diagnostics
+        if: always() && matrix.suite == 'visual'
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-stall-diagnostics-visual
+          path: client-ios/build/visual-stall-diagnostics
           if-no-files-found: warn
           retention-days: 7
       - name: Upload local XCTest results and screenshots

@@ -13,6 +13,7 @@ fi
 trap 'exit 130' INT
 trap 'exit 143' TERM
 status=0
+export SAINT_LOOK_OBSERVE_VISUAL_STALLS=1
 # Every profile selects a matching model; an inherited explicit iPhone UDID must not mask iPad coverage.
 unset SAINT_LOOK_SIMULATOR_UDID
 for profile in "${profiles[@]}"; do
