@@ -152,6 +152,11 @@ jobs:
           proxy_pid=$!
           wait_for_health http://127.0.0.1:8788/health
           bash client-ios/scripts/test-simulator.sh
+          if [[ "$TEST_SUITE" == "outfits" ]]; then
+          SAINT_LOOK_UI_CONTENT_SIZE=accessibility-extra-extra-extra-large \
+          SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/OutfitFlowTests/testOutfitActionsStayLocalAndAccessibleWithoutSwipes \
+          bash client-ios/scripts/test-simulator.sh
+          fi
           if [[ "$TEST_SUITE" == "wardrobe" ]]; then
           # Exercise the explicit XCTest manifest using one existing local test.
           # This validates the runner path; it is not a remote deployment demonstration.

@@ -12,6 +12,7 @@ xcodebuild -version
 work_directory="$(mktemp -d)"
 recording_pid=''
 remote_manifest=''
+previous_content_size=''
 cleanup() {
   local test_status=$?
   trap - EXIT
@@ -27,6 +28,9 @@ cleanup() {
       kill -KILL "$recording_pid" 2>/dev/null || true
     fi
     wait "$recording_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$previous_content_size" ]]; then
+    xcrun simctl ui "$simulator_id" content_size "$previous_content_size" || test_status=1
   fi
   if [[ -n "$remote_manifest" ]]; then rm -f "$remote_manifest"; fi
   rm -rf "$work_directory"
@@ -69,6 +73,14 @@ PYTHON
 fi
 xcrun simctl boot "$simulator_id" 2>/dev/null || true
 xcrun simctl bootstatus "$simulator_id" -b
+if [[ -n "${SAINT_LOOK_UI_CONTENT_SIZE:-}" ]]; then
+  # Exercise the real Simulator preference, including sheets, and restore it on failure too.
+  previous_content_size="$(xcrun simctl ui "$simulator_id" content_size)"
+  xcrun simctl ui "$simulator_id" content_size "$SAINT_LOOK_UI_CONTENT_SIZE"
+  actual_content_size="$(xcrun simctl ui "$simulator_id" content_size)"
+  echo "Simulator Dynamic Type: $actual_content_size (previous: $previous_content_size)"
+  [[ "$actual_content_size" == "$SAINT_LOOK_UI_CONTENT_SIZE" ]]
+fi
 mkdir -p build
 result_path="$(pwd)/build/UITests-$(date -u +%Y%m%dT%H%M%SZ).xcresult"
 build_options=(
