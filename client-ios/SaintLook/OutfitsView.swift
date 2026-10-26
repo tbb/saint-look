@@ -240,6 +240,7 @@ struct OutfitEditorView: View {
     @State private var saving = false
     @State private var initial: Outfit
     @State private var confirmingDiscard = false
+    @AppStorage("outfit-swipe-discovered") private var swipeDiscovered = false
     @FocusState private var naming: Bool
 
     init(store: WardrobeStore, draft: Outfit) {
@@ -253,29 +254,58 @@ struct OutfitEditorView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
                     TextField("Название — необязательно", text: $draft.name)
                         .focused($naming)
                         .submitLabel(.done)
                         .onSubmit { naming = false }
+                        .padding(.vertical, 12)
                         .accessibilityIdentifier("outfit-name")
-                }
-                ForEach(draft.slots) { slot in
-                    Section(outfitSlotTitle(slot, in: draft)) {
-                        slotSelection(slot)
-                        slotControls(slot)
+                    if !swipeDiscovered {
+                        Label("Смахните вещь влево или вправо, чтобы сравнить варианты", systemImage: "hand.draw")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(draft.slots) { slot in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 12) {
+                                Text(outfitSlotTitle(slot, in: draft))
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                Spacer(minLength: 0)
+                                slotMenu(slot)
+                            }
+                            slotSelection(slot)
+                            if slot.id == draft.slots.last(where: { $0.zone == .body })?.id {
+                                Button("Добавить слой", systemImage: "plus") {
+                                    draft.addBodyLayer()
+                                    errorMessage = nil
+                                }
+                                .frame(minHeight: 44)
+                                .accessibilityIdentifier("add-body-layer")
+                            }
+                        }
+                        if slot.id != draft.slots.last?.id { Divider() }
                     }
                 }
-                Section {
-                    Text(editingExisting && draft.selectedIDs.count < 2
-                         ? "Название можно изменить сейчас. Для изменения состава выберите хотя бы две разные вещи."
-                         : "Для сохранения выберите хотя бы две разные вещи. Остальные зоны можно оставить пустыми.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    if let errorMessage {
-                        Text(errorMessage).foregroundStyle(.red)
-                            .accessibilityIdentifier("outfit-save-error")
-                    }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 24)
+                .frame(maxWidth: 620)
+                .frame(maxWidth: .infinity)
+            }
+            .background(SaintLookStyle.canvas)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let message = errorMessage ?? saveExplanation {
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundStyle(errorMessage == nil ? Color.secondary : Color.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(.bar)
+                        .accessibilityIdentifier(errorMessage == nil ? "outfit-save-explanation" : "outfit-save-error")
                 }
             }
             .navigationTitle(editingExisting ? "Изменить лук" : "Собрать лук")
@@ -304,18 +334,9 @@ struct OutfitEditorView: View {
         }
     }
 
-    private func slotContent(_ slot: OutfitSlot) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            OutfitSlotContent(store: store, slot: slot)
-            if slot.itemID == nil && candidates(for: slot).isEmpty {
-                Text("Нет доступных вещей для этой зоны. Нужны готовая вырезка и подходящий тип.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-        }
-    }
-
     private func slotSelection(_ slot: OutfitSlot) -> some View {
-        slotContent(slot)
+        OutfitSlotContent(store: store, slot: slot)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
             // A Button in a List can activate on release after a simultaneous drag.
             // TapGesture fails when the finger moves; the drag still coexists with scrolling.
@@ -340,36 +361,60 @@ struct OutfitEditorView: View {
         }
     }
 
-    @ViewBuilder
-    private func slotControls(_ slot: OutfitSlot) -> some View {
-        if slot.itemID != nil || slot.needsReplacement {
-            Button("Очистить", role: .destructive) { select(nil, for: slot.id) }
-                .accessibilityLabel("Очистить: \(outfitSlotTitle(slot, in: draft))")
-                .accessibilityIdentifier("clear-slot-\(slot.id)")
-        }
-        if slot.zone == .body {
-            Button("Убрать слой", role: .destructive) {
-                draft.removeBodyLayer(slot.id)
-                errorMessage = nil
+    private func slotMenu(_ slot: OutfitSlot) -> some View {
+        Menu {
+            Button("Выбрать вещь", systemImage: "square.grid.2x2") { choosingSlot = slot }
+            Button("Следующая вещь", systemImage: "chevron.right") { cycle(slot.id, forward: true) }
+                .disabled(candidates(for: slot).count < 2)
+                .accessibilityIdentifier("next-slot-\(slot.id)")
+            Button("Предыдущая вещь", systemImage: "chevron.left") { cycle(slot.id, forward: false) }
+                .disabled(candidates(for: slot).count < 2)
+                .accessibilityIdentifier("previous-slot-\(slot.id)")
+            if slot.itemID != nil || slot.needsReplacement {
+                Button("Очистить", systemImage: "xmark") { select(nil, for: slot.id) }
+                    .accessibilityLabel("Очистить: \(outfitSlotTitle(slot, in: draft))")
+                    .accessibilityIdentifier("clear-slot-\(slot.id)")
             }
-            .accessibilityLabel("Убрать: \(outfitSlotTitle(slot, in: draft))")
-            .accessibilityIdentifier("remove-body-layer-\(slot.id)")
-            if slot.id == draft.slots.reversed().first(where: { $0.zone == .body })?.id {
-                Button("Добавить слой", systemImage: "plus") {
-                    draft.addBodyLayer()
+            if slot.zone == .body {
+                Button("Убрать слой", systemImage: "minus") {
+                    draft.removeBodyLayer(slot.id)
                     errorMessage = nil
                 }
-                .accessibilityIdentifier("add-body-layer")
+                .accessibilityLabel("Убрать: \(outfitSlotTitle(slot, in: draft))")
+                .accessibilityIdentifier("remove-body-layer-\(slot.id)")
             }
+        } label: {
+            Image(systemName: "ellipsis")
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
+        .accessibilityLabel("Действия: \(outfitSlotTitle(slot, in: draft))")
+        .accessibilityIdentifier("outfit-slot-menu-\(slot.id)")
+    }
+
+    private var saveExplanation: String? {
+        if !store.storageAvailable { return "Сохранение на устройстве сейчас недоступно." }
+        if !store.canSaveOutfit(draft) {
+            if draft.selectedIDs.isEmpty { return "Выберите хотя бы две разные вещи. Зоны можно оставить пустыми." }
+            if draft.selectedIDs.count == 1 { return "Выберите ещё одну вещь." }
+            return "Проверьте выбранные вещи: некоторые больше недоступны."
+        }
+        if editingExisting && draft.selectedIDs.count < 2 {
+            return "Состав неполный. Сейчас можно сохранить название; для нового состава нужны две вещи."
+        }
+        return nil
     }
 
     @ToolbarContentBuilder
     private var editorToolbar: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) {
-            Button("Отмена") {
+            Button {
                 if dirty { confirmingDiscard = true } else { dismiss() }
-            }.accessibilityIdentifier("cancel-outfit")
+            } label: {
+                Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44)
+            }
+            .accessibilityLabel("Отмена")
+            .accessibilityIdentifier("cancel-outfit")
         }
         ToolbarItem(placement: .confirmationAction) {
             Button("Сохранить") { save() }
@@ -400,6 +445,7 @@ struct OutfitEditorView: View {
     private func cycle(_ slotID: UUID, forward: Bool) {
         guard let slot = draft.slots.first(where: { $0.id == slotID }) else { return }
         draft.cycleItem(for: slotID, among: candidates(for: slot).map(\.id), forward: forward)
+        if draft.slots.first(where: { $0.id == slotID })?.itemID != slot.itemID { swipeDiscovered = true }
         errorMessage = nil
     }
 
@@ -470,20 +516,37 @@ struct OutfitSlotContent: View {
     }
 
     var body: some View {
-        layout {
-            OutfitThumbnail(store: store, slot: slot).frame(width: 80, height: 90)
-            VStack(alignment: .leading, spacing: 5) {
-                if let item = store.items.first(where: { $0.id == slot.itemID }) {
-                    Text(item.displayedType ?? "Вещь").font(.headline)
-                    Text(item.displayedColors.joined(separator: ", ")).font(.subheadline).foregroundStyle(.secondary)
-                } else {
-                    Text(slot.needsReplacement ? "Вещь удалена" : "Пустая зона").font(.headline)
-                    Text(slot.needsReplacement ? "Выберите замену из гардероба" : "Можно оставить пустой")
-                        .font(.subheadline).foregroundStyle(.secondary)
+        Group {
+            if let item = store.items.first(where: { $0.id == slot.itemID }) {
+                layout {
+                    OutfitThumbnail(store: store, slot: slot)
+                        .frame(width: dynamicTypeSize.isAccessibilitySize ? 200 : 128,
+                               height: slot.zone == .bottom ? 152 : 124)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(item.displayedType ?? "Вещь").font(.headline)
+                        if !item.displayedColors.isEmpty {
+                            Text(item.displayedColors.joined(separator: ", "))
+                                .font(.subheadline).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                HStack(spacing: 12) {
+                    Image(systemName: slot.needsReplacement ? "arrow.triangle.2.circlepath" : "plus")
+                        .font(.title3)
+                        .frame(width: 44, height: 44)
+                        .foregroundStyle(SaintLookStyle.accent)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(slot.needsReplacement ? "Выбрать замену" : "Выбрать вещь")
+                            .font(.body)
+                        Text(slot.needsReplacement ? "Вещь удалена" : "Необязательно")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil, alignment: .leading)
-            if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
@@ -493,20 +556,24 @@ struct OutfitSlotContent: View {
 
 @MainActor
 struct OutfitThumbnail: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var store: WardrobeStore
     let slot: OutfitSlot
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 12).fill(Color(uiColor: .secondarySystemGroupedBackground))
+            RoundedRectangle(cornerRadius: SaintLookStyle.cornerRadius).fill(SaintLookStyle.photoSurface)
             if let item = store.items.first(where: { $0.id == slot.itemID }),
                let image = store.displayImage(for: item) {
-                Image(uiImage: image).resizable().scaledToFit().padding(4)
+                Image(uiImage: image).resizable().scaledToFit().padding(10)
+                    .id(slot.itemID)
+                    .transition(.opacity)
             } else {
                 Image(systemName: slot.needsReplacement ? "arrow.triangle.2.circlepath" : "plus")
                     .font(.title3).foregroundStyle(.tertiary)
             }
         }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: slot.itemID)
         .accessibilityHidden(true)
     }
 }
