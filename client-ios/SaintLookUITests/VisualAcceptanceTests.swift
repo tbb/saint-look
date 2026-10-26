@@ -304,6 +304,7 @@ final class VisualAcceptanceTests: XCTestCase {
     @MainActor
     func testSecondaryStates() async throws {
         try XCTSkipUnless(profile == "iphone-light", "Secondary states are captured once; the main journey covers four profiles")
+        let before = try await activityCounts()
         var app = launch("empty")
         XCTAssertTrue(app.staticTexts["wardrobe-empty"].waitForExistence(timeout: 10))
         capture("secondary-01-wardrobe-empty")
@@ -334,6 +335,19 @@ final class VisualAcceptanceTests: XCTestCase {
         app = launch("mixed-offline")
         XCTAssertTrue(card(0, in: app).waitForExistence(timeout: 10))
         capture("secondary-07-processing-grid")
+        openItem(1, in: app)
+        XCTAssertTrue(app.staticTexts["pending-status"].waitForExistence(timeout: 5), "Jeans remain pending while the transport is offline")
+        XCTAssertFalse(app.staticTexts["previous-result-notice"].exists, "A first processing attempt has no earlier cutout")
+        guard reveal(app.staticTexts["pending-status"], in: app) else { return }
+        capture("secondary-07b-pending-jeans")
+        back(app)
+        openItem(3, in: app)
+        XCTAssertTrue(app.staticTexts["pending-status"].waitForExistence(timeout: 5), "Replacement remains pending offline")
+        XCTAssertTrue(app.staticTexts["previous-result-notice"].waitForExistence(timeout: 5), "Replacement retains the previous result's context")
+        XCTAssertTrue(app.images["item-photo"].exists, "The previous footwear image remains available")
+        guard reveal(app.staticTexts["previous-result-notice"], in: app) else { return }
+        capture("secondary-07c-previous-result-footwear")
+        back(app)
         openItem(2, in: app)
         XCTAssertTrue(app.staticTexts["item-error"].waitForExistence(timeout: 5))
         capture("secondary-08-failed-detail")
@@ -347,5 +361,11 @@ final class VisualAcceptanceTests: XCTestCase {
         capture("secondary-10-storage-error-outfits")
         XCUIDevice.shared.press(.home); app.terminate()
         try await control("online")
+        let after = try await activityCounts()
+        XCTAssertEqual(after, before, "Secondary fixture states must not reach upload or provider processing")
+        let counts = XCTAttachment(string: String(data: try JSONSerialization.data(withJSONObject: ["before": before, "after": after], options: .sortedKeys), encoding: .utf8)!)
+        counts.name = "\(profile)-secondary-no-ai-counters"
+        counts.lifetime = .keepAlways
+        add(counts)
     }
 }
