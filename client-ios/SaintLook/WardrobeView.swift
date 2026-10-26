@@ -241,6 +241,10 @@ private struct ItemEditView: View {
         type != (item.displayedType ?? "") || Set(colors) != Set(item.displayedColors)
     }
 
+    private var invalidColors: Bool {
+        Set(colors) != Set(item.displayedColors) && !WardrobeTaxonomy.shared.contains(colors: colors)
+    }
+
     init(store: WardrobeStore, item: WardrobeItem) {
         self.store = store
         self.item = item
@@ -259,13 +263,17 @@ private struct ItemEditView: View {
                     }
                     .accessibilityIdentifier("choose-type")
                     NavigationLink {
-                        ColorSelectionView(selection: $colors)
+                        ColorSelectionView(selection: $colors, originalSelection: item.displayedColors)
                     } label: {
                         LabeledContent("Цвета", value: colors.isEmpty ? "Выбрать" : colors.joined(separator: ", "))
                     }
                     .accessibilityIdentifier("choose-colors")
                 } footer: {
                     Text("Правки сохраняются на устройстве без интернета. Повторная обработка фото не нужна.")
+                }
+                if invalidColors {
+                    Text("Выберите от одного до пяти цветов, чтобы сохранить правки.")
+                        .foregroundStyle(.secondary)
                 }
                 if let error { Text(error).foregroundStyle(.red) }
             }
@@ -280,6 +288,7 @@ private struct ItemEditView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Сохранить") { save() }
                         .accessibilityIdentifier("save-item-edits")
+                        .disabled(invalidColors)
                 }
             }
             .interactiveDismissDisabled(dirty)
@@ -335,6 +344,7 @@ private struct TypeSelectionView: View {
 
 private struct ColorSelectionView: View {
     @Binding var selection: [String]
+    let originalSelection: [String]
     @Environment(\.dismiss) private var dismiss
     private let taxonomy = WardrobeTaxonomy.shared
 
@@ -368,11 +378,26 @@ private struct ColorSelectionView: View {
             }
         }
         .navigationTitle("Цвета")
+        .safeAreaInset(edge: .bottom) {
+            Text(invalidSelection ? "Выберите хотя бы один цвет." : "Готово применит выбор к черновику вещи.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+                .background(.bar)
+                .accessibilityIdentifier("color-selection-requirement")
+        }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Готово") { dismiss() }.accessibilityIdentifier("done-colors")
+                Button("Готово") { dismiss() }
+                    .accessibilityIdentifier("done-colors")
+                    .disabled(invalidSelection)
             }
         }
+    }
+
+    private var invalidSelection: Bool {
+        Set(selection) != Set(originalSelection) && !taxonomy.contains(colors: selection)
     }
 
     private var canonicalSelectionCount: Int {
