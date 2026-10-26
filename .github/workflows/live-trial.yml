@@ -81,7 +81,9 @@ jobs:
           FLY_APP_NAME: ${{ vars.FLY_APP_NAME }}
           AI_TRIAL_PREFLIGHT_VERIFIED: ${{ vars.AI_TRIAL_PREFLIGHT_VERIFIED }}
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-          PHOTOROOM_API_KEY: ${{ secrets.PHOTOROOM_API_KEY }}
+          # Owner chose sandbox on 2026-10-26. Production requires a new explicit request.
+          # Keep the production secret stored separately; never fall back to it.
+          PHOTOROOM_API_KEY: ${{ secrets.PHOTOROOM_SANDBOX_API_KEY }}
         run: |
           node scripts/deploy/upload.mjs "$RUNNER_TEMP/release" > "$RUNNER_TEMP/deployment.json"
           node - <<'JS'
