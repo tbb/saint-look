@@ -202,7 +202,7 @@ final class VisualAcceptanceTests: XCTestCase {
         let query: XCUIElementQuery
         switch bar.identifier {
         case "Гардероб": query = app.scrollViews.containing(.staticText, identifier: "wardrobe-summary")
-        case "Тип и цвета": query = app.scrollViews.containing(.button, identifier: "choose-type")
+        case "Тип и цвета": query = app.collectionViews.containing(.button, identifier: "choose-type")
         case "Собрать лук", "Изменить лук": query = app.scrollViews.containing(.textField, identifier: "outfit-name")
         case "Голова", "Тело", "Низ", "Обувь": query = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-'"))
         case "Луки": query = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-'"))
