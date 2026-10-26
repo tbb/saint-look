@@ -88,7 +88,8 @@ jobs:
       matrix:
         suite: ${{ fromJSON(inputs.ios_suite == 'outfits' && '["outfits"]' || inputs.ios_suite == 'wardrobe' && '["wardrobe"]' || '["wardrobe","outfits"]') }}
     runs-on: macos-26
-    timeout-minutes: ${{ matrix.suite == 'outfits' && 45 || 30 }}
+    # Eleven outfit scenarios, maximum Dynamic Type, and a fresh Simulator startup.
+    timeout-minutes: ${{ matrix.suite == 'outfits' && 60 || 30 }}
     steps:
       - uses: actions/checkout@v4
         with:

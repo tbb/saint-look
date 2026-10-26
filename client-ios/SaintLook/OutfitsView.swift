@@ -141,8 +141,6 @@ struct OutfitDetailView: View {
                             .font(.title2.bold())
                             .fixedSize(horizontal: false, vertical: true)
                         OutfitComposition(store: store, outfit: outfit) { repairingSlot = $0 }
-                        deleteAction
-                            .frame(minHeight: 44)
                     }
                     .padding(16)
                     .frame(maxWidth: 620)
@@ -152,10 +150,26 @@ struct OutfitDetailView: View {
                 .navigationTitle("Лук")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Изменить") { editorRequest = OutfitEditorRequest(draft: outfit, initial: outfit) }
-                            .accessibilityIdentifier("edit-outfit")
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button { editorRequest = OutfitEditorRequest(draft: outfit, initial: outfit) } label: {
+                            Image(systemName: "pencil").frame(minWidth: 44, minHeight: 44)
+                        }
+                        .accessibilityLabel("Изменить лук")
+                        .accessibilityIdentifier("edit-outfit")
+                        Menu { deleteAction } label: {
+                            Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44)
+                        }
+                        .accessibilityLabel("Действия с луком")
+                        .accessibilityIdentifier("outfit-actions")
                     }
+                }
+                .alert("Удалить лук?", isPresented: $confirmingDeletion) {
+                    Button("Удалить лук", role: .destructive) { delete() }
+                        .accessibilityIdentifier("confirm-delete-outfit")
+                    Button("Отмена", role: .cancel) { }
+                        .accessibilityIdentifier("cancel-delete-outfit")
+                } message: {
+                    Text("Вещи останутся в гардеробе.")
                 }
                 .alert("Лук не удалён", isPresented: Binding(get: { deletionError != nil }, set: { if !$0 { deletionError = nil } })) {
                     Button("Понятно", role: .cancel) { deletionError = nil }
@@ -214,14 +228,6 @@ struct OutfitDetailView: View {
     private var deleteAction: some View {
         Button("Удалить лук", role: .destructive) { confirmingDeletion = true }
             .accessibilityIdentifier("delete-outfit")
-            .alert("Удалить лук?", isPresented: $confirmingDeletion) {
-                Button("Удалить лук", role: .destructive) { delete() }
-                    .accessibilityIdentifier("confirm-delete-outfit")
-                Button("Отмена", role: .cancel) { }
-                    .accessibilityIdentifier("cancel-delete-outfit")
-            } message: {
-                Text("Вещи останутся в гардеробе.")
-            }
     }
 
     private func delete() {
@@ -492,6 +498,7 @@ struct OutfitEditorView: View {
             if draft.selectedIDs.count == 1 { return "Выберите ещё одну вещь." }
             return "Проверьте выбранные вещи: некоторые больше недоступны."
         }
+        if !dirty { return "Измените название или состав, чтобы сохранить." }
         if editingExisting && draft.selectedIDs.count < 2 {
             return "Состав неполный. Сейчас можно сохранить название; для нового состава нужны две вещи."
         }
