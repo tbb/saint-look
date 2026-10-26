@@ -45,9 +45,7 @@ struct OutfitsView: View {
                                 .buttonStyle(.plain)
                                 .accessibilityElement(children: .ignore)
                                 .accessibilityLabel(outfit.displayName)
-                                .accessibilityValue(outfit.slots.contains(where: \.needsReplacement)
-                                                    ? "Вещей: \(outfit.selectedIDs.count). Нужна замена"
-                                                    : "Вещей: \(outfit.selectedIDs.count)")
+                                .accessibilityValue(compositionDescription(outfit))
                                 .accessibilityIdentifier("outfit-card-\(outfit.id)")
                             }
                         }
@@ -72,6 +70,17 @@ struct OutfitsView: View {
         }
     }
 
+    private func compositionDescription(_ outfit: Outfit) -> String {
+        let selection = outfit.slots.compactMap { slot -> String? in
+            let zone = outfitSlotTitle(slot, in: outfit)
+            if let item = store.items.first(where: { $0.id == slot.itemID }) {
+                return "\(zone): " + ([item.displayedType ?? "Вещь"] + item.displayedColors).joined(separator: ", ")
+            }
+            return slot.needsReplacement ? "\(zone): нужна замена" : nil
+        }
+        return (["Вещей: \(outfit.selectedIDs.count)"] + selection).joined(separator: ". ")
+    }
+
     private var collectionColumns: [GridItem] {
         dynamicTypeSize.isAccessibilitySize
             ? [GridItem(.flexible())]
@@ -83,7 +92,9 @@ struct OutfitsView: View {
 struct OutfitDetailView: View {
     @ObservedObject var store: WardrobeStore
     let outfitID: UUID
-    @State private var showingEditor = false
+    @State private var editorRequest: OutfitEditorRequest?
+    @State private var repairingSlot: OutfitSlot?
+    @State private var queuedEditor: OutfitEditorRequest?
     @State private var confirmingDeletion = false
     @State private var deletionError: String?
     @Environment(\.dismiss) private var dismiss
@@ -98,7 +109,7 @@ struct OutfitDetailView: View {
                         Text(outfit.displayName)
                             .font(.title2.bold())
                             .fixedSize(horizontal: false, vertical: true)
-                        OutfitComposition(store: store, outfit: outfit) { _ in showingEditor = true }
+                        OutfitComposition(store: store, outfit: outfit) { repairingSlot = $0 }
                         deleteAction
                             .frame(minHeight: 44)
                     }
@@ -111,7 +122,7 @@ struct OutfitDetailView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Изменить") { showingEditor = true }
+                        Button("Изменить") { editorRequest = OutfitEditorRequest(draft: outfit, initial: outfit) }
                             .accessibilityIdentifier("edit-outfit")
                     }
                 }
@@ -120,12 +131,55 @@ struct OutfitDetailView: View {
                 } message: {
                     Text(deletionError ?? "")
                 }
-                .sheet(isPresented: $showingEditor) {
-                    OutfitEditorView(store: store, draft: outfit)
+                .sheet(item: $repairingSlot, onDismiss: {
+                    if let queuedEditor {
+                        editorRequest = queuedEditor
+                        self.queuedEditor = nil
+                    }
+                }) { slot in
+                    OutfitPickerView(store: store, zone: slot.zone,
+                                     excluding: outfit.selectedIDs.subtracting(slot.itemID.map { [$0] } ?? [])) { itemID in
+                        replace(itemID, in: slot.id)
+                    }
+                }
+                .sheet(item: $editorRequest) { request in
+                    OutfitEditorView(store: store, draft: request.draft, initial: request.initial,
+                                     errorMessage: request.errorMessage)
                 }
             }
         }
     }
+    private func replace(_ itemID: UUID, in slotID: UUID) {
+        guard let current = outfit,
+              let slot = current.slots.first(where: { $0.id == slotID && $0.needsReplacement }) else {
+            repairingSlot = nil
+            return
+        }
+        let occupied = Set(current.slots.filter { $0.id != slotID }.compactMap(\.itemID))
+        guard store.outfitCandidates(for: slot.zone, excluding: occupied).contains(where: { $0.id == itemID }) else {
+            queuedEditor = OutfitEditorRequest(draft: current, initial: current,
+                                               errorMessage: "Эта вещь больше недоступна. Выберите другую.")
+            repairingSlot = nil
+            return
+        }
+        var repaired = current
+        repaired.selectItem(itemID, for: slotID)
+        do {
+            try store.saveOutfit(repaired)
+        } catch {
+            let message: String?
+            if let error = error as? OutfitError, case .tooFewItems = error {
+                // The editor explains the missing second thing; the selection remains a dirty draft.
+                message = nil
+            } else {
+                message = (error as? OutfitError)?.localizedDescription
+                    ?? "Не удалось сохранить замену. Ваш выбор остался в черновике — попробуйте ещё раз."
+            }
+            queuedEditor = OutfitEditorRequest(draft: repaired, initial: current, errorMessage: message)
+        }
+        repairingSlot = nil
+    }
+
     private var deleteAction: some View {
         Button("Удалить лук", role: .destructive) { confirmingDeletion = true }
             .accessibilityIdentifier("delete-outfit")
@@ -147,6 +201,13 @@ struct OutfitDetailView: View {
             deletionError = "Не удалось удалить лук с устройства. Он сохранён — попробуйте ещё раз."
         }
     }
+}
+
+private struct OutfitEditorRequest: Identifiable {
+    let id = UUID()
+    let draft: Outfit
+    let initial: Outfit
+    var errorMessage: String?
 }
 
 /// The same ordered zones form a readable preview in the collection and detail.
@@ -243,10 +304,11 @@ struct OutfitEditorView: View {
     @AppStorage("outfit-swipe-discovered") private var swipeDiscovered = false
     @FocusState private var naming: Bool
 
-    init(store: WardrobeStore, draft: Outfit) {
+    init(store: WardrobeStore, draft: Outfit, initial: Outfit? = nil, errorMessage: String? = nil) {
         self.store = store
         _draft = State(initialValue: draft)
-        _initial = State(initialValue: draft)
+        _initial = State(initialValue: initial ?? draft)
+        _errorMessage = State(initialValue: errorMessage)
     }
 
     private var dirty: Bool { draft != initial }

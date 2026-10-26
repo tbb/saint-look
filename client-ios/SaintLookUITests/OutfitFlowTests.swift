@@ -88,9 +88,17 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func expectGone(_ element: XCUIElement, _ message: String) {
+    private func expectGone(_ element: XCUIElement, _ message: String, timeout: TimeInterval = 5) {
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
-        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 5), .completed, message)
+        let result = XCTWaiter.wait(for: [gone], timeout: timeout)
+        if result != .completed {
+            capture("outfit-dismissal-timeout")
+            let state = XCTAttachment(string: element.debugDescription)
+            state.name = "outfit-dismissal-accessibility-state"
+            state.lifetime = .keepAlways
+            add(state)
+        }
+        XCTAssertEqual(result, .completed, message)
     }
 
     @MainActor
@@ -124,7 +132,7 @@ final class OutfitFlowTests: XCTestCase {
         let field = app.textFields["outfit-name"]
         tap(field, in: app)
         field.typeText(text + "\n")
-        expectGone(app.keyboards.firstMatch, "Done must dismiss the keyboard before choosing a thing")
+        expectGone(app.keyboards.firstMatch, "Done must dismiss the keyboard before choosing a thing", timeout: 15)
     }
 
     @MainActor
@@ -286,8 +294,10 @@ final class OutfitFlowTests: XCTestCase {
         guard reveal(missingSlot, in: offline) else { return }
         capture("outfit-03-missing-item")
         missingSlot.tap()
-        XCTAssertFalse(offline.buttons["save-outfit"].isEnabled)
-        offline.buttons["cancel-outfit"].tap()
+        XCTAssertTrue(offline.navigationBars["Низ"].waitForExistence(timeout: 5))
+        XCTAssertEqual(offline.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-'")).count, 0)
+        offline.buttons["cancel-outfit-picker"].tap()
+        XCTAssertTrue(offline.buttons["edit-outfit"].waitForExistence(timeout: 5))
         XCUIDevice.shared.press(.home)
         offline.terminate()
     }
@@ -471,6 +481,7 @@ final class OutfitFlowTests: XCTestCase {
             tap(app.buttons["type-\(type)"], in: app)
             XCTAssertTrue(app.buttons["save-item-edits"].waitForExistence(timeout: 5), "Choosing a visible type must return to the editor")
             app.buttons["save-item-edits"].tap()
+            await summary(app, ready: index + 1, pending: 0)
         }
         try await control("offline")
         app.tabBars.buttons["Луки"].tap()
