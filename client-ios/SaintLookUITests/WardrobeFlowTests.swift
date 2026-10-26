@@ -218,6 +218,34 @@ final class WardrobeFlowTests: XCTestCase {
 
 
     @MainActor
+    func testCancelDeletionKeepsPhotoAndDoesNotSendDelete() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        let before = try await transportState()
+        try tapVisibleButton("delete-item", in: app)
+        let cancel = app.alerts.buttons.matching(identifier: "cancel-delete-item").firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5), "Deletion must wait for explicit confirmation")
+        XCTAssertTrue(app.alerts.staticTexts["Вещь исчезнет из гардероба. В сохранённых луках её места останутся пустыми."].exists)
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "item-delete-confirmation"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let during = try await transportState()
+        XCTAssertEqual(during["forwardedDeletes"] as? Int, before["forwardedDeletes"] as? Int)
+        cancel.tap()
+        XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["ready-status"].firstMatch.exists)
+        app.terminate()
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 1, pending: 0)
+        XCTAssertTrue(restored.images["item-photo"].firstMatch.exists)
+        let after = try await transportState()
+        XCTAssertEqual(after["forwardedDeletes"] as? Int, before["forwardedDeletes"] as? Int)
+        XCTAssertEqual(after["forwardedUploads"] as? Int, before["forwardedUploads"] as? Int)
+    }
+
+    @MainActor
     func testDeletingTwoOfflineThingsSurvivesRelaunchAndNeverUploadsTheirPhotos() async throws {
         try await control(mode: "offline")
         let app = launch(reset: true, baseURL: testURL)
