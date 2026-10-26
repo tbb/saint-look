@@ -71,13 +71,19 @@ final class VisualAcceptanceTests: XCTestCase {
         let field = app.textFields["outfit-name"]
         guard reveal(field, in: app, towardTop: true) else { throw InputFailure.unavailableField }
         field.tap()
-        guard app.keyboards.firstMatch.waitForExistence(timeout: 15) else {
+        // Simulator AX can retain a stale Keyboard node after the on-screen keyboard disappears.
+        let keyboardReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let keyboard = app.keyboards.firstMatch
+            return keyboard.exists && keyboard.isHittable && !keyboard.frame.isEmpty
+                && app.frame.intersects(keyboard.frame)
+        }, object: app)
+        guard XCTWaiter.wait(for: [keyboardReady], timeout: 15) == .completed else {
             capture("keyboard-focus-unavailable")
             let diagnostic = XCTAttachment(string: app.debugDescription)
             diagnostic.name = "\(profile)-keyboard-focus-accessibility"
             diagnostic.lifetime = .keepAlways
             add(diagnostic)
-            XCTFail("The name field tap did not present the Simulator keyboard; stop rather than type without focus")
+            XCTFail("The name field tap did not produce a visible, hittable Simulator keyboard; stop before typing")
             throw InputFailure.keyboardUnavailable
         }
         let current = (field.value as? String) ?? ""
