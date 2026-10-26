@@ -32,16 +32,39 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func tap(_ element: XCUIElement, in app: XCUIApplication) {
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication) -> CGPoint? {
         for _ in 0..<7 {
-            if element.exists && element.isHittable && element.frame.maxY < app.frame.maxY - 70 {
-                element.tap()
-                return
+            let top = (app.navigationBars.allElementsBoundByIndex.map { $0.frame.maxY }.max() ?? app.frame.minY) + 8
+            var bottom = app.frame.maxY - 24
+            if let tabTop = app.tabBars.allElementsBoundByIndex.map({ $0.frame.minY }).min() {
+                bottom = min(bottom, tabTop - 8)
             }
-            if element.exists && element.frame.minY < 100 { app.swipeDown() }
-            else { app.swipeUp() }
+            if app.keyboards.firstMatch.exists { bottom = min(bottom, app.keyboards.firstMatch.frame.minY - 8) }
+            let viewport = CGRect(x: app.frame.minX + 16, y: top, width: app.frame.width - 32,
+                                  height: max(0, bottom - top))
+            if element.exists {
+                // isHittable alone can be true for a row underneath the translucent navigation bar.
+                // A visible portion is enough, including when Dynamic Type makes a row taller than the screen.
+                let visible = element.frame.intersection(viewport)
+                if !visible.isNull, visible.width >= 24, visible.height >= min(32, element.frame.height), element.isHittable {
+                    return CGPoint(x: visible.midX, y: visible.midY)
+                }
+            }
+            let down = element.exists && element.frame.midY < viewport.midY
+            let start = app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: viewport.midX, dy: viewport.midY))
+            let end = start.withOffset(CGVector(dx: 0, dy: (down ? 1 : -1) * min(180, viewport.height * 0.35)))
+            start.press(forDuration: 0.05, thenDragTo: end)
         }
-        XCTFail("Could not reach \(element)")
+        capture("unreachable-\(element.identifier)")
+        XCTFail("Could not reveal \(element) inside the unobscured content viewport")
+        return nil
+    }
+
+    @MainActor
+    private func tap(_ element: XCUIElement, in app: XCUIApplication) {
+        guard let point = reveal(element, in: app) else { return }
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: point.x, dy: point.y)).tap()
     }
 
     @MainActor
@@ -117,7 +140,7 @@ final class OutfitFlowTests: XCTestCase {
         offline.buttons[savedCardID].tap()
         XCTAssertTrue(offline.navigationBars["Лук без названия"].exists)
         XCTAssertTrue(offline.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Футболка'")).firstMatch.exists)
-        tap(offline.navigationBars.buttons.firstMatch, in: offline)
+        offline.navigationBars.buttons.firstMatch.tap()
         offline.tabBars.buttons["Гардероб"].tap()
         // Delete the newest (unselected) thing, then trousers belonging to the outfit.
         tap(offline.buttons["delete-item"].firstMatch, in: offline)
@@ -142,6 +165,7 @@ final class OutfitFlowTests: XCTestCase {
             tap(app.buttons["edit-item"].firstMatch, in: app)
             tap(app.buttons["choose-type"], in: app)
             tap(app.buttons["type-\(type)"], in: app)
+            XCTAssertTrue(app.buttons["save-item-edits"].waitForExistence(timeout: 5), "Choosing a visible type must return to the editor")
             app.buttons["save-item-edits"].tap()
             await summary(app, ready: index + 1, pending: 0)
         }
@@ -166,15 +190,18 @@ final class OutfitFlowTests: XCTestCase {
         let thirdID = third.identifier
         choose("Брюки", row: button(prefix: "outfit-slot-bottom-", in: app))
         // Scroll back to the first row without changing the selection.
-        for _ in 0..<5 where !app.buttons[firstID].isHittable { app.swipeDown() }
+        _ = reveal(app.buttons[firstID], in: app)
         XCTAssertTrue(app.buttons[firstID].label.contains("Футболка"))
         app.buttons[firstID].swipeLeft()
+        XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists)
         XCTAssertTrue(app.buttons[firstID].label.contains("Свитер"))
         XCTAssertTrue(app.buttons[secondID].label.contains("Худи"))
         XCTAssertTrue(app.buttons[thirdID].label.contains("Куртка"))
         app.buttons[firstID].swipeLeft()
+        XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists)
         XCTAssertTrue(app.buttons[firstID].label.contains("Футболка"))
         app.buttons[firstID].swipeRight()
+        XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists)
         XCTAssertTrue(app.buttons[firstID].label.contains("Свитер"))
         tap(app.buttons[firstID], in: app)
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-' ")).count, 2)
@@ -207,6 +234,28 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testSwipeDoesNotOpenPickerAndVerticalDragScrollsThroughRow() {
+        let app = launch(reset: true)
+        app.tabBars.buttons["Луки"].tap()
+        app.buttons["create-first-outfit"].tap()
+        let head = button(prefix: "outfit-slot-head-", in: app)
+        head.swipeLeft()
+        XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "Horizontal drag must never open the picker")
+        guard !app.buttons["cancel-outfit-picker"].exists else { return }
+        let body = button(prefix: "outfit-slot-body-", in: app)
+        let originalBodyY = body.frame.minY
+        head.swipeUp()
+        XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "Vertical drag must never open the picker")
+        XCTAssertLessThan(body.frame.minY, originalBodyY - 20, "Dragging through a row must still scroll the constructor")
+        tap(body, in: app)
+        XCTAssertTrue(app.buttons["cancel-outfit-picker"].waitForExistence(timeout: 5), "A real tap still opens the picker")
+        app.buttons["cancel-outfit-picker"].tap()
+        app.buttons["cancel-outfit"].tap()
+        XCUIDevice.shared.press(.home)
+        app.terminate()
+    }
+
+    @MainActor
     func testEmptyAndSingleCandidateRowsCanClearAndRemoveWithoutLosingLastBodyRow() async throws {
         let app = launch(reset: true)
         app.buttons["add-demo-photo"].tap()
@@ -216,6 +265,8 @@ final class OutfitFlowTests: XCTestCase {
         let head = button(prefix: "outfit-slot-head-", in: app)
         let originalHead = head.label
         head.swipeLeft()
+        XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "A swipe must not activate the row's tap action")
+        guard !app.buttons["cancel-outfit-picker"].exists else { return }
         XCTAssertEqual(head.label, originalHead)
         let first = button(prefix: "outfit-slot-body-", in: app)
         tap(first, in: app)
@@ -223,6 +274,7 @@ final class OutfitFlowTests: XCTestCase {
         let firstID = first.identifier
         let selectedLabel = first.label
         first.swipeLeft()
+        XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "A one-candidate swipe must stay in the editor")
         XCTAssertEqual(first.label, selectedLabel, "One candidate must never clear a selection")
         tap(app.buttons["add-body-layer"], in: app)
         let second = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-slot-body-' AND label BEGINSWITH 'Тело · слой 2' ")).firstMatch
@@ -232,6 +284,7 @@ final class OutfitFlowTests: XCTestCase {
         app.buttons["cancel-outfit-picker"].tap()
         let secondID = second.identifier.replacingOccurrences(of: "outfit-slot-body-", with: "")
         second.swipeRight()
+        XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "An empty-pool swipe must stay in the editor")
         XCTAssertTrue(second.label.contains("Выбрать вещь"))
         tap(app.buttons["remove-body-layer-\(secondID)"], in: app)
         let firstSlotID = firstID.replacingOccurrences(of: "outfit-slot-body-", with: "")
@@ -255,6 +308,7 @@ final class OutfitFlowTests: XCTestCase {
             tap(app.buttons["edit-item"].firstMatch, in: app)
             tap(app.buttons["choose-type"], in: app)
             tap(app.buttons["type-\(type)"], in: app)
+            XCTAssertTrue(app.buttons["save-item-edits"].waitForExistence(timeout: 5), "Choosing a visible type must return to the editor")
             app.buttons["save-item-edits"].tap()
         }
         try await control("offline")
@@ -298,7 +352,7 @@ final class OutfitFlowTests: XCTestCase {
         app.buttons["save-outfit"].tap()
         XCTAssertTrue(app.navigationBars["Первый сохранён"].waitForExistence(timeout: 5))
         capture("outfit-07-edited")
-        tap(app.navigationBars.buttons.firstMatch, in: app)
+        app.navigationBars.buttons.firstMatch.tap()
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).count, 2)
         app.tabBars.buttons["Гардероб"].tap()
         tap(app.buttons["delete-item"].firstMatch, in: app)
