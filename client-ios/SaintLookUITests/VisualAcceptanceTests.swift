@@ -209,7 +209,14 @@ final class VisualAcceptanceTests: XCTestCase {
         case "Лук": query = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH 'repair-slot-'"))
         default: query = app.scrollViews.containing(.button, identifier: "edit-item")
         }
-        let visible = query.allElementsBoundByIndex.filter { $0.isHittable && !$0.frame.intersection(app.frame).isEmpty }
+        // A native Form's CollectionView is a layout/scroll surface, not a tappable control.
+        // Its visible child buttons can be hittable even when the container itself is not.
+        let visible = query.allElementsBoundByIndex.filter {
+            let frame = $0.frame
+            return $0.exists && !frame.intersection(app.frame).isEmpty
+                && frame.minX < bar.frame.maxX && frame.maxX > bar.frame.minX
+                && frame.maxY > bar.frame.maxY
+        }
         guard let surface = visible.min(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
             diagnose("missing-scroll-surface", app: app, detail: "Foreground navigation: \(bar.identifier)")
             throw JourneyFailure.failed
