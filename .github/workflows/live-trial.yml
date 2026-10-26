@@ -201,3 +201,39 @@ jobs:
           name: provider-probe-results
           path: provider-results/
           retention-days: 7
+
+  switch-photoroom-sandbox:
+    if: inputs.run_trial == false && github.ref == 'refs/heads/codex/provider-account-check' && vars.PHOTOROOM_PRODUCTION_APPROVED == 'false' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Install pinned Fly CLI
+        run: |
+          mkdir -p "$RUNNER_TEMP/fly-bin"
+          curl --fail --location --output "$RUNNER_TEMP/flyctl.tar.gz" https://github.com/superfly/flyctl/releases/download/v0.4.122/flyctl_0.4.122_Linux_x86_64.tar.gz
+          printf '%s  %s\n' '3d6ae2e2e24df47b46132e8920eebb7aec4ed0930dae2074369e59db89493cf2' "$RUNNER_TEMP/flyctl.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/flyctl.tar.gz" -C "$RUNNER_TEMP/fly-bin" flyctl
+          echo "$RUNNER_TEMP/fly-bin" >> "$GITHUB_PATH"
+      - name: Apply only the sandbox key and verify the running machine
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_APP_NAME: ${{ vars.FLY_APP_NAME }}
+          PHOTOROOM_SANDBOX_API_KEY: ${{ secrets.PHOTOROOM_SANDBOX_API_KEY }}
+        run: |
+          node - <<'JS'
+          const {execFileSync}=require('node:child_process');
+          const e=process.env;
+          if (!e.PHOTOROOM_SANDBOX_API_KEY?.startsWith('sandbox_') || /[\r\n]/.test(e.PHOTOROOM_SANDBOX_API_KEY)) throw new Error('Expected a sandbox key; no change applied.');
+          const env={...e}; delete env.PHOTOROOM_SANDBOX_API_KEY;
+          const fly=(args,input)=>execFileSync('flyctl',args,{env,encoding:'utf8',input,stdio:['pipe','pipe','pipe'],timeout:180000});
+          try {
+            fly(['secrets','import','--app',e.FLY_APP_NAME],`PHOTOROOM_API_KEY=${e.PHOTOROOM_SANDBOX_API_KEY}\n`);
+            const code='if (!process.env.PHOTOROOM_API_KEY?.startsWith("sandbox_")) process.exit(1); console.log("SANDBOX_ACTIVE");';
+            const output=fly(['ssh','console','--app',e.FLY_APP_NAME,'--command',`node -e '${code}'`]);
+            if (!output.includes('SANDBOX_ACTIVE')) throw new Error();
+            console.log('Sandbox key active on the running machine. Production key was not read by this job.');
+          } catch { console.error('Sandbox switch or verification failed; inspect runtime before retrying.'); process.exitCode=1; }
+          JS
