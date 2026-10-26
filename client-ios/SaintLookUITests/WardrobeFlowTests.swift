@@ -49,6 +49,11 @@ final class WardrobeFlowTests: XCTestCase {
     @MainActor
     private func waitForSummary(_ app: XCUIApplication, ready: Int, pending: Int, timeout: TimeInterval = 40) async {
         returnToCollection(in: app)
+        if ready + pending == 0 {
+            XCTAssertTrue(app.staticTexts["wardrobe-empty"].waitForExistence(timeout: timeout))
+            XCTAssertFalse(app.images["item-photo"].exists, "An empty collection must contain no garment photos")
+            return
+        }
         let summary = app.staticTexts["wardrobe-summary"]
         let expected = "Всего: \(ready + pending). Готово: \(ready). Ожидают: \(pending)."
         let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", expected), object: summary)
@@ -775,10 +780,10 @@ final class WardrobeFlowTests: XCTestCase {
         let itemActions = ["edit-item", "cutout-problem", "retry-processing", "replace-demo-photo", "replace-photo", "delete-item"]
         if itemActions.contains(identifier) {
             try openFirstItem(in: app)
-            if identifier != "edit-item", !app.buttons[identifier].firstMatch.isHittable {
+            let visibleAction = app.buttons[identifier].firstMatch
+            if identifier != "edit-item", !visibleAction.exists || !visibleAction.isHittable {
                 app.buttons["item-actions"].tap()
-                let action = app.buttons[identifier].firstMatch
-                guard action.waitForExistence(timeout: 5), action.isHittable else {
+                guard let action = app.buttons.matching(identifier: identifier).allElementsBoundByIndex.first(where: { $0.isHittable }) else {
                     XCTFail("The item menu must offer \(identifier)")
                     throw InteractionError.buttonNotVisible(identifier)
                 }
@@ -820,7 +825,7 @@ final class WardrobeFlowTests: XCTestCase {
             app.navigationBars.buttons.element(boundBy: 0).tap()
             XCTAssertTrue(app.navigationBars["Гардероб"].waitForExistence(timeout: 5))
         }
-        for _ in 0..<4 where !app.staticTexts["wardrobe-summary"].isHittable { app.swipeDown() }
+        for _ in 0..<4 where !app.staticTexts["wardrobe-summary"].isHittable && !app.staticTexts["wardrobe-empty"].isHittable { app.swipeDown() }
     }
 
     @MainActor

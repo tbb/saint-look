@@ -72,8 +72,8 @@ final class RemoteDeploymentTests: XCTestCase {
         let confirmation = cleanup.alerts.buttons.matching(identifier: "confirm-delete-item").firstMatch
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
         confirmation.tap()
-        let empty = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Всего: 0. Готово: 0. Ожидают: 0."), object: cleanup.staticTexts["wardrobe-summary"])
-        await fulfillment(of: [empty], timeout: 10)
+        XCTAssertTrue(cleanup.staticTexts["wardrobe-empty"].waitForExistence(timeout: 10))
+        XCTAssertFalse(cleanup.images["item-photo"].exists)
         // This allows the durable command to drain; API smoke separately verifies server cleanup.
         try await Task.sleep(nanoseconds: 2_000_000_000)
     }

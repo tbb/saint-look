@@ -23,7 +23,9 @@ struct WardrobeView: View {
                     #endif
                     if store.items.isEmpty {
                         ContentUnavailableView {
-                            Label("Гардероб пока пуст", systemImage: "tshirt")
+                            Label {
+                                Text("Гардероб пока пуст").accessibilityIdentifier("wardrobe-empty")
+                            } icon: { Image(systemName: "tshirt") }
                         } description: {
                             Text("Добавьте фото одной вещи, не на человеке. Пара обуви — одна вещь.")
                         } actions: {
@@ -89,11 +91,13 @@ struct WardrobeView: View {
         VStack(alignment: .leading, spacing: 8) {
             let pending = store.items.filter { $0.status == .pending }.count
             let ready = store.items.filter { $0.status == .ready }.count
-            Text(pending > 0 ? "\(itemCountTitle) · в обработке: \(pending)" : itemCountTitle)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Всего: \(store.items.count). Готово: \(ready). Ожидают: \(pending).")
-                .accessibilityIdentifier("wardrobe-summary")
+            if !store.items.isEmpty {
+                Text(pending > 0 ? "\(itemCountTitle) · в обработке: \(pending)" : itemCountTitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Всего: \(store.items.count). Готово: \(ready). Ожидают: \(pending).")
+                    .accessibilityIdentifier("wardrobe-summary")
+            }
             if store.backendMode == .demo {
                 Text("Демо · обработка без AI")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -110,7 +114,6 @@ struct WardrobeView: View {
 
     private var itemCountTitle: String {
         let count = store.items.count
-        if count == 0 { return "Здесь будут ваши вещи" }
         let suffix = (11...14).contains(count % 100) ? "вещей" : count % 10 == 1 ? "вещь" : (2...4).contains(count % 10) ? "вещи" : "вещей"
         return "\(count) \(suffix)"
     }
