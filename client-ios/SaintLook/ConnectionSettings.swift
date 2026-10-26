@@ -17,10 +17,35 @@ struct ConnectionSettings {
             return Self(baseURL: baseURL, token: token)
         }
         #endif
-        return Self(
-            baseURL: UserDefaults.standard.string(forKey: "backendURL") ?? "http://127.0.0.1:8787",
-            token: try OwnerToken.read()
+        let savedURL = UserDefaults.standard.string(forKey: "backendURL")
+        let savedToken = try OwnerToken.read()
+        let settings = try resolve(
+            savedURL: savedURL, savedToken: savedToken,
+            bundled: Bundle.main.infoDictionary ?? [:]
         )
+        if savedURL == nil, savedToken.isEmpty, !settings.token.isEmpty {
+            // Personal IPA defaults are imported once. Later manual changes win.
+            try settings.save()
+        }
+        return settings
+    }
+
+    static func resolve(savedURL: String?, savedToken: String, bundled: [String: Any]) throws -> Self {
+        let localURL = "http://127.0.0.1:8787"
+        // Never combine a saved server address with a bundled owner's credential.
+        if savedURL != nil || !savedToken.isEmpty {
+            return Self(baseURL: savedURL ?? localURL, token: savedToken)
+        }
+        guard bundled["SaintLookDefaultBackendURL"] != nil || bundled["SaintLookDefaultOwnerToken"] != nil else {
+            return Self(baseURL: localURL, token: "")
+        }
+        guard let url = bundled["SaintLookDefaultBackendURL"] as? String,
+              let token = bundled["SaintLookDefaultOwnerToken"] as? String else {
+            throw ClientError.invalidSettings
+        }
+        let settings = Self(baseURL: url, token: token)
+        guard try settings.validatedURL().scheme == "https" else { throw ClientError.invalidSettings }
+        return settings
     }
 
     func validatedURL() throws -> URL {

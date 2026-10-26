@@ -1,0 +1,67 @@
+name: iPhone IPA
+
+on:
+  pull_request:
+    paths:
+      - 'client-ios/**'
+      - 'shared/**'
+      - '.github/workflows/ios-ipa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iphone-ipa-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    # Real owner credentials are used only for a manual build of reviewed main.
+    if: >-
+      (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') &&
+      (github.event_name == 'pull_request' ||
+       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install age
+        run: brew install age
+      - name: Check connection defaults
+        run: |
+          swiftc client-ios/SaintLook/ConnectionSettings.swift \
+            client-ios/scripts/tests/connection-settings.swift \
+            -o "$RUNNER_TEMP/connection-settings-checks"
+          "$RUNNER_TEMP/connection-settings-checks"
+      - name: Compile unsigned iPhone Release
+        id: build
+        run: bash client-ios/scripts/build-device.sh
+      - name: Verify IPA encryption with disposable credentials
+        env:
+          SAINT_LOOK_TEST_APP: ${{ steps.build.outputs.app }}
+        run: python3 client-ios/scripts/tests/test-package-ipa.py
+      - name: Package personal IPA
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        env:
+          SAINT_LOOK_IPA_URL: ${{ vars.SAINT_LOOK_DEV_URL }}
+          SAINT_LOOK_IPA_TOKEN: ${{ secrets.SAINT_LOOK_DEV_OWNER_TOKEN }}
+          SAINT_LOOK_IPA_RECIPIENT: ${{ vars.IOS_IPA_AGE_RECIPIENT }}
+          APP_PATH: ${{ steps.build.outputs.app }}
+        run: |
+          python3 client-ios/scripts/package-ipa.py "$APP_PATH" \
+            "$RUNNER_TEMP/personal-ipa/SaintLook.ipa.age"
+      - name: Upload encrypted personal IPA
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SaintLook-iPhone-${{ github.sha }}
+          path: ${{ runner.temp }}/personal-ipa/SaintLook.ipa.age
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Remove temporary packaging files
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/personal-ipa"
