@@ -113,7 +113,8 @@ final class VisualAcceptanceTests: XCTestCase {
     private func waitNavigation(_ title: String, in app: XCUIApplication) throws {
         let bar = app.navigationBars[title]
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            bar.exists && bar.identifier == title && self.hasReachableNavigationControl(bar, in: app)
+            // Error destinations may intentionally offer no toolbar actions.
+            bar.exists && bar.identifier == title && !bar.frame.intersection(app.frame).isEmpty
         }, object: bar)
         guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
             diagnose("unavailable-navigation", app: app, detail: "Expected destination: \(title)")
@@ -134,6 +135,7 @@ final class VisualAcceptanceTests: XCTestCase {
         }
         try nativeTap(button, in: app)
         try waitNavigation(title, in: app)
+        try require(button.isSelected, "The intended native tab must be selected")
     }
 
     @MainActor
