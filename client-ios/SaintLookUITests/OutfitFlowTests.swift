@@ -122,6 +122,18 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
+    private func deleteWardrobeItem(_ itemID: String, in app: XCUIApplication) {
+        let card = app.descendants(matching: .any).matching(identifier: "wardrobe-item-\(itemID)").firstMatch
+        tap(card, in: app)
+        XCTAssertTrue(app.buttons["item-actions"].waitForExistence(timeout: 5))
+        app.buttons["item-actions"].tap()
+        app.buttons["delete-item"].firstMatch.tap()
+        let confirmation = app.alerts.buttons.matching(identifier: "confirm-delete-item").firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.tap()
+    }
+
+    @MainActor
     private func chooseCandidate(_ candidate: XCUIElement, in app: XCUIApplication) {
         tap(candidate, in: app)
         expectGone(app.buttons["cancel-outfit-picker"], "Selecting a thing must immediately return to the constructor")
@@ -157,6 +169,107 @@ final class OutfitFlowTests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    @MainActor
+    func testReplacementSavesTheAddressedLayerAndAnIncompleteRepairRemainsADiscardableDraft() async throws {
+        let app = launch(reset: true)
+        for count in 1...3 {
+            tap(app.buttons["add-demo-photo"], in: app)
+            await summary(app, ready: count, pending: 0)
+        }
+        app.tabBars.buttons["Луки"].tap()
+        app.buttons["create-first-outfit"].tap()
+        enterName("Для прогулки", in: app)
+        let firstLayer = button(prefix: "outfit-slot-body-", in: app)
+        let firstSlotID = firstLayer.identifier.replacingOccurrences(of: "outfit-slot-body-", with: "")
+        tap(firstLayer, in: app)
+        let firstChoice = button(prefix: "outfit-candidate-", in: app)
+        let firstItemID = firstChoice.identifier.replacingOccurrences(of: "outfit-candidate-", with: "")
+        chooseCandidate(firstChoice, in: app)
+        tap(app.buttons["add-body-layer"], in: app)
+        let secondLayer = app.buttons.matching(NSPredicate(format:
+            "identifier BEGINSWITH 'outfit-slot-body-' AND label BEGINSWITH 'Тело · слой 2'")).firstMatch
+        let secondSlotID = secondLayer.identifier.replacingOccurrences(of: "outfit-slot-body-", with: "")
+        tap(secondLayer, in: app)
+        let remaining = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-'"))
+        XCTAssertEqual(remaining.count, 2)
+        let secondChoiceID = remaining.element(boundBy: 0).identifier
+        let replacementChoiceID = remaining.element(boundBy: 1).identifier
+        chooseCandidate(app.buttons[secondChoiceID], in: app)
+        app.buttons["save-outfit"].tap()
+        let card = button(prefix: "outfit-card-", in: app)
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        let cardID = card.identifier
+
+        app.tabBars.buttons["Гардероб"].tap()
+        deleteWardrobeItem(firstItemID, in: app)
+        await summary(app, ready: 2, pending: 0)
+        let beforeRepair = try await activityCounts()
+        app.tabBars.buttons["Луки"].tap()
+        tap(app.buttons[cardID], in: app)
+        tap(app.buttons["repair-slot-\(firstSlotID)"], in: app)
+        XCTAssertTrue(app.navigationBars["Тело"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons[replacementChoiceID].exists)
+        XCTAssertFalse(app.buttons[secondChoiceID].exists, "The other layer's thing is unavailable for replacement")
+        chooseCandidate(app.buttons[replacementChoiceID], in: app)
+        XCTAssertTrue(app.buttons["edit-outfit"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Для прогулки"].exists)
+        XCTAssertFalse(button(prefix: "repair-slot-", in: app).exists)
+        capture("outfit-successful-targeted-repair")
+        app.buttons["edit-outfit"].tap()
+        tap(app.buttons["outfit-slot-body-\(firstSlotID)"], in: app)
+        XCTAssertTrue(app.buttons[replacementChoiceID].isSelected, "Only the addressed layer receives the replacement")
+        app.buttons["cancel-outfit-picker"].tap()
+        tap(app.buttons["outfit-slot-body-\(secondSlotID)"], in: app)
+        XCTAssertTrue(app.buttons[secondChoiceID].isSelected, "The independent layer keeps its original thing")
+        app.buttons["cancel-outfit-picker"].tap()
+        app.buttons["cancel-outfit"].tap()
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Inspecting the saved replacement must not create a draft change")
+        let afterRepair = try await activityCounts()
+        XCTAssertEqual(afterRepair, beforeRepair)
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.buttons[cardID].exists, "Repair retains the saved outfit identity")
+
+        app.tabBars.buttons["Гардероб"].tap()
+        deleteWardrobeItem(secondChoiceID.replacingOccurrences(of: "outfit-candidate-", with: ""), in: app)
+        await summary(app, ready: 1, pending: 0)
+        deleteWardrobeItem(replacementChoiceID.replacingOccurrences(of: "outfit-candidate-", with: ""), in: app)
+        await summary(app, ready: 0, pending: 0)
+        tap(app.buttons["add-demo-photo"], in: app)
+        await summary(app, ready: 1, pending: 0)
+        let beforeIncomplete = try await activityCounts()
+        app.tabBars.buttons["Луки"].tap()
+        tap(app.buttons[cardID], in: app)
+        tap(app.buttons["repair-slot-\(firstSlotID)"], in: app)
+        chooseCandidate(button(prefix: "outfit-candidate-", in: app), in: app)
+        XCTAssertTrue(app.navigationBars["Изменить лук"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["save-outfit"].isEnabled)
+        XCTAssertTrue(app.staticTexts["Выберите ещё одну вещь."].exists)
+        XCTAssertTrue(app.buttons["outfit-slot-body-\(firstSlotID)"].label.contains("Футболка"))
+        capture("outfit-incomplete-repair-draft")
+        app.buttons["cancel-outfit"].tap()
+        let keep = app.alerts.buttons.matching(identifier: "continue-outfit-editing").firstMatch
+        XCTAssertTrue(keep.waitForExistence(timeout: 5), "A replacement below the minimum must remain a dirty draft")
+        keep.tap()
+        XCTAssertTrue(app.buttons["outfit-slot-body-\(firstSlotID)"].label.contains("Футболка"))
+        app.buttons["cancel-outfit"].tap()
+        app.alerts.buttons.matching(identifier: "discard-outfit-changes").firstMatch.tap()
+        XCTAssertTrue(app.buttons["edit-outfit"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'repair-slot-'")).count, 2,
+                       "Discarding must not persist a one-thing composition")
+        let afterIncomplete = try await activityCounts()
+        XCTAssertEqual(afterIncomplete, beforeIncomplete)
+        try await control("offline")
+        XCUIDevice.shared.press(.home)
+        app.terminate()
+        let offline = launch(reset: false)
+        offline.tabBars.buttons["Луки"].tap()
+        tap(offline.buttons[cardID], in: offline)
+        XCTAssertTrue(offline.staticTexts["Для прогулки"].exists)
+        XCTAssertEqual(offline.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'repair-slot-'")).count, 2)
+        XCUIDevice.shared.press(.home)
+        offline.terminate()
     }
 
     @MainActor
