@@ -428,6 +428,39 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testEmptyNewColorSelectionCannotFinishAndDoneOnlyUpdatesDraft() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        let before = try await transportState()
+        try tapVisibleButton("edit-item", in: app)
+        try tapVisibleButton("choose-colors", in: app)
+        try tapColor("blue", in: app)
+        XCTAssertFalse(app.buttons["done-colors"].isEnabled, "Removing the final color must not finish a new invalid selection")
+        XCTAssertTrue(app.staticTexts["color-selection-requirement"].exists)
+        try tapColor("green", in: app)
+        XCTAssertTrue(app.buttons["done-colors"].isEnabled)
+        app.buttons["done-colors"].tap()
+        XCTAssertTrue(app.staticTexts["Зелёный"].exists)
+        app.buttons["cancel-item-edits"].tap()
+        XCTAssertTrue(app.alerts.buttons.matching(identifier: "discard-item-changes").firstMatch.waitForExistence(timeout: 5))
+        app.alerts.buttons.matching(identifier: "discard-item-changes").firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Синий"].exists, "Done must not persist before the item editor is saved")
+        XCTAssertFalse(app.staticTexts["Зелёный"].exists)
+        try tapVisibleButton("edit-item", in: app)
+        try chooseColors(["green"], replacing: ["blue"], in: app)
+        app.buttons["save-item-edits"].tap()
+        try await control(mode: "offline")
+        app.terminate()
+        let restored = launch(reset: false, baseURL: testURL)
+        try tapVisibleButton("edit-item", in: restored)
+        XCTAssertTrue(restored.staticTexts["Зелёный"].exists)
+        let after = try await transportState()
+        XCTAssertEqual(after["forwardedUploads"] as? Int, before["forwardedUploads"] as? Int)
+        XCTAssertEqual(after["acceptedOperations"] as? Int, before["acceptedOperations"] as? Int)
+    }
+
+    @MainActor
     func testPaletteAllowsAtMostFiveColorsAndPersistsCanonicalLabels() async throws {
         try await control(mode: "offline")
         let app = launch(reset: true, baseURL: testURL)
