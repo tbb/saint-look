@@ -2,16 +2,10 @@ import Foundation
 import Combine
 import UIKit
 
-private struct WardrobeCatalog: Codable {
-    let items: [WardrobeItem]
-    let pendingDeletionIDs: Set<UUID>
-    // Absent only in catalogs written before acknowledgement delivery existed.
-    let pendingAcknowledgements: Set<ResultAcknowledgement>?
-}
-
 @MainActor
 final class WardrobeStore: ObservableObject {
     @Published private(set) var items: [WardrobeItem] = []
+    @Published private(set) var outfits: [Outfit] = []
     @Published private(set) var settings = ConnectionSettings(baseURL: "http://127.0.0.1:8787", token: "")
     @Published private(set) var backendMode: ProcessingMode?
     @Published var notice: String?
@@ -41,24 +35,12 @@ final class WardrobeStore: ObservableObject {
             #endif
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             directory = root
-            let catalog = root.appendingPathComponent("catalog.json")
-            var needsAcknowledgementMigration = false
-            if FileManager.default.fileExists(atPath: catalog.path) {
-                let data = try Data(contentsOf: catalog)
-                if let legacyItems = try? JSONDecoder().decode([WardrobeItem].self, from: data) {
-                    items = legacyItems
-                    needsAcknowledgementMigration = true
-                } else {
-                    let saved = try JSONDecoder().decode(WardrobeCatalog.self, from: data)
-                    items = saved.items
-                    pendingDeletionIDs = saved.pendingDeletionIDs
-                    if let acknowledgements = saved.pendingAcknowledgements {
-                        pendingAcknowledgements = acknowledgements
-                    } else {
-                        needsAcknowledgementMigration = true
-                    }
-                }
-            }
+            let saved = try WardrobeCatalogFile(directory: root).load()
+            items = saved.items
+            outfits = saved.outfits
+            pendingDeletionIDs = saved.pendingDeletionIDs
+            pendingAcknowledgements = saved.pendingAcknowledgements ?? []
+            let needsAcknowledgementMigration = saved.pendingAcknowledgements == nil
             storageAvailable = true
             for id in pendingDeletionIDs {
                 // Cleanup does not depend on valid credentials or a working connection.
@@ -123,13 +105,15 @@ final class WardrobeStore: ObservableObject {
 
     func deleteItem(_ id: UUID) {
         guard storageAvailable, items.contains(where: { $0.id == id }) else { return }
-        let updated = items.filter { $0.id != id }
-        var deletions = pendingDeletionIDs
-        deletions.insert(id)
-        let acknowledgements = Set(pendingAcknowledgements.filter { $0.itemID != id })
+        var updatedCatalog = catalog
+        updatedCatalog.removeItem(id)
+        let updated = updatedCatalog.items
+        let deletions = updatedCatalog.pendingDeletionIDs
+        let acknowledgements = updatedCatalog.pendingAcknowledgements ?? []
         do {
             // Hide only after both the removal and its delivery/cleanup intent are durable.
-            try persist(updated, pendingDeletions: deletions, pendingAcknowledgements: acknowledgements)
+            try persist(updated, pendingDeletions: deletions, pendingAcknowledgements: acknowledgements, outfits: updatedCatalog.outfits)
+            outfits = updatedCatalog.outfits
             pendingAcknowledgements = acknowledgements
             for acknowledgement in Array(acknowledgementTasks.keys) where acknowledgement.itemID == id {
                 acknowledgementTasks[acknowledgement]?.task.cancel()
@@ -203,6 +187,45 @@ final class WardrobeStore: ObservableObject {
         return UIImage(contentsOfFile: path.path)
     }
 
+    private var catalog: WardrobeCatalog {
+        WardrobeCatalog(items: items, pendingDeletionIDs: pendingDeletionIDs,
+                        pendingAcknowledgements: pendingAcknowledgements, outfits: outfits)
+    }
+
+    func outfitCandidates(for zone: OutfitZone, excluding selectedIDs: Set<UUID>) -> [WardrobeItem] {
+        items.filter {
+            $0.status == .ready && $0.resultFilename != nil && !selectedIDs.contains($0.id)
+                && zone.accepts($0, taxonomy: .shared) && displayImage(for: $0) != nil
+        }.sorted { $0.id.uuidString < $1.id.uuidString }
+    }
+
+    func canSaveOutfit(_ draft: Outfit) -> Bool {
+        (try? validatedCatalog(saving: draft)) != nil
+    }
+
+    func deleteOutfit(_ id: UUID) throws {
+        var updated = catalog
+        updated.removeOutfit(id)
+        try persist(items, outfits: updated.outfits)
+        outfits = updated.outfits
+    }
+
+    func saveOutfit(_ draft: Outfit) throws {
+        let updated = try validatedCatalog(saving: draft)
+        try persist(items, outfits: updated.outfits)
+        outfits = updated.outfits
+    }
+
+    private func validatedCatalog(saving draft: Outfit) throws -> WardrobeCatalog {
+        var updated = catalog
+        let selectedIDs = draft.selectedIDs
+        let cutouts = Set(items.filter {
+            selectedIDs.contains($0.id) && $0.resultFilename != nil && displayImage(for: $0) != nil
+        }.map(\.id))
+        try updated.saveOutfit(draft, taxonomy: .shared, availableCutouts: cutouts)
+        return updated
+    }
+
     func resumePendingItems() {
         guard storageAvailable else { return }
         observing = true
@@ -244,11 +267,13 @@ final class WardrobeStore: ObservableObject {
     }
 
     private func persist(_ updated: [WardrobeItem], pendingDeletions: Set<UUID>? = nil,
-                         pendingAcknowledgements acknowledgements: Set<ResultAcknowledgement>? = nil) throws {
+                         pendingAcknowledgements acknowledgements: Set<ResultAcknowledgement>? = nil,
+                         outfits updatedOutfits: [Outfit]? = nil) throws {
         guard let directory, storageAvailable else { throw CocoaError(.fileWriteUnknown) }
         let catalog = WardrobeCatalog(items: updated, pendingDeletionIDs: pendingDeletions ?? pendingDeletionIDs,
-                                      pendingAcknowledgements: acknowledgements ?? pendingAcknowledgements)
-        try JSONEncoder().encode(catalog).write(to: directory.appendingPathComponent("catalog.json"), options: .atomic)
+                                      pendingAcknowledgements: acknowledgements ?? pendingAcknowledgements,
+                                      outfits: updatedOutfits ?? outfits)
+        try WardrobeCatalogFile(directory: directory).save(catalog)
     }
 
     private func removeLocalFiles(for id: UUID) throws {
