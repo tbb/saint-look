@@ -437,8 +437,10 @@ final class OutfitFlowTests: XCTestCase {
         app.buttons["create-first-outfit"].tap()
         XCTAssertFalse(app.buttons["save-outfit"].isEnabled)
         tap(button(prefix: "outfit-slot-head-", in: app), in: app)
-        XCTAssertTrue(app.otherElements["outfit-picker-empty"].waitForExistence(timeout: 5)
-            || app.staticTexts["Подходящих вещей пока нет"].exists)
+        XCTAssertTrue(app.navigationBars["Голова"].exists)
+        XCTAssertTrue(app.staticTexts["Вещи ещё обрабатываются"].waitForExistence(timeout: 5),
+                      "The unknown pending thing is not eligible until processing identifies its zone")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-' ")).count, 0)
         app.buttons["cancel-outfit-picker"].tap()
         tap(button(prefix: "outfit-slot-body-", in: app), in: app)
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-' ")).count, 1,

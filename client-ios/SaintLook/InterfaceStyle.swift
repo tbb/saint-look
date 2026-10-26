@@ -20,8 +20,8 @@ enum SaintLookStyle {
 
     static func columns(accessibilitySize: Bool) -> [GridItem] {
         accessibilitySize
-            ? [GridItem(.flexible(), spacing: 12)]
-            : [GridItem(.adaptive(minimum: 154, maximum: 240), spacing: 12)]
+            ? [GridItem(.flexible(), spacing: 12, alignment: .top)]
+            : [GridItem(.adaptive(minimum: 154, maximum: 240), spacing: 12, alignment: .top)]
     }
 }
 

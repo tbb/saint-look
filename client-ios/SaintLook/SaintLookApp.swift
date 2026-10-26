@@ -18,7 +18,6 @@ struct SaintLookApp: App {
                     .tag(AppTab.outfits)
             }
                 .tint(SaintLookStyle.accent)
-                .safeAreaInset(edge: .top, spacing: 0) { AppNoticeView(store: store) }
                 .task { store.resumePendingItems() }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { store.resumePendingItems() }

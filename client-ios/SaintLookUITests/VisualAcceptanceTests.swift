@@ -5,6 +5,7 @@ import Foundation
 final class VisualAcceptanceTests: XCTestCase {
     private let baseURL = "http://127.0.0.1:8788"
     private var profile = ""
+    private enum InputFailure: Error { case unavailableField, keyboardUnavailable, keyboardNotDismissed }
     private let itemIDs = (1...4).map { String(format: "36000000-0000-0000-0000-%012d", $0) }
 
     override func setUp() async throws {
@@ -66,17 +67,41 @@ final class VisualAcceptanceTests: XCTestCase {
     }
 
     @MainActor
-    private func enterName(_ name: String, in app: XCUIApplication) {
+    private func enterName(_ name: String, in app: XCUIApplication) throws {
         let field = app.textFields["outfit-name"]
-        guard reveal(field, in: app, towardTop: true) else { return }
+        guard reveal(field, in: app, towardTop: true) else { throw InputFailure.unavailableField }
         field.tap()
+        // Simulator AX can retain a stale Keyboard node after the on-screen keyboard disappears.
+        let keyboardReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let keyboard = app.keyboards.firstMatch
+            return keyboard.exists && keyboard.isHittable && !keyboard.frame.isEmpty
+                && app.frame.intersects(keyboard.frame)
+        }, object: app)
+        guard XCTWaiter.wait(for: [keyboardReady], timeout: 15) == .completed else {
+            capture("keyboard-focus-unavailable")
+            let diagnostic = XCTAttachment(string: app.debugDescription)
+            diagnostic.name = "\(profile)-keyboard-focus-accessibility"
+            diagnostic.lifetime = .keepAlways
+            add(diagnostic)
+            XCTFail("The name field tap did not produce a visible, hittable Simulator keyboard; stop before typing")
+            throw InputFailure.keyboardUnavailable
+        }
         let current = (field.value as? String) ?? ""
         // Empty fields expose their placeholder as value, not editable content.
         if current != "Название — необязательно", !current.isEmpty {
             field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
         }
         field.typeText(name + "\n")
-        expectGone(app.keyboards.firstMatch, "Done dismisses keyboard before constructor actions", timeout: 15)
+        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+        guard XCTWaiter.wait(for: [gone], timeout: 15) == .completed else {
+            capture("keyboard-dismissal-unavailable")
+            let diagnostic = XCTAttachment(string: app.debugDescription)
+            diagnostic.name = "\(profile)-keyboard-dismissal-accessibility"
+            diagnostic.lifetime = .keepAlways
+            add(diagnostic)
+            XCTFail("Done did not dismiss the keyboard; stop before later screenshots")
+            throw InputFailure.keyboardNotDismissed
+        }
     }
 
     private func control(_ mode: String, reset: Bool = false) async throws {
@@ -188,6 +213,7 @@ final class VisualAcceptanceTests: XCTestCase {
         hitEvidence.name = "\(profile)-item-edit-hit-frame"
         hitEvidence.lifetime = .keepAlways
         add(hitEvidence)
+        XCTAssertGreaterThanOrEqual(edit.frame.height, 44, "Item editing needs a native hit target at least 44 points tall")
         edit.tap()
         tap(app.buttons["choose-colors"], in: app)
         XCTAssertTrue(app.buttons["color-white"].waitForExistence(timeout: 5))
@@ -240,12 +266,12 @@ final class VisualAcceptanceTests: XCTestCase {
         outfit.tap()
         app.buttons["edit-outfit"].tap()
         let name = "Прогулка по осеннему городу после работы"
-        enterName(name, in: app)
+        try enterName(name, in: app)
         app.buttons["save-outfit"].tap()
         XCTAssertTrue(app.buttons["edit-outfit"].waitForExistence(timeout: 5))
         capture("07-outfit-detail-long-name")
         app.buttons["edit-outfit"].tap()
-        enterName("Черновик", in: app)
+        try enterName("Черновик", in: app)
         app.buttons["cancel-outfit"].tap()
         XCTAssertTrue(app.alerts.buttons["continue-outfit-editing"].waitForExistence(timeout: 5))
         capture("08-outfit-discard-dialog")
@@ -317,6 +343,9 @@ final class VisualAcceptanceTests: XCTestCase {
         app = launch()
         openItem(0, in: app)
         tap(app.buttons["edit-item"], in: app)
+        XCTAssertTrue(app.buttons["choose-type"].waitForExistence(timeout: 5))
+        guard reveal(app.buttons["choose-type"], in: app) else { return }
+        XCTAssertTrue(app.buttons["cancel-item-edits"].isHittable)
         capture("secondary-03-item-editor")
         tap(app.buttons["choose-type"], in: app)
         XCTAssertTrue(app.buttons["type-t_shirt"].waitForExistence(timeout: 5))
@@ -355,9 +384,22 @@ final class VisualAcceptanceTests: XCTestCase {
         app = launch("unreadable-catalog")
         let error = app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Не удалось открыть локальный гардероб'")).firstMatch
         XCTAssertTrue(error.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["wardrobe-unavailable"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["wardrobe-empty"].exists)
+        XCTAssertFalse(app.buttons["add-photo"].exists)
+        XCTAssertTrue(app.buttons["settings"].isHittable, "Storage failure must not cover access to settings")
+        app.buttons["settings"].tap()
+        XCTAssertTrue(app.buttons["close-settings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "connection-settings").firstMatch.isHittable)
+        app.buttons["close-settings"].tap()
+        expectGone(app.buttons["close-settings"], "Closing settings returns to the unavailable catalog")
         capture("secondary-09-storage-error-wardrobe")
         app.tabBars.buttons["Луки"].tap()
         XCTAssertTrue(error.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["outfits-unavailable"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Пока нет луков"].exists)
+        XCTAssertFalse(app.buttons["create-first-outfit"].exists)
+        XCTAssertFalse(app.buttons["create-outfit"].exists)
         capture("secondary-10-storage-error-outfits")
         XCUIDevice.shared.press(.home); app.terminate()
         try await control("online")

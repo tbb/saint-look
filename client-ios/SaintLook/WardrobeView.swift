@@ -21,7 +21,16 @@ struct WardrobeView: View {
                     #if DEBUG
                     testPhotoActions
                     #endif
-                    if store.items.isEmpty {
+                    if !store.storageAvailable {
+                        ContentUnavailableView {
+                            Label {
+                                Text("Гардероб недоступен").accessibilityIdentifier("wardrobe-unavailable")
+                            } icon: { Image(systemName: "exclamationmark.triangle") }
+                        } description: {
+                            Text("Не удалось прочитать данные на устройстве. Попробуйте открыть приложение снова.")
+                        }
+                        .padding(.vertical, 32)
+                    } else if store.items.isEmpty {
                         ContentUnavailableView {
                             Label {
                                 Text("Гардероб пока пуст").accessibilityIdentifier("wardrobe-empty")
@@ -51,6 +60,7 @@ struct WardrobeView: View {
                 .frame(maxWidth: SaintLookStyle.contentWidth)
                 .frame(maxWidth: .infinity)
             }
+            .safeAreaInset(edge: .top, spacing: 0) { AppNoticeView(store: store) }
             .background(SaintLookStyle.canvas)
             .navigationTitle("Гардероб")
             .navigationDestination(for: UUID.self) { id in ItemDetailView(store: store, itemID: id) }
@@ -61,7 +71,7 @@ struct WardrobeView: View {
                         .accessibilityIdentifier("settings")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if !store.items.isEmpty { photoPicker.labelStyle(.iconOnly) }
+                    if store.storageAvailable && !store.items.isEmpty { photoPicker.labelStyle(.iconOnly) }
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView(store: store) }
@@ -233,7 +243,7 @@ private struct ItemDetailView: View {
                         }
                         Button { editingItem = item } label: {
                             Label("Изменить тип и цвета", systemImage: "slider.horizontal.3")
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                         }
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("edit-item")
@@ -246,6 +256,7 @@ private struct ItemDetailView: View {
                     .frame(maxWidth: 640)
                     .frame(maxWidth: .infinity)
                 }
+                .safeAreaInset(edge: .top, spacing: 0) { AppNoticeView(store: store) }
                 .background(SaintLookStyle.canvas)
                 .navigationTitle(item.displayedType ?? "Вещь")
                 .navigationBarTitleDisplayMode(.inline)
