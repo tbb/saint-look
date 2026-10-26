@@ -3,6 +3,7 @@ import SwiftUI
 @MainActor
 struct OutfitsView: View {
     @ObservedObject var store: WardrobeStore
+    let openWardrobe: () -> Void
     @State private var creating = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -11,14 +12,26 @@ struct OutfitsView: View {
             Group {
                 if store.outfits.isEmpty {
                     ContentUnavailableView {
-                        Label("Ваши луки", systemImage: "square.grid.2x2")
+                        Label("Пока нет луков", systemImage: "square.grid.2x2")
                     } description: {
-                        Text("Соберите сочетание из вещей гардероба. Оно сохранится на этом устройстве и будет доступно без сети.")
+                        Text(eligibleCount < 2
+                             ? "Для сохранения лука нужны хотя бы две вещи с готовой вырезкой и известным типом."
+                             : "Соедините вещи из гардероба. Сохранённые сочетания будут доступны без сети.")
                     } actions: {
-                        Button("Собрать первый лук") { creating = true }
-                            .buttonStyle(.borderedProminent)
-                            .accessibilityIdentifier("create-first-outfit")
-                            .disabled(!store.storageAvailable)
+                        if eligibleCount < 2 {
+                            Button("В гардероб", action: openWardrobe)
+                                .buttonStyle(.borderedProminent)
+                                .accessibilityIdentifier("open-wardrobe")
+                            Button("Открыть конструктор") { creating = true }
+                                .buttonStyle(.bordered)
+                                .accessibilityIdentifier("create-first-outfit")
+                                .disabled(!store.storageAvailable)
+                        } else {
+                            Button("Собрать первый лук") { creating = true }
+                                .buttonStyle(.borderedProminent)
+                                .accessibilityIdentifier("create-first-outfit")
+                                .disabled(!store.storageAvailable)
+                        }
                     }
                 } else {
                     ScrollView {
@@ -56,6 +69,20 @@ struct OutfitsView: View {
                     .background(SaintLookStyle.canvas)
                 }
             }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if !store.outfits.isEmpty && eligibleCount < 2 {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Для нового лука нужны хотя бы две готовые вещи.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        Button("В гардероб", action: openWardrobe)
+                            .frame(minHeight: 44)
+                            .accessibilityIdentifier("open-wardrobe")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .background(.bar)
+                }
+            }
             .navigationTitle("Луки")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -68,6 +95,10 @@ struct OutfitsView: View {
                 OutfitEditorView(store: store, draft: Outfit())
             }
         }
+    }
+
+    private var eligibleCount: Int {
+        Set(OutfitZone.allCases.flatMap { store.outfitCandidates(for: $0, excluding: []).map(\.id) }).count
     }
 
     private func compositionDescription(_ outfit: Outfit) -> String {
@@ -551,8 +582,7 @@ struct OutfitPickerView: View {
         NavigationStack {
             Group {
                 if candidates.isEmpty {
-                    ContentUnavailableView("Подходящих вещей пока нет", systemImage: "tshirt",
-                        description: Text("Здесь появятся вещи для этой зоны с готовой вырезкой и известным типом. Уже выбранные вещи не повторяются."))
+                    ContentUnavailableView(emptyTitle, systemImage: "tshirt", description: Text(emptyDescription))
                         .accessibilityIdentifier("outfit-picker-empty")
                 } else {
                     ScrollView {
@@ -586,6 +616,28 @@ struct OutfitPickerView: View {
                 if let selectedType, !available.contains(selectedType) { self.selectedType = nil }
             }
         }
+    }
+
+    private var allEligibleAreUsed: Bool {
+        !store.outfitCandidates(for: zone, excluding: []).isEmpty
+    }
+
+    private var awaitingCandidates: Bool {
+        store.items.contains {
+            $0.status == .pending && ($0.displayedType == nil || zone.accepts($0, taxonomy: .shared))
+        }
+    }
+
+    private var emptyTitle: String {
+        if allEligibleAreUsed { return "Все подходящие вещи уже выбраны" }
+        if awaitingCandidates { return "Вещи ещё обрабатываются" }
+        return "Нет вещей для этой зоны"
+    }
+
+    private var emptyDescription: String {
+        if allEligibleAreUsed { return "Одна вещь может быть только в одном слое. Выберите другой слой или очистите его." }
+        if awaitingCandidates { return "После обработки здесь появятся вещи, подходящие этой зоне." }
+        return "Нужны готовая вырезка и подходящий тип. Проверьте вещи в гардеробе; эту зону можно оставить пустой."
     }
 
     private var typeFilter: some View {
