@@ -69,6 +69,37 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testOpeningPhotoKeepsItemContextThroughEditingAndBackToCollection() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+
+        let photo = app.images["item-photo"].firstMatch
+        XCTAssertTrue(photo.exists)
+        photo.tap()
+        XCTAssertTrue(app.navigationBars["Футболка"].waitForExistence(timeout: 5),
+                      "Tapping the garment photo must open that garment's detail")
+        let detail = XCTAttachment(screenshot: app.screenshot())
+        detail.name = "wardrobe-item-detail"
+        detail.lifetime = .keepAlways
+        add(detail)
+
+        try tapVisibleButton("edit-item", in: app)
+        try chooseType("hoodie", in: app)
+        app.buttons["save-item-edits"].tap()
+        XCTAssertTrue(app.navigationBars["Худи"].waitForExistence(timeout: 5),
+                      "Saving edits must return to the same item with its current type")
+        XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["Гардероб"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Худи"].exists)
+        await waitForSummary(app, ready: 1, pending: 0)
+        let state = try await transportState()
+        XCTAssertEqual(state["acceptedOperations"] as? Int, 1,
+                       "Opening and editing a detail must not upload another photo")
+    }
+
+    @MainActor
     func testPhotoBecomesReadyThroughBackendAndSurvivesOfflineRelaunch() async throws {
         let app = launch(reset: true, baseURL: testURL, trialIndex: 1)
         XCTAssertTrue(app.staticTexts["demo-notice"].waitForExistence(timeout: 5))
