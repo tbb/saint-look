@@ -184,5 +184,84 @@ struct OutfitCoreChecks {
         precondition(!OutfitZone.allCases.contains { $0.accepts(corrected, taxonomy: taxonomy) })
         print("PASS: effective type and excluded categories control new choices")
 
+        // Renaming a saved look remains possible after wardrobe deletions.
+        var editing = WardrobeCatalog(items: [shirt, jeans], outfits: [outfit])
+        editing.removeItem(jeansID)
+        var incomplete = editing.outfits[0]
+        incomplete.name = "  На прогулку  "
+        try editing.saveOutfit(incomplete, taxonomy: taxonomy, availableCutouts: [shirtID])
+        precondition(editing.outfits[0].name == "На прогулку")
+        precondition(editing.outfits[0].id == outfit.id)
+        editing.removeItem(shirtID)
+        var emptyRename = editing.outfits[0]
+        emptyRename.name = ""
+        try editing.saveOutfit(emptyRename, taxonomy: taxonomy, availableCutouts: [])
+        precondition(editing.outfits[0].displayName == "Лук без названия")
+        var changedEmpty = editing.outfits[0]
+        changedEmpty.addBodyLayer()
+        do {
+            try editing.saveOutfit(changedEmpty, taxonomy: taxonomy, availableCutouts: [])
+            fatalError("A changed incomplete composition must not save")
+        } catch OutfitError.tooFewItems { }
+        precondition(editing.outfits[0].slots == emptyRename.slots)
+        try file.save(editing)
+        let renamedRestored = try file.load()
+        precondition(renamedRestored.outfits.count == 1)
+        precondition(renamedRestored.outfits[0].selectedIDs.isEmpty)
+        print("PASS: incomplete and empty looks can rename, composition changes still require two things")
+
+        let other = Outfit(name: "Второй", slots: outfit.slots)
+        var deletion = WardrobeCatalog(items: [shirt, jeans], pendingDeletionIDs: [deletedID],
+            pendingAcknowledgements: [ack], outfits: [outfit, other])
+        deletion.removeOutfit(outfit.id)
+        try file.save(deletion)
+        let deletedRestored = try file.load()
+        precondition(deletedRestored.outfits == [other])
+        precondition(deletedRestored.items.map(\.id) == [shirtID, jeansID])
+        precondition(deletedRestored.pendingDeletionIDs == [deletedID])
+        precondition(deletedRestored.pendingAcknowledgements == [ack])
+        print("PASS: deleting one look preserves its shared things, other looks and offline queues")
+
+        // An editor opened before deletion cannot write the removed reference back.
+        var current = WardrobeCatalog(items: [shirt, jeans], outfits: [outfit, other])
+        var staleDraft = outfit
+        staleDraft.name = "Старый черновик"
+        current.removeItem(jeansID)
+        do {
+            try current.saveOutfit(staleDraft, taxonomy: taxonomy, availableCutouts: cutouts)
+            fatalError("A stale editor must not revive a deleted thing")
+        } catch OutfitError.unavailableItem { }
+        let reconciledDraft = staleDraft.removingItem(jeansID)
+        try current.saveOutfit(reconciledDraft, taxonomy: taxonomy, availableCutouts: [shirtID])
+        precondition(current.outfits[0].slots[2].itemID == nil)
+        precondition(current.outfits[0].slots[2].needsReplacement)
+        precondition(current.items.map(\.id) == [shirtID])
+        precondition(current.outfits[1].slots[2].needsReplacement)
+        // Existing slot remains in place after type correction or a retry.
+        current.items[0].manualType = "Брюки"
+        current.items[0].status = .pending
+        var duringRetry = current.outfits[0]
+        duringRetry.name = "Во время обработки"
+        try current.saveOutfit(duringRetry, taxonomy: taxonomy, availableCutouts: [shirtID])
+        precondition(current.outfits[0].slots[1].zone == .body)
+        precondition(current.outfits[0].slots[1].itemID == shirtID)
+        precondition(current.items[0].resultFilename == "result.png")
+        try file.save(current)
+        let beforeFailure = try file.load()
+        var failedChange = current
+        failedChange.outfits[0].name = "Не записалось"
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path) }
+        do {
+            try file.save(failedChange)
+            fatalError("Writing into a read-only directory must fail (run checks as non-root)")
+        } catch { }
+        let afterFailure = try file.load()
+        precondition(afterFailure.outfits == beforeFailure.outfits)
+        precondition(afterFailure.items.map(\.id) == beforeFailure.items.map(\.id))
+        precondition(afterFailure.pendingDeletionIDs == beforeFailure.pendingDeletionIDs)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+        print("PASS: stale editor cannot revive deletion, references survive retries, failed atomic write preserves saved catalog")
+
     }
 }

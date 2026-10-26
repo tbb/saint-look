@@ -127,8 +127,8 @@ extension WardrobeCatalog {
     mutating func saveOutfit(_ draft: Outfit, taxonomy: WardrobeTaxonomy, availableCutouts: Set<UUID>) throws {
         let ids = draft.slots.compactMap(\.itemID)
         guard Set(ids).count == ids.count else { throw OutfitError.duplicateItem }
-        guard ids.count >= 2 else { throw OutfitError.tooFewItems }
         let previous = outfits.first { $0.id == draft.id }
+        guard ids.count >= 2 || previous?.slots == draft.slots else { throw OutfitError.tooFewItems }
         for slot in draft.slots {
             guard let itemID = slot.itemID else { continue }
             guard let item = items.first(where: { $0.id == itemID }) else { throw OutfitError.unavailableItem }
@@ -145,6 +145,10 @@ extension WardrobeCatalog {
         saved.name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         if let index = outfits.firstIndex(where: { $0.id == draft.id }) { outfits[index] = saved }
         else { outfits.insert(saved, at: 0) }
+    }
+
+    mutating func removeOutfit(_ id: UUID) {
+        outfits.removeAll { $0.id == id }
     }
 
     mutating func removeItem(_ id: UUID) {
