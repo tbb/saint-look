@@ -142,6 +142,59 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testMissingBodyLayerOpensItsPickerDirectlyAndCancelPreservesTheLook() async throws {
+        let app = launch(reset: true)
+        for count in 1...2 {
+            tap(app.buttons["add-demo-photo"], in: app)
+            await summary(app, ready: count, pending: 0)
+        }
+        app.tabBars.buttons["Луки"].tap()
+        app.buttons["create-first-outfit"].tap()
+        tap(button(prefix: "outfit-slot-body-", in: app), in: app)
+        chooseCandidate(button(prefix: "outfit-candidate-", in: app), in: app)
+        tap(app.buttons["add-body-layer"], in: app)
+        let secondLayer = app.buttons.matching(NSPredicate(format:
+            "identifier BEGINSWITH 'outfit-slot-body-' AND label BEGINSWITH 'Тело · слой 2'")).firstMatch
+        tap(secondLayer, in: app)
+        chooseCandidate(button(prefix: "outfit-candidate-", in: app), in: app)
+        XCTAssertTrue(app.buttons["save-outfit"].isEnabled)
+        app.buttons["save-outfit"].tap()
+        let card = button(prefix: "outfit-card-", in: app)
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        let cardID = card.identifier
+
+        app.tabBars.buttons["Гардероб"].tap()
+        deleteFirstItem(in: app)
+        await summary(app, ready: 1, pending: 0)
+        let before = try await activityCounts()
+        app.tabBars.buttons["Луки"].tap()
+        app.buttons[cardID].tap()
+        let missingLayer = button(prefix: "repair-slot-", in: app)
+        guard reveal(missingLayer, in: app) else { return }
+        let missingLayerID = missingLayer.identifier
+        missingLayer.tap()
+
+        XCTAssertTrue(app.navigationBars["Тело"].waitForExistence(timeout: 5),
+                      "Replacing a deleted body layer must open that zone's picker directly")
+        XCTAssertTrue(app.buttons["cancel-outfit-picker"].exists)
+        XCTAssertFalse(app.buttons["save-outfit"].exists, "Repair must not begin in the general editor")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format:
+            "identifier BEGINSWITH 'outfit-candidate-'")).count, 0,
+                       "The surviving thing is already used by the other layer")
+        capture("outfit-targeted-replacement-empty")
+        app.buttons["cancel-outfit-picker"].tap()
+        XCTAssertTrue(app.buttons["edit-outfit"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons[missingLayerID].exists, "Cancelling must leave the original missing layer unchanged")
+        let after = try await activityCounts()
+        XCTAssertEqual(after, before, "Opening and cancelling repair must not upload photos or call AI")
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.buttons[cardID].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-'")).count, 1)
+        XCUIDevice.shared.press(.home)
+        app.terminate()
+    }
+
+    @MainActor
     func testCreateUnnamedOutfitSurvivesBackgroundResultOfflineRestartAndItemDeletion() async throws {
         let app = launch(reset: true)
         app.buttons["add-demo-photo"].tap()
