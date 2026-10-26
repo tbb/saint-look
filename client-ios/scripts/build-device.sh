@@ -12,7 +12,7 @@ xcodebuild -quiet \
 app="$build/Build/Products/Release-iphoneos/SaintLook.app"
 test -f "$app/SaintLook"
 xcrun vtool -show-build "$app/SaintLook" | grep -q 'platform IOS$'
-xcrun lipo -verify_arch arm64 "$app/SaintLook"
+xcrun lipo "$app/SaintLook" -verify_arch arm64
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   printf 'app=%s\n' "$app" >> "$GITHUB_OUTPUT"
 fi
