@@ -60,6 +60,9 @@ struct OutfitDetailView: View {
     @ObservedObject var store: WardrobeStore
     let outfitID: UUID
     @State private var repairing = false
+    @State private var confirmingDeletion = false
+    @State private var deletionError: String?
+    @Environment(\.dismiss) private var dismiss
 
     private var outfit: Outfit? { store.outfits.first { $0.id == outfitID } }
 
@@ -79,6 +82,33 @@ struct OutfitDetailView: View {
                 }
                 .navigationTitle(outfit.displayName)
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Изменить") { repairing = true }
+                            .accessibilityIdentifier("edit-outfit")
+                    }
+                    ToolbarItem(placement: .bottomBar) {
+                        Button("Удалить лук", role: .destructive) { confirmingDeletion = true }
+                            .accessibilityIdentifier("delete-outfit")
+                    }
+                }
+                .confirmationDialog("Удалить лук? Вещи останутся в гардеробе.", isPresented: $confirmingDeletion, titleVisibility: .visible) {
+                    Button("Удалить лук", role: .destructive) {
+                        do {
+                            try store.deleteOutfit(outfitID)
+                            dismiss()
+                        } catch {
+                            deletionError = "Не удалось удалить лук с устройства. Он сохранён — попробуйте ещё раз."
+                        }
+                    }.accessibilityIdentifier("confirm-delete-outfit")
+                    Button("Отмена", role: .cancel) { }
+                        .accessibilityIdentifier("cancel-delete-outfit")
+                }
+                .alert("Лук не удалён", isPresented: Binding(get: { deletionError != nil }, set: { if !$0 { deletionError = nil } })) {
+                    Button("Понятно", role: .cancel) { deletionError = nil }
+                } message: {
+                    Text(deletionError ?? "")
+                }
                 .sheet(isPresented: $repairing) {
                     OutfitEditorView(store: store, draft: outfit)
                 }
@@ -95,6 +125,17 @@ struct OutfitEditorView: View {
     @State private var choosingSlot: OutfitSlot?
     @State private var errorMessage: String?
     @State private var saving = false
+    @State private var initial: Outfit
+    @State private var confirmingDiscard = false
+
+    init(store: WardrobeStore, draft: Outfit) {
+        self.store = store
+        _draft = State(initialValue: draft)
+        _initial = State(initialValue: draft)
+    }
+
+    private var dirty: Bool { draft != initial }
+    private var editingExisting: Bool { store.outfits.contains { $0.id == draft.id } }
 
     var body: some View {
         NavigationStack {
@@ -150,7 +191,9 @@ struct OutfitEditorView: View {
                     }
                 }
                 Section {
-                    Text("Для сохранения выберите хотя бы две разные вещи. Остальные зоны можно оставить пустыми.")
+                    Text(editingExisting && draft.selectedIDs.count < 2
+                         ? "Название можно изменить сейчас. Для изменения состава выберите хотя бы две разные вещи."
+                         : "Для сохранения выберите хотя бы две разные вещи. Остальные зоны можно оставить пустыми.")
                         .font(.footnote).foregroundStyle(.secondary)
                     if let errorMessage {
                         Text(errorMessage).foregroundStyle(.red)
@@ -158,17 +201,26 @@ struct OutfitEditorView: View {
                     }
                 }
             }
-            .navigationTitle("Собрать лук")
+            .navigationTitle(editingExisting ? "Изменить лук" : "Собрать лук")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { dismiss() }.accessibilityIdentifier("cancel-outfit")
+                    Button("Отмена") {
+                        if dirty { confirmingDiscard = true } else { dismiss() }
+                    }.accessibilityIdentifier("cancel-outfit")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Сохранить") { save() }
-                        .disabled(draft.selectedIDs.count < 2 || saving || !store.storageAvailable)
+                        .disabled(!dirty || !store.canSaveOutfit(draft) || saving || !store.storageAvailable)
                         .accessibilityIdentifier("save-outfit")
                 }
+            }
+            .interactiveDismissDisabled(dirty)
+            .confirmationDialog("Отбросить изменения?", isPresented: $confirmingDiscard, titleVisibility: .visible) {
+                Button("Отбросить изменения", role: .destructive) { dismiss() }
+                    .accessibilityIdentifier("discard-outfit-changes")
+                Button("Продолжить редактирование", role: .cancel) { }
+                    .accessibilityIdentifier("continue-outfit-editing")
             }
             .sheet(item: $choosingSlot) { slot in
                 OutfitPickerView(store: store, zone: slot.zone,
@@ -178,7 +230,10 @@ struct OutfitEditorView: View {
                 }
             }
             .onChange(of: store.items.map(\.id)) { old, current in
-                for id in Set(old).subtracting(current) { draft = draft.removingItem(id) }
+                for id in Set(old).subtracting(current) {
+                    draft = draft.removingItem(id)
+                    initial = initial.removingItem(id)
+                }
             }
         }
     }

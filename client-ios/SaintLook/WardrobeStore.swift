@@ -199,6 +199,19 @@ final class WardrobeStore: ObservableObject {
         }.sorted { $0.id.uuidString < $1.id.uuidString }
     }
 
+    func canSaveOutfit(_ draft: Outfit) -> Bool {
+        var updated = catalog
+        let cutouts = Set(items.filter { $0.resultFilename != nil && displayImage(for: $0) != nil }.map(\.id))
+        return (try? updated.saveOutfit(draft, taxonomy: .shared, availableCutouts: cutouts)) != nil
+    }
+
+    func deleteOutfit(_ id: UUID) throws {
+        var updated = catalog
+        updated.removeOutfit(id)
+        try persist(items, outfits: updated.outfits)
+        outfits = updated.outfits
+    }
+
     func saveOutfit(_ draft: Outfit) throws {
         var updated = catalog
         let cutouts = Set(items.filter { $0.resultFilename != nil && displayImage(for: $0) != nil }.map(\.id))
