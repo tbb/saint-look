@@ -206,7 +206,7 @@ jobs:
         run: |
           mkdir -p client-ios/build/screenshots
           for evidence in client-ios/build/*-profile.json client-ios/build/*-devices.json; do
-            [[ -f "$evidence" ]] && cp "$evidence" client-ios/build/screenshots/
+            if [[ -f "$evidence" ]]; then cp "$evidence" client-ios/build/screenshots/; fi
           done
           for result in client-ios/build/*.xcresult; do
             [[ -d "$result" ]] || continue

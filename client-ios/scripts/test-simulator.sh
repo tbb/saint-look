@@ -8,6 +8,16 @@ if ! command -v xcodebuild >/dev/null || ! command -v xcrun >/dev/null; then
   echo "Simulator tests require macOS with Xcode and an installed iOS Simulator runtime." >&2
   exit 1
 fi
+if [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" ]]; then
+  case "$SAINT_LOOK_VISUAL_PROFILE" in
+    iphone-light|iphone-dark|iphone-max-text|ipad-light) ;;
+    *) echo 'Unknown visual profile' >&2; exit 1 ;;
+  esac
+  if [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" == 1 || "${SAINT_LOOK_LIVE_TRIAL:-0}" == 1 ]]; then
+    echo 'Visual fixtures cannot run with remote or live trials' >&2
+    exit 1
+  fi
+fi
 xcodebuild -version
 work_directory="$(mktemp -d)"
 recording_pid=''
@@ -34,15 +44,21 @@ cleanup() {
   fi
   if [[ -n "$previous_appearance" ]]; then
     xcrun simctl ui "$simulator_id" appearance "$previous_appearance" || test_status=1
+    [[ "$(xcrun simctl ui "$simulator_id" appearance)" == "$previous_appearance" ]] || test_status=1
+    echo "Restored Simulator appearance: $previous_appearance"
   fi
   if [[ -n "$previous_content_size" ]]; then
     xcrun simctl ui "$simulator_id" content_size "$previous_content_size" || test_status=1
+    [[ "$(xcrun simctl ui "$simulator_id" content_size)" == "$previous_content_size" ]] || test_status=1
+    echo "Restored Simulator Dynamic Type: $previous_content_size"
   fi
   if [[ -n "$remote_manifest" ]]; then rm -f "$remote_manifest"; fi
   rm -rf "$work_directory"
   exit "$test_status"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 simulator_id="${SAINT_LOOK_SIMULATOR_UDID:-}"
 if [[ -z "$simulator_id" ]]; then
   # CoreSimulator may still be discovering preinstalled devices on a fresh runner.
@@ -99,11 +115,25 @@ mkdir -p build
 if [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" ]]; then
   xcrun simctl list devices available --json > "build/${SAINT_LOOK_VISUAL_PROFILE}-devices.json"
   python3 - "$simulator_id" <<'VISUAL_EVIDENCE'
-import json, os, subprocess, sys
+import hashlib, json, os, subprocess, sys
 from pathlib import Path
 profile = os.environ['SAINT_LOOK_VISUAL_PROFILE']
 assert profile in ('iphone-light', 'iphone-dark', 'iphone-max-text', 'ipad-light')
-evidence = dict(profile=profile, simulatorUDID=sys.argv[1],
+devices = json.loads(Path('build/' + profile + '-devices.json').read_text())['devices']
+selected = [(runtime, device) for runtime, entries in devices.items() for device in entries if device['udid'] == sys.argv[1]]
+assert len(selected) == 1 and selected[0][1]['name'].startswith('iPad' if profile == 'ipad-light' else 'iPhone')
+photos = json.loads(Path('SaintLook/TrialPhotos/manifest.json').read_text())['photos']
+hashes = {}
+for photo in photos:
+    path = Path('SaintLook/TrialPhotos') / photo['file']
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert digest == photo['sha256'], 'Public trial photo changed'
+    hashes[str(path)] = digest
+shoes = Path('SaintLook/VisualFixtures/shoes.png')
+hashes[str(shoes)] = hashlib.sha256(shoes.read_bytes()).hexdigest()
+assert hashes[str(shoes)] == 'df7642e0879b5a13a35cd46ca4da37173e95a6b32520f3c3c5975cebc75bd229'
+evidence = dict(profile=profile, simulatorUDID=sys.argv[1], model=selected[0][1]['name'], runtime=selected[0][0],
+    fixtureHashes=hashes, fixtureNote='Three original photos with backgrounds and one published Commons footwear cutout; not Photoroom output',
     revision=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
     xcode=subprocess.check_output(['xcodebuild', '-version'], text=True).strip(),
     appearance=subprocess.check_output(['xcrun', 'simctl', 'ui', sys.argv[1], 'appearance'], text=True).strip(),

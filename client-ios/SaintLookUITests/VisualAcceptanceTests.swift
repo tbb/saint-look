@@ -22,6 +22,7 @@ final class VisualAcceptanceTests: XCTestCase {
             "SAINT_LOOK_OWNER_TOKEN": "saint-look-ui-tests-owner-token-00000001",
             "SAINT_LOOK_UI_TESTING": "1", "SAINT_LOOK_RESET_DATA": reset ? "1" : "0",
             "SAINT_LOOK_VISUAL_SCENARIO": scenario]
+        XCUIDevice.shared.orientation = .portrait
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10), "Visual app must launch in foreground")
         return app
