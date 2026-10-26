@@ -1,4 +1,4 @@
-name: Read-only provider account check (temporary branch)
+name: Bounded provider probe (temporary branch)
 
 on:
   workflow_dispatch:
@@ -158,7 +158,7 @@ jobs:
           PY
 
   provider-account-check:
-    if: github.ref == 'refs/heads/codex/provider-account-check' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    if: inputs.run_trial == false && github.ref == 'refs/heads/codex/provider-account-check' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
@@ -174,3 +174,30 @@ jobs:
           PHOTOROOM_API_KEY: ${{ secrets.PHOTOROOM_API_KEY }}
           PHOTOROOM_SANDBOX_API_KEY: ${{ secrets.PHOTOROOM_SANDBOX_API_KEY }}
         run: node scripts/providers/probe.mjs
+
+  provider-photo-check:
+    if: inputs.run_trial && github.ref == 'refs/heads/codex/provider-account-check' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - run: npm --prefix backend ci --ignore-scripts
+      - name: Two approved public photos, no automatic retry
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          PHOTOROOM_API_KEY: ${{ secrets.PHOTOROOM_API_KEY }}
+          PHOTOROOM_SANDBOX_API_KEY: ${{ secrets.PHOTOROOM_SANDBOX_API_KEY }}
+          PHOTOROOM_API_OPT_OUT_CONFIRMED: 'true'
+        run: node scripts/providers/probe-photos.mjs
+      - name: Preserve public-photo results and provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: provider-probe-results
+          path: provider-results/
+          retention-days: 7
