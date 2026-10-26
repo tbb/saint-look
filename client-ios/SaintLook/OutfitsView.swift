@@ -146,51 +146,8 @@ struct OutfitEditorView: View {
                 }
                 ForEach(draft.slots) { slot in
                     Section(outfitSlotTitle(slot, in: draft)) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            OutfitSlotContent(store: store, slot: slot)
-                            if slot.itemID == nil && candidates(for: slot).isEmpty {
-                                Text("Нет доступных вещей для этой зоны. Нужны готовая вырезка и подходящий тип.")
-                                    .font(.footnote).foregroundStyle(.secondary)
-                            }
-                        }
-                        .contentShape(Rectangle())
-                        // A Button in a List can activate on release after a simultaneous drag.
-                        // TapGesture fails when the finger moves; the drag still coexists with scrolling.
-                        .onTapGesture { choosingSlot = slot }
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityAddTraits(.isButton)
-                        .accessibilityAction { choosingSlot = slot }
-                        .accessibilityIdentifier("outfit-slot-\(slot.zone.rawValue)-\(slot.id)")
-                        .accessibilityLabel("\(outfitSlotTitle(slot, in: draft)). \(itemLabel(slot))")
-                        .accessibilityValue(itemLabel(slot))
-                        .accessibilityHint("Нажмите для выбора. Смахните влево или вправо, чтобы сменить вещь.")
-                        .accessibilityAction(named: Text("Следующая вещь")) { cycle(slot.id, forward: true) }
-                        .accessibilityAction(named: Text("Предыдущая вещь")) { cycle(slot.id, forward: false) }
-                        .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { value in
-                            let horizontal = value.translation.width
-                            guard abs(horizontal) > 40, abs(horizontal) > abs(value.translation.height) * 1.3 else { return }
-                            cycle(slot.id, forward: horizontal < 0)
-                        })
-                        if slot.itemID != nil || slot.needsReplacement {
-                            Button("Очистить", role: .destructive) { select(nil, for: slot.id) }
-                                .accessibilityLabel("Очистить: \(outfitSlotTitle(slot, in: draft))")
-                                .accessibilityIdentifier("clear-slot-\(slot.id)")
-                        }
-                        if slot.zone == .body {
-                            Button("Убрать слой", role: .destructive) {
-                                draft.removeBodyLayer(slot.id)
-                                errorMessage = nil
-                            }
-                            .accessibilityLabel("Убрать: \(outfitSlotTitle(slot, in: draft))")
-                            .accessibilityIdentifier("remove-body-layer-\(slot.id)")
-                            if slot.id == draft.slots.reversed().first(where: { $0.zone == .body })?.id {
-                                Button("Добавить слой", systemImage: "plus") {
-                                    draft.addBodyLayer()
-                                    errorMessage = nil
-                                }
-                                .accessibilityIdentifier("add-body-layer")
-                            }
-                        }
+                        slotSelection(slot)
+                        slotControls(slot)
                     }
                 }
                 Section {
@@ -206,18 +163,7 @@ struct OutfitEditorView: View {
             }
             .navigationTitle(editingExisting ? "Изменить лук" : "Собрать лук")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") {
-                        if dirty { confirmingDiscard = true } else { dismiss() }
-                    }.accessibilityIdentifier("cancel-outfit")
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Сохранить") { save() }
-                        .disabled(!dirty || !store.canSaveOutfit(draft) || saving || !store.storageAvailable)
-                        .accessibilityIdentifier("save-outfit")
-                }
-            }
+            .toolbar { editorToolbar }
             .interactiveDismissDisabled(dirty)
             .confirmationDialog("Отбросить изменения?", isPresented: $confirmingDiscard, titleVisibility: .visible) {
                 Button("Отбросить изменения", role: .destructive) { dismiss() }
@@ -238,6 +184,80 @@ struct OutfitEditorView: View {
                     initial = initial.removingItem(id)
                 }
             }
+        }
+    }
+
+    private func slotContent(_ slot: OutfitSlot) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            OutfitSlotContent(store: store, slot: slot)
+            if slot.itemID == nil && candidates(for: slot).isEmpty {
+                Text("Нет доступных вещей для этой зоны. Нужны готовая вырезка и подходящий тип.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func slotSelection(_ slot: OutfitSlot) -> some View {
+        slotContent(slot)
+            .contentShape(Rectangle())
+            // A Button in a List can activate on release after a simultaneous drag.
+            // TapGesture fails when the finger moves; the drag still coexists with scrolling.
+            .onTapGesture { choosingSlot = slot }
+            .simultaneousGesture(slotDrag(slot.id))
+            .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { choosingSlot = slot }
+            .accessibilityIdentifier("outfit-slot-\(slot.zone.rawValue)-\(slot.id)")
+            .accessibilityLabel("\(outfitSlotTitle(slot, in: draft)). \(itemLabel(slot))")
+            .accessibilityValue(itemLabel(slot))
+            .accessibilityHint("Нажмите для выбора. Смахните влево или вправо, чтобы сменить вещь.")
+            .accessibilityAction(named: Text("Следующая вещь")) { cycle(slot.id, forward: true) }
+            .accessibilityAction(named: Text("Предыдущая вещь")) { cycle(slot.id, forward: false) }
+    }
+
+    private func slotDrag(_ slotID: UUID) -> some Gesture {
+        DragGesture(minimumDistance: 24).onEnded { value in
+            let horizontal = value.translation.width
+            guard abs(horizontal) > 40, abs(horizontal) > abs(value.translation.height) * 1.3 else { return }
+            cycle(slotID, forward: horizontal < 0)
+        }
+    }
+
+    @ViewBuilder
+    private func slotControls(_ slot: OutfitSlot) -> some View {
+        if slot.itemID != nil || slot.needsReplacement {
+            Button("Очистить", role: .destructive) { select(nil, for: slot.id) }
+                .accessibilityLabel("Очистить: \(outfitSlotTitle(slot, in: draft))")
+                .accessibilityIdentifier("clear-slot-\(slot.id)")
+        }
+        if slot.zone == .body {
+            Button("Убрать слой", role: .destructive) {
+                draft.removeBodyLayer(slot.id)
+                errorMessage = nil
+            }
+            .accessibilityLabel("Убрать: \(outfitSlotTitle(slot, in: draft))")
+            .accessibilityIdentifier("remove-body-layer-\(slot.id)")
+            if slot.id == draft.slots.reversed().first(where: { $0.zone == .body })?.id {
+                Button("Добавить слой", systemImage: "plus") {
+                    draft.addBodyLayer()
+                    errorMessage = nil
+                }
+                .accessibilityIdentifier("add-body-layer")
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var editorToolbar: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) {
+            Button("Отмена") {
+                if dirty { confirmingDiscard = true } else { dismiss() }
+            }.accessibilityIdentifier("cancel-outfit")
+        }
+        ToolbarItem(placement: .confirmationAction) {
+            Button("Сохранить") { save() }
+                .disabled(!dirty || !store.canSaveOutfit(draft) || saving || !store.storageAvailable)
+                .accessibilityIdentifier("save-outfit")
         }
     }
 
