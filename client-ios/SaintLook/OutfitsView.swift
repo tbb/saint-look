@@ -308,7 +308,6 @@ private struct OutfitComposition: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .accessibilityIdentifier("outfit-content-\(slot.id)")
             }
         }
         .padding(compact ? 16 : 24)
