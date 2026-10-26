@@ -184,5 +184,43 @@ struct OutfitCoreChecks {
         precondition(!OutfitZone.allCases.contains { $0.accepts(corrected, taxonomy: taxonomy) })
         print("PASS: effective type and excluded categories control new choices")
 
+        // Renaming a saved look remains possible after wardrobe deletions.
+        var editing = WardrobeCatalog(items: [shirt, jeans], outfits: [outfit])
+        editing.removeItem(jeansID)
+        var incomplete = editing.outfits[0]
+        incomplete.name = "  На прогулку  "
+        try editing.saveOutfit(incomplete, taxonomy: taxonomy, availableCutouts: [shirtID])
+        precondition(editing.outfits[0].name == "На прогулку")
+        precondition(editing.outfits[0].id == outfit.id)
+        editing.removeItem(shirtID)
+        var emptyRename = editing.outfits[0]
+        emptyRename.name = ""
+        try editing.saveOutfit(emptyRename, taxonomy: taxonomy, availableCutouts: [])
+        precondition(editing.outfits[0].displayName == "Лук без названия")
+        var changedEmpty = editing.outfits[0]
+        changedEmpty.addBodyLayer()
+        do {
+            try editing.saveOutfit(changedEmpty, taxonomy: taxonomy, availableCutouts: [])
+            fatalError("A changed incomplete composition must not save")
+        } catch OutfitError.tooFewItems { }
+        precondition(editing.outfits[0].slots == emptyRename.slots)
+        try file.save(editing)
+        let renamedRestored = try file.load()
+        precondition(renamedRestored.outfits.count == 1)
+        precondition(renamedRestored.outfits[0].selectedIDs.isEmpty)
+        print("PASS: incomplete and empty looks can rename, composition changes still require two things")
+
+        let other = Outfit(name: "Второй", slots: outfit.slots)
+        var deletion = WardrobeCatalog(items: [shirt, jeans], pendingDeletionIDs: [deletedID],
+            pendingAcknowledgements: [ack], outfits: [outfit, other])
+        deletion.removeOutfit(outfit.id)
+        try file.save(deletion)
+        let deletedRestored = try file.load()
+        precondition(deletedRestored.outfits == [other])
+        precondition(deletedRestored.items.map(\.id) == [shirtID, jeansID])
+        precondition(deletedRestored.pendingDeletionIDs == [deletedID])
+        precondition(deletedRestored.pendingAcknowledgements == [ack])
+        print("PASS: deleting one look preserves its shared things, other looks and offline queues")
+
     }
 }
