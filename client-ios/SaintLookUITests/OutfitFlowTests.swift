@@ -187,6 +187,7 @@ final class OutfitFlowTests: XCTestCase {
         let card = button(prefix: "outfit-card-", in: app)
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         let cardID = card.identifier
+        capture("outfit-06-multilayer-collection")
         try await control("offline")
         XCUIDevice.shared.press(.home)
         app.terminate()
@@ -326,6 +327,77 @@ final class OutfitFlowTests: XCTestCase {
         await summary(restored, ready: 1, pending: 0)
         XCUIDevice.shared.press(.home)
         restored.terminate()
+    }
+
+    /// The public transport/provider counters observe real requests without inspecting Store internals.
+    private func activityCounts() async throws -> [String: Int] {
+        var counts: [String: Int] = [:]
+        let endpoints = [
+            ("http://127.0.0.1:8788/__control", "saint-look-ui-control-test-token-00000001", ["forwardedUploads", "acceptedOperations"]),
+            ("http://127.0.0.1:8789/__control", "saint-look-ui-provider-control-token-00000001", ["attributesCalls", "cutoutCalls"]),
+        ]
+        for (address, credential, keys) in endpoints {
+            var request = URLRequest(url: URL(string: address)!)
+            request.timeoutInterval = 5
+            request.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            let state = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            for key in keys { counts[key] = try XCTUnwrap(state[key] as? Int) }
+        }
+        return counts
+    }
+
+    @MainActor
+    func testOutfitActionsStayLocalAndAccessibleWithoutSwipes() async throws {
+        let app = launch(reset: true)
+        for count in 1...2 {
+            tap(app.buttons["add-demo-photo"], in: app)
+            await summary(app, ready: count, pending: 0)
+        }
+        // Keep the transport ONLINE: an offline proxy would hide attempted uploads.
+        let before = try await activityCounts()
+        app.tabBars.buttons["Луки"].tap()
+        tap(app.buttons["create-first-outfit"], in: app)
+        let first = button(prefix: "outfit-slot-body-", in: app)
+        tap(first, in: app)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-' ")).count, 2)
+        tap(button(prefix: "outfit-candidate-", in: app), in: app)
+        XCTAssertFalse(app.buttons["save-outfit"].isEnabled)
+        tap(app.buttons["add-body-layer"], in: app)
+        let second = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-slot-body-' AND label BEGINSWITH 'Тело · слой 2' ")).firstMatch
+        tap(second, in: app)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-' ")).count, 1)
+        tap(button(prefix: "outfit-candidate-", in: app), in: app)
+        XCTAssertTrue(app.buttons["save-outfit"].isEnabled)
+        capture("outfit-08-accessible-layers")
+        app.buttons["save-outfit"].tap()
+        let card = button(prefix: "outfit-card-", in: app)
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        let cardID = card.identifier
+        capture("outfit-09-accessible-collection")
+        tap(card, in: app)
+        app.buttons["edit-outfit"].tap()
+        let name = app.textFields["outfit-name"]
+        tap(name, in: app)
+        name.typeText("На прогулку")
+        app.buttons["save-outfit"].tap()
+        XCTAssertTrue(app.navigationBars["На прогулку"].waitForExistence(timeout: 5))
+        app.buttons["delete-outfit"].tap()
+        app.sheets.buttons["Удалить лук"].tap()
+        XCTAssertTrue(app.buttons["create-first-outfit"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons[cardID].exists)
+        let after = try await activityCounts()
+        XCTAssertEqual(after, before, "Creating, opening, renaming and deleting looks must not upload photos or call AI")
+        let evidence = try JSONSerialization.data(withJSONObject: ["before": before, "after": after], options: [.prettyPrinted, .sortedKeys])
+        let attachment = XCTAttachment(data: evidence, uniformTypeIdentifier: "public.json")
+        attachment.name = "outfit-local-actions-provider-counts"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        app.tabBars.buttons["Гардероб"].tap()
+        await summary(app, ready: 2, pending: 0)
+        XCUIDevice.shared.press(.home)
+        app.terminate()
     }
 
     @MainActor
