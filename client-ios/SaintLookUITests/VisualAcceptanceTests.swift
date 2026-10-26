@@ -87,11 +87,23 @@ final class VisualAcceptanceTests: XCTestCase {
     }
 
     @MainActor
+    private func hasReachableNavigationControl(_ bar: XCUIElement, in app: XCUIApplication) -> Bool {
+        guard bar.exists, !bar.frame.intersection(app.frame).isEmpty else { return false }
+        // Background bars remain in AX under sheets. Their native actions are not hittable.
+        return bar.buttons.allElementsBoundByIndex.contains {
+            $0.exists && $0.isHittable && !$0.frame.intersection(bar.frame.intersection(app.frame)).isEmpty
+        }
+    }
+
+    @MainActor
     private func navigationBar(_ app: XCUIApplication) throws -> XCUIElement {
-        guard let bar = app.navigationBars.allElementsBoundByIndex.reversed().first(where: {
-            $0.exists && !$0.frame.intersection(app.frame).isEmpty
-        }) else {
-            diagnose("missing-foreground-navigation", app: app)
+        let bars = app.navigationBars.allElementsBoundByIndex.filter {
+            hasReachableNavigationControl($0, in: app)
+        }
+        guard bars.count == 1, let bar = bars.first else {
+            diagnose("missing-foreground-navigation", app: app,
+                     detail: "Expected one navigation bar with a reachable native action, found \(bars.count)")
+            try require(false, "The foreground navigation bar must be unambiguous")
             throw JourneyFailure.failed
         }
         return bar
@@ -101,7 +113,7 @@ final class VisualAcceptanceTests: XCTestCase {
     private func waitNavigation(_ title: String, in app: XCUIApplication) throws {
         let bar = app.navigationBars[title]
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            bar.exists && bar.identifier == title && !bar.frame.intersection(app.frame).isEmpty
+            bar.exists && bar.identifier == title && self.hasReachableNavigationControl(bar, in: app)
         }, object: bar)
         guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
             diagnose("unavailable-navigation", app: app, detail: "Expected destination: \(title)")
