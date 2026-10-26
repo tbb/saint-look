@@ -235,6 +235,11 @@ private struct ItemEditView: View {
     @State private var type: String
     @State private var colors: [String]
     @State private var error: String?
+    @State private var confirmingDiscard = false
+
+    private var dirty: Bool {
+        type != (item.displayedType ?? "") || Set(colors) != Set(item.displayedColors)
+    }
 
     init(store: WardrobeStore, item: WardrobeItem) {
         self.store = store
@@ -267,12 +272,22 @@ private struct ItemEditView: View {
             .navigationTitle("Тип и цвета")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { dismiss() }
+                    Button("Отмена") {
+                        if dirty { confirmingDiscard = true } else { dismiss() }
+                    }
+                    .accessibilityIdentifier("cancel-item-edits")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Сохранить") { save() }
                         .accessibilityIdentifier("save-item-edits")
                 }
+            }
+            .interactiveDismissDisabled(dirty)
+            .alert("Отбросить изменения?", isPresented: $confirmingDiscard) {
+                Button("Отбросить изменения", role: .destructive) { dismiss() }
+                    .accessibilityIdentifier("discard-item-changes")
+                Button("Продолжить редактирование", role: .cancel) { }
+                    .accessibilityIdentifier("continue-item-editing")
             }
         }
     }

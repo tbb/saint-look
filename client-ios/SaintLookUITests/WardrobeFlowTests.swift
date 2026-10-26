@@ -357,7 +357,7 @@ final class WardrobeFlowTests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
         keepEditing.tap()
-        XCTAssertTrue(app.buttons["choose-type"].label.contains("Рубашка"))
+        XCTAssertTrue(app.staticTexts["Рубашка"].exists)
         let header = app.navigationBars["Тип и цвета"]
         header.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05))
             .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
@@ -375,7 +375,7 @@ final class WardrobeFlowTests: XCTestCase {
         app.terminate()
         let restored = launch(reset: false, baseURL: testURL)
         try tapVisibleButton("edit-item", in: restored)
-        XCTAssertTrue(restored.buttons["choose-type"].label.contains("Рубашка"))
+        XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
         let after = try await transportState()
         XCTAssertEqual(after["forwardedUploads"] as? Int, before["forwardedUploads"] as? Int)
         XCTAssertEqual(after["acceptedOperations"] as? Int, before["acceptedOperations"] as? Int)
