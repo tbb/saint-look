@@ -294,6 +294,44 @@ final class VisualAcceptanceTests: XCTestCase {
     }
 
     @MainActor
+    private func removeBodyLayer(_ id: String, in app: XCUIApplication) throws {
+        let identifier = "remove-body-layer-\(id)"
+        let action = app.buttons[identifier]
+        try require(action.waitForExistence(timeout: 5), "The addressed layer-removal action must exist")
+        if action.isHittable && app.frame.contains(action.frame) {
+            try nativeTap(action, in: app)
+            return
+        }
+        // At maximum text size UIKit's menu collection extends beyond its clipped popup.
+        // Its smallest public Other ancestor supplies the real menu viewport.
+        for attempt in 0...4 {
+            let ancestors = app.otherElements.containing(.button, identifier: identifier).allElementsBoundByIndex
+                .filter { $0.exists && !$0.frame.intersection(app.frame).isEmpty }
+            guard let popup = ancestors.min(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
+                diagnose("missing-layer-menu-viewport", app: app)
+                try require(false, "The exact layer action must have a visible native menu ancestor")
+                return
+            }
+            let viewport = popup.frame.intersection(app.frame)
+            try require(viewport.width > 80 && viewport.height > 80, "Native menu viewport must allow scrolling")
+            if action.exists && action.isHittable && viewport.contains(action.frame) {
+                try nativeTap(action, in: app)
+                return
+            }
+            if attempt == 4 { break }
+            let start = popup.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: viewport.midX - popup.frame.minX,
+                                     dy: viewport.maxY - 16 - popup.frame.minY))
+            let end = start.withOffset(CGVector(dx: 0, dy: -viewport.height * 0.6))
+            let failures = testRun?.failureCount ?? 0
+            start.press(forDuration: 0.05, thenDragTo: end)
+            try requireEqual(testRun?.failureCount ?? 0, failures, "Native menu scroll failed")
+        }
+        diagnose("unreachable-layer-menu-action", app: app, detail: action.debugDescription)
+        try require(false, "The exact layer-removal action must become fully visible inside its menu")
+    }
+
+    @MainActor
     private func expectGone(_ element: XCUIElement, _ message: String, timeout: TimeInterval = 5) throws {
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
         let result = XCTWaiter.wait(for: [gone], timeout: timeout)
@@ -395,7 +433,7 @@ final class VisualAcceptanceTests: XCTestCase {
         try reveal(firstLayer, in: app, towardTop: true)
         try capture("05-multilayer-editor")
         try tap(app.buttons["outfit-slot-menu-\(secondID)"], in: app)
-        try nativeTap(app.buttons["remove-body-layer-\(secondID)"], in: app)
+        try removeBodyLayer(secondID, in: app)
         try require(!(second.exists))
         try nativeTap(app.buttons["save-outfit"], in: app)
         let outfit = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).firstMatch
