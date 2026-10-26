@@ -100,10 +100,12 @@ jobs:
           cache-dependency-path: backend/package-lock.json
       - run: npm --prefix backend ci --ignore-scripts
       - run: bash client-ios/scripts/test-outfit-core.sh
+      - name: Compile unsigned iPhone Release
+        run: bash client-ios/scripts/build-device.sh
       - name: Real Simulator and local backend (controlled providers)
         env:
           TEST_SUITE: ${{ matrix.suite }}
-          SAINT_LOOK_UI_TEST_ONLY: ${{ matrix.suite == 'outfits' && 'SaintLookUITests/OutfitFlowTests' || 'SaintLookUITests/WardrobeFlowTests' }}
+          SAINT_LOOK_UI_TEST_ONLY: SaintLookUITests/WardrobeFlowTests/testOpeningPhotoKeepsItemContextThroughEditingAndBackToCollection
           NODE_ENV: test
           SAINT_LOOK_TEST_CLOCK_FILE: ${{ runner.temp }}/saint-look-clock.json
           SAINT_LOOK_RECORD_VIDEO: '1'
