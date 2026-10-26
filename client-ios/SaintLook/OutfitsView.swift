@@ -146,17 +146,20 @@ struct OutfitEditorView: View {
                 }
                 ForEach(draft.slots) { slot in
                     Section(outfitSlotTitle(slot, in: draft)) {
-                        Button { choosingSlot = slot } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                OutfitSlotContent(store: store, slot: slot)
-                                if slot.itemID == nil && candidates(for: slot).isEmpty {
-                                    Text("Нет доступных вещей для этой зоны. Нужны готовая вырезка и подходящий тип.")
-                                        .font(.footnote).foregroundStyle(.secondary)
-                                }
+                        VStack(alignment: .leading, spacing: 8) {
+                            OutfitSlotContent(store: store, slot: slot)
+                            if slot.itemID == nil && candidates(for: slot).isEmpty {
+                                Text("Нет доступных вещей для этой зоны. Нужны готовая вырезка и подходящий тип.")
+                                    .font(.footnote).foregroundStyle(.secondary)
                             }
-                            .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .contentShape(Rectangle())
+                        // A Button in a List can activate on release after a simultaneous drag.
+                        // TapGesture fails when the finger moves; the drag still coexists with scrolling.
+                        .onTapGesture { choosingSlot = slot }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityAction { choosingSlot = slot }
                         .accessibilityIdentifier("outfit-slot-\(slot.zone.rawValue)-\(slot.id)")
                         .accessibilityLabel("\(outfitSlotTitle(slot, in: draft)). \(itemLabel(slot))")
                         .accessibilityValue(itemLabel(slot))
