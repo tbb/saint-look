@@ -32,7 +32,7 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func reveal(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication, towardTop: Bool = false) -> Bool {
         guard !app.keyboards.firstMatch.exists || element.elementType == .textField else {
             XCTFail("Finish name entry with Done before interacting with the constructor")
             return false
@@ -59,15 +59,15 @@ final class OutfitFlowTests: XCTestCase {
             if present, frame.midY > viewport.minY, frame.midY < viewport.maxY, element.isHittable {
                 return true
             }
-            let distance = present ? viewport.midY - frame.midY : -180
+            let distance = present ? viewport.midY - frame.midY : (towardTop ? 180 : -180)
             let movement = (distance < 0 ? -1.0 : 1.0) * min(180, max(100, abs(distance)))
             let start = app.coordinate(withNormalizedOffset: .zero)
                 .withOffset(CGVector(dx: viewport.midX, dy: viewport.midY))
             let end = start.withOffset(CGVector(dx: 0, dy: movement))
             start.press(forDuration: 0.05, thenDragTo: end)
         }
-        capture("unreachable-\(element.identifier)")
-        XCTFail("Could not reveal \(element); target frame \(lastFrame), content viewport \(lastViewport)")
+        capture("unreachable-outfit-control")
+        XCTFail("Could not reveal control; last target frame \(lastFrame), content viewport \(lastViewport), searching toward top: \(towardTop)")
         return false
     }
 
@@ -179,9 +179,11 @@ final class OutfitFlowTests: XCTestCase {
         await summary(offline, ready: 1, pending: 0)
         offline.tabBars.buttons["Луки"].tap()
         offline.buttons[savedCardID].tap()
-        tap(button(prefix: "repair-slot-", in: offline), in: offline)
-        XCTAssertFalse(offline.buttons["save-outfit"].isEnabled)
+        let missingSlot = button(prefix: "repair-slot-", in: offline)
+        guard reveal(missingSlot, in: offline) else { return }
         capture("outfit-03-missing-item")
+        missingSlot.tap()
+        XCTAssertFalse(offline.buttons["save-outfit"].isEnabled)
         offline.buttons["cancel-outfit"].tap()
         XCUIDevice.shared.press(.home)
         offline.terminate()
@@ -223,13 +225,16 @@ final class OutfitFlowTests: XCTestCase {
         let thirdID = third.identifier
         choose("Брюки", row: button(prefix: "outfit-slot-bottom-", in: app))
         // Scroll back to the first row without changing the selection.
-        _ = reveal(app.buttons[firstID], in: app)
+        guard reveal(app.buttons[firstID], in: app, towardTop: true) else { return }
         XCTAssertTrue(app.buttons[firstID].label.contains("Футболка"))
         app.buttons[firstID].swipeLeft()
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists)
         XCTAssertTrue(app.buttons[firstID].label.contains("Свитер"))
+        guard reveal(app.buttons[secondID], in: app) else { return }
         XCTAssertTrue(app.buttons[secondID].label.contains("Худи"))
+        guard reveal(app.buttons[thirdID], in: app) else { return }
         XCTAssertTrue(app.buttons[thirdID].label.contains("Куртка"))
+        guard reveal(app.buttons[firstID], in: app, towardTop: true) else { return }
         app.buttons[firstID].swipeLeft()
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists)
         XCTAssertTrue(app.buttons[firstID].label.contains("Футболка"))
