@@ -56,7 +56,6 @@ struct OutfitsView: View {
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityElement(children: .ignore)
                                 .accessibilityLabel(outfit.displayName)
                                 .accessibilityValue(compositionDescription(outfit))
                                 .accessibilityIdentifier("outfit-card-\(outfit.id)")
@@ -697,7 +696,6 @@ struct OutfitPickerView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityElement(children: .ignore)
         .accessibilityLabel(([item.displayedType ?? "Вещь"] + item.displayedColors).joined(separator: ", "))
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("outfit-candidate-\(item.id)")
