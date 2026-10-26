@@ -200,9 +200,7 @@ final class WardrobeStore: ObservableObject {
     }
 
     func canSaveOutfit(_ draft: Outfit) -> Bool {
-        var updated = catalog
-        let cutouts = Set(items.filter { $0.resultFilename != nil && displayImage(for: $0) != nil }.map(\.id))
-        return (try? updated.saveOutfit(draft, taxonomy: .shared, availableCutouts: cutouts)) != nil
+        (try? validatedCatalog(saving: draft)) != nil
     }
 
     func deleteOutfit(_ id: UUID) throws {
@@ -213,11 +211,19 @@ final class WardrobeStore: ObservableObject {
     }
 
     func saveOutfit(_ draft: Outfit) throws {
-        var updated = catalog
-        let cutouts = Set(items.filter { $0.resultFilename != nil && displayImage(for: $0) != nil }.map(\.id))
-        try updated.saveOutfit(draft, taxonomy: .shared, availableCutouts: cutouts)
+        let updated = try validatedCatalog(saving: draft)
         try persist(items, outfits: updated.outfits)
         outfits = updated.outfits
+    }
+
+    private func validatedCatalog(saving draft: Outfit) throws -> WardrobeCatalog {
+        var updated = catalog
+        let selectedIDs = draft.selectedIDs
+        let cutouts = Set(items.filter {
+            selectedIDs.contains($0.id) && $0.resultFilename != nil && displayImage(for: $0) != nil
+        }.map(\.id))
+        try updated.saveOutfit(draft, taxonomy: .shared, availableCutouts: cutouts)
+        return updated
     }
 
     func resumePendingItems() {

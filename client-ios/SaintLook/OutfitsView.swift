@@ -59,7 +59,7 @@ struct OutfitsView: View {
 struct OutfitDetailView: View {
     @ObservedObject var store: WardrobeStore
     let outfitID: UUID
-    @State private var repairing = false
+    @State private var showingEditor = false
     @State private var confirmingDeletion = false
     @State private var deletionError: String?
     @Environment(\.dismiss) private var dismiss
@@ -74,7 +74,7 @@ struct OutfitDetailView: View {
                         Section(outfitSlotTitle(slot, in: outfit)) {
                             OutfitSlotContent(store: store, slot: slot)
                             if slot.needsReplacement {
-                                Button("Подобрать замену") { repairing = true }
+                                Button("Подобрать замену") { showingEditor = true }
                                     .accessibilityIdentifier("repair-slot-\(slot.id)")
                             }
                         }
@@ -84,7 +84,7 @@ struct OutfitDetailView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Изменить") { repairing = true }
+                        Button("Изменить") { showingEditor = true }
                             .accessibilityIdentifier("edit-outfit")
                     }
                     ToolbarItem(placement: .bottomBar) {
@@ -109,7 +109,7 @@ struct OutfitDetailView: View {
                 } message: {
                     Text(deletionError ?? "")
                 }
-                .sheet(isPresented: $repairing) {
+                .sheet(isPresented: $showingEditor) {
                     OutfitEditorView(store: store, draft: outfit)
                 }
             }
