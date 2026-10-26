@@ -5,146 +5,181 @@ import UIKit
 @MainActor
 struct WardrobeView: View {
     @ObservedObject var store: WardrobeStore
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showSettings = false
     @State private var importing = false
-    @State private var editingItem: WardrobeItem?
-    @State private var itemPendingDeletion: WardrobeItem?
     #if DEBUG
     @State private var trialImported = false
     #endif
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    if store.backendMode == .demo {
-                        Text("Тестовый режим: вырезка и признаки демонстрационные, AI не вызывается.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("demo-notice")
-                    } else {
-                        Text("Результат обработки сохранится на устройстве.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    Text("Всего: \(store.items.count). Готово: \(store.items.filter { $0.status == .ready }.count). Ожидают: \(store.items.filter { $0.status == .pending }.count).")
-                        .font(.footnote)
-                        .accessibilityIdentifier("wardrobe-summary")
-                    Text("Одна вещь на фото, не на человеке. Пара обуви — одна вещь; пиджак и брюки добавляйте отдельно.")
-                        .font(.footnote)
-                    if !store.isConnected {
-                        Button("Подключить локальный backend") { showSettings = true }
-                    }
-                    PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                        Label("Добавить фото", systemImage: "plus")
-                    }
-                    .accessibilityIdentifier("add-photo")
-                    .disabled(importing || !store.storageAvailable)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    collectionStatus
                     #if DEBUG
-                    if ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1",
-                       ProcessInfo.processInfo.environment["SAINT_LOOK_LIVE_TRIAL"] == "1" {
-                        Button("Добавить фото пробы") {
-                            do {
-                                let photo = try PhotoData.trialPhoto()
-                                trialImported = true
-                                store.addPhoto(photo)
-                            } catch { store.notice = "Не удалось прочитать фото пробы." }
-                        }
-                        .accessibilityIdentifier("add-trial-photo")
-                        .disabled(trialImported || !store.storageAvailable)
-                    } else {
-                        Button("Добавить тестовое фото") { store.addPhoto(PhotoData.demoPhoto()) }
-                            .accessibilityIdentifier("add-demo-photo")
-                            .disabled(!store.storageAvailable)
-                    }
+                    testPhotoActions
                     #endif
-                    if importing { ProgressView("Сохраняем фото…") }
-                }
-                if let notice = store.notice {
-                    Section {
-                        Text(notice).foregroundStyle(.red)
-                        Button("Понятно") { store.notice = nil }
+                    if store.items.isEmpty {
+                        ContentUnavailableView {
+                            Label {
+                                Text("Гардероб пока пуст").accessibilityIdentifier("wardrobe-empty")
+                            } icon: { Image(systemName: "tshirt") }
+                        } description: {
+                            Text("Добавьте фото одной вещи, не на человеке. Пара обуви — одна вещь.")
+                        } actions: {
+                            photoPicker
+                                .buttonStyle(.borderedProminent)
+                        }
+                        .padding(.vertical, 32)
+                    } else {
+                        LazyVGrid(columns: SaintLookStyle.columns(accessibilitySize: typeSize.isAccessibilitySize), spacing: 20) {
+                            ForEach(store.items) { item in
+                                NavigationLink(value: item.id) {
+                                    WardrobeItemTile(item: item, image: store.displayImage(for: item))
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityElement(children: .contain)
+                                .accessibilityIdentifier("wardrobe-item-\(item.id)")
+                                .accessibilityValue(item.status == .ready ? "Готово" : item.status == .pending ? "Обрабатывается" : "Ошибка обработки")
+                            }
+                        }
                     }
                 }
-                if store.items.isEmpty {
-                    ContentUnavailableView("Гардероб пока пуст", systemImage: "tshirt", description: Text("Добавьте фотографию своей вещи."))
-                }
-                ForEach(store.items) { item in
-                    Section {
-                        ItemCard(item: item, image: store.displayImage(for: item))
-                        Button("Изменить тип и цвета") { editingItem = item }
-                            .accessibilityIdentifier("edit-item")
-                            .disabled(!store.storageAvailable)
-                        ItemRecoveryActions(store: store, item: item)
-                        Button("Удалить вещь", role: .destructive) { itemPendingDeletion = item }
-                            .buttonStyle(.borderless)
-                            .accessibilityIdentifier("delete-item")
-                            .disabled(!store.storageAvailable)
-                    }
-                }
+                .padding(16)
+                .frame(maxWidth: SaintLookStyle.contentWidth)
+                .frame(maxWidth: .infinity)
             }
-            .navigationTitle("Saint Look")
+            .background(SaintLookStyle.canvas)
+            .navigationTitle("Гардероб")
+            .navigationDestination(for: UUID.self) { id in ItemDetailView(store: store, itemID: id) }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Настройки", systemImage: "gearshape") { showSettings = true }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                        .accessibilityLabel("Настройки")
+                        .accessibilityIdentifier("settings")
                 }
-            }
-            .alert("Удалить вещь?", isPresented: Binding(
-                get: { itemPendingDeletion != nil },
-                set: { if !$0 { itemPendingDeletion = nil } }
-            ), presenting: itemPendingDeletion) { item in
-                Button("Удалить вещь", role: .destructive) { store.deleteItem(item.id) }
-                    .accessibilityIdentifier("confirm-delete-item")
-                Button("Отмена", role: .cancel) { }
-                    .accessibilityIdentifier("cancel-delete-item")
-            } message: { _ in
-                Text("Вещь исчезнет из гардероба. В сохранённых луках её места останутся пустыми.")
+                ToolbarItem(placement: .topBarTrailing) {
+                    if !store.items.isEmpty { photoPicker.labelStyle(.iconOnly) }
+                }
             }
             .sheet(isPresented: $showSettings) { SettingsView(store: store) }
-            .sheet(item: $editingItem) { item in ItemEditView(store: store, item: item) }
             .onChange(of: selectedPhoto) { _, photo in
                 guard let photo else { return }
                 importing = true
                 Task {
                     defer { importing = false; selectedPhoto = nil }
                     do {
-                        guard let data = try await photo.loadTransferable(type: Data.self) else {
-                            throw ClientError.invalidPhoto
-                        }
+                        guard let data = try await photo.loadTransferable(type: Data.self) else { throw ClientError.invalidPhoto }
                         store.addPhoto(data)
-                    } catch {
-                        store.notice = "Не удалось получить фотографию. Выберите снимок ещё раз."
-                    }
+                    } catch { store.notice = "Не удалось получить фотографию. Выберите снимок ещё раз." }
                 }
             }
         }
     }
+
+    private var photoPicker: some View {
+        PhotosPicker(selection: $selectedPhoto, matching: .images) {
+            Label("Добавить фото", systemImage: "plus")
+        }
+        .accessibilityIdentifier("add-photo")
+        .disabled(importing || !store.storageAvailable)
+    }
+
+    private var collectionStatus: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            let pending = store.items.filter { $0.status == .pending }.count
+            let ready = store.items.filter { $0.status == .ready }.count
+            if !store.items.isEmpty {
+                Text(pending > 0 ? "\(itemCountTitle) · в обработке: \(pending)" : itemCountTitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Всего: \(store.items.count). Готово: \(ready). Ожидают: \(pending).")
+                    .accessibilityIdentifier("wardrobe-summary")
+            }
+            if store.backendMode == .demo {
+                Text("Демо · обработка без AI")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("demo-notice")
+            }
+            if !store.isConnected {
+                Button("Настроить обработку фото") { showSettings = true }
+                    .font(.subheadline)
+                    .accessibilityIdentifier("configure-processing")
+            }
+            if importing { ProgressView("Сохраняем фото…") }
+        }
+    }
+
+    private var itemCountTitle: String {
+        let count = store.items.count
+        let suffix = (11...14).contains(count % 100) ? "вещей" : count % 10 == 1 ? "вещь" : (2...4).contains(count % 10) ? "вещи" : "вещей"
+        return "\(count) \(suffix)"
+    }
+
+    #if DEBUG
+    @ViewBuilder private var testPhotoActions: some View {
+        if ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1" {
+            if ProcessInfo.processInfo.environment["SAINT_LOOK_LIVE_TRIAL"] == "1" {
+                Button("Добавить фото пробы") {
+                    do {
+                        let photo = try PhotoData.trialPhoto()
+                        trialImported = true
+                        store.addPhoto(photo)
+                    } catch { store.notice = "Не удалось прочитать фото пробы." }
+                }
+                .accessibilityIdentifier("add-trial-photo")
+                .disabled(trialImported || !store.storageAvailable)
+            } else if ProcessInfo.processInfo.environment["SAINT_LOOK_VISUAL_SCENARIO"] == nil {
+                Button("Добавить тестовое фото") { store.addPhoto(PhotoData.demoPhoto()) }
+                    .accessibilityIdentifier("add-demo-photo")
+                    .disabled(!store.storageAvailable)
+            }
+        }
+    }
+    #endif
 }
 
-private struct ItemCard: View {
+private struct WardrobeItemTile: View {
     let item: WardrobeItem
     let image: UIImage?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: 220)
-                    .accessibilityLabel("Фотография вещи")
-                    .accessibilityIdentifier("item-photo")
+        VStack(alignment: .leading, spacing: 8) {
+            GarmentPhoto(image: image).aspectRatio(0.85, contentMode: .fit)
+            if let type = item.displayedType {
+                Text(type).font(.headline).accessibilityIdentifier("item-type")
+            } else {
+                Text("Новая вещь").font(.headline)
             }
+            if !item.displayedColors.isEmpty {
+                Text(item.displayedColors.joined(separator: ", "))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("item-colors")
+            }
+            ItemProcessingStatus(item: item, compact: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct ItemProcessingStatus: View {
+    let item: WardrobeItem
+    var compact = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
             switch item.status {
             case .pending:
                 Text(item.uploadStarted ? "Обработка" : "Ожидает отправки")
                     .accessibilityIdentifier("pending-status")
             case .ready:
-                Text(item.mode == .demo ? "Готово · тестовый результат" : "Готово")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("ready-status")
+                if item.mode == .demo {
+                    Text("Тестовая вырезка")
+                        .accessibilityIdentifier("ready-status")
+                }
             case .failed:
                 Text("Не удалось обработать")
                     .foregroundStyle(.red)
@@ -152,78 +187,142 @@ private struct ItemCard: View {
             }
             if item.status != .ready, item.resultFilename != nil {
                 Text(item.resultMode == .demo
-                    ? "Пока показана предыдущая тестовая вырезка. Новая ещё не готова."
-                    : "Пока показана предыдущая вырезка. Новая ещё не готова.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                     ? "Пока показана предыдущая тестовая вырезка. Новая ещё не готова."
+                     : "Пока показана предыдущая вырезка. Новая ещё не готова.")
                     .accessibilityIdentifier("previous-result-notice")
             }
-            if let type = item.displayedType { Text(type).font(.headline).accessibilityIdentifier("item-type") }
-            if !item.displayedColors.isEmpty { Text(item.displayedColors.joined(separator: ", ")).accessibilityIdentifier("item-colors") }
             if let error = item.errorMessage {
-                Text(error).font(.footnote).foregroundStyle(.secondary)
+                Text(error)
+                    .lineLimit(compact ? 2 : nil)
                     .accessibilityIdentifier("item-error")
             }
         }
-        .padding(.vertical, 6)
+        .font(.footnote)
+        .foregroundStyle(.secondary)
     }
 }
 
 @MainActor
-private struct ItemRecoveryActions: View {
+private struct ItemDetailView: View {
     @ObservedObject var store: WardrobeStore
-    let item: WardrobeItem
-    @State private var showingOptions = false
+    let itemID: UUID
+    @Environment(\.dismiss) private var dismiss
+    @State private var editingItem: WardrobeItem?
+    @State private var confirmingDeletion = false
+    @State private var showingRecovery = false
+    @State private var showingPhotoPicker = false
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var importing = false
 
+    private var item: WardrobeItem? { store.items.first { $0.id == itemID } }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if item.status == .ready && !showingOptions {
-                Button("Проблема с вырезкой") { showingOptions = true }
-                    .accessibilityIdentifier("cutout-problem")
-            } else {
-                if ProcessingFailure.needsAnotherPhoto(item.errorCode) {
-                    Text("Замените снимок: на фото должна быть одна вещь вне человека.")
-                        .font(.footnote)
-                        .accessibilityIdentifier("replace-photo-hint")
-                } else if item.status != .pending {
-                    Button("Повторить обработку") { store.retryProcessing(item.id) }
-                        .accessibilityIdentifier("retry-processing")
+        Group {
+            if let item {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        GarmentPhoto(image: store.displayImage(for: item))
+                            .aspectRatio(1, contentMode: .fit)
+                        if !item.displayedColors.isEmpty {
+                            HStack(spacing: 6) {
+                                ForEach(item.displayedColors, id: \.self) { WardrobeColorSwatch(label: $0, size: 16) }
+                                Text(item.displayedColors.joined(separator: ", "))
+                                    .font(.subheadline)
+                                    .accessibilityIdentifier("item-colors")
+                            }
+                        }
+                        Button { editingItem = item } label: {
+                            Label("Изменить тип и цвета", systemImage: "slider.horizontal.3")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("edit-item")
+                        .disabled(!store.storageAvailable)
+                        ItemProcessingStatus(item: item)
+                        if item.status == .failed || showingRecovery { recovery(for: item) }
+                        if importing { ProgressView("Сохраняем фото…") }
+                    }
+                    .padding(16)
+                    .frame(maxWidth: 640)
+                    .frame(maxWidth: .infinity)
                 }
-                PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                    Label("Заменить фото", systemImage: "photo")
+                .background(SaintLookStyle.canvas)
+                .navigationTitle(item.displayedType ?? "Вещь")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) { actions(for: item) }
                 }
-                .accessibilityIdentifier("replace-photo")
-                #if DEBUG
-                Button("Заменить тестовым фото") {
-                    store.replacePhoto(item.id, with: PhotoData.demoPhoto(replacement: true))
+                .alert("Удалить вещь?", isPresented: $confirmingDeletion) {
+                    Button("Удалить вещь", role: .destructive) {
+                        store.deleteItem(itemID)
+                        if self.item == nil { dismiss() }
+                    }
+                    .accessibilityIdentifier("confirm-delete-item")
+                    Button("Отмена", role: .cancel) { }
+                        .accessibilityIdentifier("cancel-delete-item")
+                } message: {
+                    Text("Вещь исчезнет из гардероба. В сохранённых луках её места останутся пустыми.")
                 }
-                .accessibilityIdentifier("replace-demo-photo")
-                #endif
-                if importing { ProgressView("Сохраняем фото…") }
+                .onChange(of: item.operationID) { _, _ in showingRecovery = false }
             }
         }
-        // These controls share one List row. Automatic row buttons can trigger each other,
-        // including presenting PhotosPicker when the user taps retry or the debug photo.
-        .buttonStyle(.borderless)
-        .disabled(importing || !store.storageAvailable)
-        .onChange(of: item.operationID) { _, _ in showingOptions = false }
+        .sheet(item: $editingItem) { ItemEditView(store: store, item: $0) }
+        .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedPhoto, matching: .images)
         .onChange(of: selectedPhoto) { _, photo in
             guard let photo else { return }
             importing = true
             Task {
                 defer { importing = false; selectedPhoto = nil }
                 do {
-                    guard let data = try await photo.loadTransferable(type: Data.self) else {
-                        throw ClientError.invalidPhoto
-                    }
-                    store.replacePhoto(item.id, with: data)
-                } catch {
-                    store.notice = "Не удалось получить новое фото. Предыдущая карточка сохранена."
-                }
+                    guard let data = try await photo.loadTransferable(type: Data.self) else { throw ClientError.invalidPhoto }
+                    store.replacePhoto(itemID, with: data)
+                } catch { store.notice = "Не удалось получить новое фото. Предыдущая карточка сохранена." }
             }
         }
+    }
+
+    private func actions(for item: WardrobeItem) -> some View {
+        Menu {
+            Button("Заменить фото", systemImage: "photo") { showingPhotoPicker = true }
+                .accessibilityIdentifier("replace-photo")
+            if item.status == .ready {
+                Button("Проблема с вырезкой", systemImage: "questionmark.circle") { showingRecovery = true }
+                    .accessibilityIdentifier("cutout-problem")
+            }
+            if item.status != .pending && !ProcessingFailure.needsAnotherPhoto(item.errorCode) {
+                Button("Повторить обработку", systemImage: "arrow.clockwise") { store.retryProcessing(itemID) }
+                    .accessibilityIdentifier("retry-processing")
+            }
+            #if DEBUG
+            if ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1",
+               ProcessInfo.processInfo.environment["SAINT_LOOK_VISUAL_SCENARIO"] == nil {
+                Button("Заменить тестовым фото") { store.replacePhoto(itemID, with: PhotoData.demoPhoto(replacement: true)) }
+                    .accessibilityIdentifier("replace-demo-photo")
+            }
+            #endif
+            Divider()
+            Button("Удалить вещь", systemImage: "trash", role: .destructive) { confirmingDeletion = true }
+                .accessibilityIdentifier("delete-item")
+        } label: { Image(systemName: "ellipsis") }
+        .accessibilityLabel("Действия с вещью")
+        .accessibilityIdentifier("item-actions")
+        .disabled(importing || !store.storageAvailable)
+    }
+
+    @ViewBuilder private func recovery(for item: WardrobeItem) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if ProcessingFailure.needsAnotherPhoto(item.errorCode) {
+                Text("Замените снимок: на фото должна быть одна вещь вне человека.")
+                    .font(.footnote)
+                    .accessibilityIdentifier("replace-photo-hint")
+            } else if item.status != .pending {
+                Button("Повторить обработку") { store.retryProcessing(itemID) }
+                    .accessibilityIdentifier("retry-processing")
+            }
+            Button("Заменить фото") { showingPhotoPicker = true }
+                .accessibilityIdentifier("replace-photo")
+        }
+        .disabled(importing || !store.storageAvailable)
     }
 }
 
@@ -242,7 +341,7 @@ private struct ItemEditView: View {
     }
 
     private var invalidColors: Bool {
-        Set(colors) != Set(item.displayedColors) && !WardrobeTaxonomy.shared.contains(colors: colors)
+        !paletteIsValid(colors, comparedTo: item.displayedColors)
     }
 
     init(store: WardrobeStore, item: WardrobeItem) {
@@ -255,6 +354,12 @@ private struct ItemEditView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    GarmentPhoto(image: store.displayImage(for: item), accessibilityIdentifier: "editing-item-photo")
+                        .frame(height: 140)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                        .listRowBackground(Color.clear)
+                }
                 Section {
                     NavigationLink {
                         TypeSelectionView(selection: $type)
@@ -278,11 +383,13 @@ private struct ItemEditView: View {
                 if let error { Text(error).foregroundStyle(.red) }
             }
             .navigationTitle("Тип и цвета")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") {
+                    Button {
                         if dirty { confirmingDiscard = true } else { dismiss() }
-                    }
+                    } label: { Image(systemName: "xmark") }
+                    .accessibilityLabel("Отмена")
                     .accessibilityIdentifier("cancel-item-edits")
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -306,7 +413,7 @@ private struct ItemEditView: View {
         // Legacy labels are retained until the user explicitly replaces that field.
         let changedType = type != (item.displayedType ?? "")
         let changedColors = Set(colors) != Set(item.displayedColors)
-        guard !changedColors || WardrobeTaxonomy.shared.contains(colors: colors) else {
+        guard paletteIsValid(colors, comparedTo: item.displayedColors) else {
             error = "Выберите от одного до пяти цветов."
             return
         }
@@ -319,26 +426,48 @@ private struct ItemEditView: View {
     }
 }
 
+private func paletteIsValid(_ selection: [String], comparedTo original: [String]) -> Bool {
+    Set(selection) == Set(original) || WardrobeTaxonomy.shared.contains(colors: selection)
+}
+
 private struct TypeSelectionView: View {
     @Binding var selection: String
     @Environment(\.dismiss) private var dismiss
 
+    private let groups: [(String, [String])] = [
+        ("Верх", ["t_shirt", "polo", "shirt", "blouse", "top", "sweater", "cardigan", "sweatshirt", "hoodie", "vest", "blazer", "jacket", "coat", "raincoat"]),
+        ("Низ", ["jeans", "trousers", "shorts", "skirt"]),
+        ("Платья и комбинезоны", ["dress", "jumpsuit"]),
+        ("Обувь", ["sneakers", "shoes", "boots", "sandals", "slippers"]),
+        ("Аксессуары", ["bag", "headwear", "scarf", "belt", "gloves", "socks"]),
+        ("Другое", ["underwear", "swimwear", "unknown"])
+    ]
+
     var body: some View {
-        List(WardrobeTaxonomy.shared.types) { option in
-            Button {
-                selection = option.label
-                dismiss()
-            } label: {
-                HStack {
-                    Text(option.label)
-                    Spacer()
-                    if selection == option.label { Image(systemName: "checkmark") }
+        List {
+            ForEach(groups, id: \.0) { title, ids in
+                Section(title) {
+                    ForEach(WardrobeTaxonomy.shared.types.filter { ids.contains($0.id) }) { option in
+                        Button {
+                            selection = option.label
+                            dismiss()
+                        } label: {
+                            HStack {
+                                Text(option.label).foregroundStyle(.primary)
+                                Spacer()
+                                if selection == option.label { Image(systemName: "checkmark").fontWeight(.semibold) }
+                            }
+                            .frame(minHeight: 32)
+                            .contentShape(Rectangle())
+                        }
+                        .accessibilityIdentifier("type-\(option.id)")
+                        .accessibilityValue(selection == option.label ? "Выбран" : "Не выбран")
+                    }
                 }
             }
-            .accessibilityIdentifier("type-\(option.id)")
-            .accessibilityValue(selection == option.label ? "Выбран" : "Не выбран")
         }
         .navigationTitle("Тип вещи")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -359,8 +488,9 @@ private struct ColorSelectionView: View {
                         if selected { labels.remove(option.label) } else { labels.insert(option.label) }
                         selection = taxonomy.colors.filter { labels.contains($0.label) }.map(\.label)
                     } label: {
-                        HStack {
-                            Text(option.label)
+                        HStack(spacing: 12) {
+                            WardrobeColorSwatch(label: option.label)
+                            Text(option.label).foregroundStyle(.primary)
                             Spacer()
                             if selected { Image(systemName: "checkmark") }
                         }
@@ -378,6 +508,7 @@ private struct ColorSelectionView: View {
             }
         }
         .navigationTitle("Цвета")
+        .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {
             Text(invalidSelection ? "Выберите хотя бы один цвет." : "Готово применит выбор к черновику вещи.")
                 .font(.footnote)
@@ -397,7 +528,7 @@ private struct ColorSelectionView: View {
     }
 
     private var invalidSelection: Bool {
-        Set(selection) != Set(originalSelection) && !taxonomy.contains(colors: selection)
+        !paletteIsValid(selection, comparedTo: originalSelection)
     }
 
     private var canonicalSelectionCount: Int {
@@ -409,37 +540,77 @@ private struct ColorSelectionView: View {
 private struct SettingsView: View {
     @ObservedObject var store: WardrobeStore
     @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Label(store.isConnected ? "Подключение настроено" : "Нужна настройка подключения",
+                          systemImage: store.isConnected ? "checkmark.circle" : "network")
+                        .accessibilityIdentifier("connection-status")
+                    Text("Вещи и луки хранятся на этом устройстве. Интернет нужен для обработки новых фото.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    if store.backendMode == .demo {
+                        Text("Демонстрационный режим: вырезки и признаки тестовые, AI не вызывается.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                Section {
+                    NavigationLink("Параметры подключения") { ConnectionSettingsView(store: store) }
+                        .accessibilityIdentifier("connection-settings")
+                } footer: {
+                    Text("Настроенное подключение не означает, что сервер сейчас доступен.")
+                }
+            }
+            .navigationTitle("Настройки")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("Закрыть настройки")
+                        .accessibilityIdentifier("close-settings")
+                }
+            }
+        }
+    }
+}
+
+@MainActor
+private struct ConnectionSettingsView: View {
+    @ObservedObject var store: WardrobeStore
+    @Environment(\.dismiss) private var dismiss
     @State private var baseURL = ""
     @State private var token = ""
     @State private var error: String?
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("Локальный dev-backend") {
-                    TextField("Адрес backend", text: $baseURL)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .keyboardType(.URL)
-                    SecureField("Токен владельца", text: $token)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Text("Токен доступа к вашему backend сохраняется в Keychain. Ключи AI-провайдеров здесь не нужны.")
-                        .font(.footnote)
-                }
-                if let error { Text(error).foregroundStyle(.red) }
+        Form {
+            Section {
+                TextField("Адрес сервера", text: $baseURL)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .accessibilityIdentifier("backend-url")
+                SecureField("Токен владельца", text: $token)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .accessibilityIdentifier("owner-token")
+            } footer: {
+                Text("Токен хранится в защищённом хранилище устройства. Ключи сервисов обработки фото здесь не нужны.")
             }
-            .navigationTitle("Подключение")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Сохранить") {
-                        do {
-                            try store.saveSettings(ConnectionSettings(baseURL: baseURL, token: token))
-                            dismiss()
-                        } catch { self.error = error.localizedDescription }
-                    }
-                }
-            }
-            .onAppear { baseURL = store.settings.baseURL; token = store.settings.token }
+            if let error { Text(error).foregroundStyle(.red) }
         }
+        .navigationTitle("Подключение")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Сохранить") {
+                    do {
+                        try store.saveSettings(ConnectionSettings(baseURL: baseURL, token: token))
+                        dismiss()
+                    } catch { self.error = error.localizedDescription }
+                }
+                .accessibilityIdentifier("save-connection-settings")
+            }
+        }
+        .onAppear { baseURL = store.settings.baseURL; token = store.settings.token }
     }
 }

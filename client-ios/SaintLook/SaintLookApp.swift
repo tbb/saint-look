@@ -14,6 +14,8 @@ struct SaintLookApp: App {
                 OutfitsView(store: store)
                     .tabItem { Label("Луки", systemImage: "square.grid.2x2") }
             }
+                .tint(SaintLookStyle.accent)
+                .safeAreaInset(edge: .top, spacing: 0) { AppNoticeView(store: store) }
                 .task { store.resumePendingItems() }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { store.resumePendingItems() }
