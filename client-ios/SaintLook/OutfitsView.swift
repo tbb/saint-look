@@ -79,6 +79,7 @@ struct OutfitDetailView: View {
                             }
                         }
                     }
+                    Section { deleteAction }
                 }
                 .navigationTitle(outfit.displayName)
                 .navigationBarTitleDisplayMode(.inline)
@@ -87,22 +88,6 @@ struct OutfitDetailView: View {
                         Button("Изменить") { showingEditor = true }
                             .accessibilityIdentifier("edit-outfit")
                     }
-                    ToolbarItem(placement: .bottomBar) {
-                        Button("Удалить лук", role: .destructive) { confirmingDeletion = true }
-                            .accessibilityIdentifier("delete-outfit")
-                    }
-                }
-                .confirmationDialog("Удалить лук? Вещи останутся в гардеробе.", isPresented: $confirmingDeletion, titleVisibility: .visible) {
-                    Button("Удалить лук", role: .destructive) {
-                        do {
-                            try store.deleteOutfit(outfitID)
-                            dismiss()
-                        } catch {
-                            deletionError = "Не удалось удалить лук с устройства. Он сохранён — попробуйте ещё раз."
-                        }
-                    }.accessibilityIdentifier("confirm-delete-outfit")
-                    Button("Отмена", role: .cancel) { }
-                        .accessibilityIdentifier("cancel-delete-outfit")
                 }
                 .alert("Лук не удалён", isPresented: Binding(get: { deletionError != nil }, set: { if !$0 { deletionError = nil } })) {
                     Button("Понятно", role: .cancel) { deletionError = nil }
@@ -113,6 +98,27 @@ struct OutfitDetailView: View {
                     OutfitEditorView(store: store, draft: outfit)
                 }
             }
+        }
+    }
+    private var deleteAction: some View {
+        Button("Удалить лук", role: .destructive) { confirmingDeletion = true }
+            .accessibilityIdentifier("delete-outfit")
+            .alert("Удалить лук?", isPresented: $confirmingDeletion) {
+                Button("Удалить лук", role: .destructive) { delete() }
+                    .accessibilityIdentifier("confirm-delete-outfit")
+                Button("Отмена", role: .cancel) { }
+                    .accessibilityIdentifier("cancel-delete-outfit")
+            } message: {
+                Text("Вещи останутся в гардеробе.")
+            }
+    }
+
+    private func delete() {
+        do {
+            try store.deleteOutfit(outfitID)
+            dismiss()
+        } catch {
+            deletionError = "Не удалось удалить лук с устройства. Он сохранён — попробуйте ещё раз."
         }
     }
 }
@@ -165,7 +171,7 @@ struct OutfitEditorView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { editorToolbar }
             .interactiveDismissDisabled(dirty)
-            .confirmationDialog("Отбросить изменения?", isPresented: $confirmingDiscard, titleVisibility: .visible) {
+            .alert("Отбросить изменения?", isPresented: $confirmingDiscard) {
                 Button("Отбросить изменения", role: .destructive) { dismiss() }
                     .accessibilityIdentifier("discard-outfit-changes")
                 Button("Продолжить редактирование", role: .cancel) { }
