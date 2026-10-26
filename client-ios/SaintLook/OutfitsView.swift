@@ -352,11 +352,18 @@ struct OutfitPickerView: View {
 
 @MainActor
 struct OutfitSlotContent: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ObservedObject var store: WardrobeStore
     let slot: OutfitSlot
 
+    private var layout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
+            : AnyLayout(HStackLayout(spacing: 16))
+    }
+
     var body: some View {
-        HStack(spacing: 16) {
+        layout {
             OutfitThumbnail(store: store, slot: slot).frame(width: 80, height: 90)
             VStack(alignment: .leading, spacing: 5) {
                 if let item = store.items.first(where: { $0.id == slot.itemID }) {
@@ -368,7 +375,8 @@ struct OutfitSlotContent: View {
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
             }
-            Spacer(minLength: 0)
+            .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil, alignment: .leading)
+            if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
