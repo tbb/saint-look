@@ -43,7 +43,9 @@ final class VisualAcceptanceTests: XCTestCase {
 
     @MainActor
     private func openItem(_ index: Int, in app: XCUIApplication) {
-        tap(card(index, in: app), in: app)
+        let item = card(index, in: app)
+        guard reveal(item, in: app, towardTop: index == 0) else { return }
+        item.tap()
         XCTAssertTrue(app.buttons["item-actions"].waitForExistence(timeout: 5))
     }
 
