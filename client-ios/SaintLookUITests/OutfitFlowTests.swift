@@ -166,7 +166,12 @@ final class OutfitFlowTests: XCTestCase {
             app.navigationBars.buttons.element(boundBy: 0).tap()
             XCTAssertTrue(app.navigationBars["Гардероб"].waitForExistence(timeout: 5))
         }
-        for _ in 0..<4 where !app.staticTexts["wardrobe-summary"].isHittable { app.swipeDown() }
+        for _ in 0..<4 where !app.staticTexts["wardrobe-summary"].isHittable && !app.staticTexts["wardrobe-empty"].isHittable { app.swipeDown() }
+        if ready + pending == 0 {
+            XCTAssertTrue(app.staticTexts["wardrobe-empty"].waitForExistence(timeout: 40))
+            XCTAssertFalse(app.images["item-photo"].exists, "An empty collection must contain no garment photos")
+            return
+        }
         let predicate = NSPredicate(format: "label == %@", "Всего: \(ready + pending). Готово: \(ready). Ожидают: \(pending).")
         await fulfillment(of: [XCTNSPredicateExpectation(predicate: predicate, object: app.staticTexts["wardrobe-summary"])], timeout: 40)
     }
