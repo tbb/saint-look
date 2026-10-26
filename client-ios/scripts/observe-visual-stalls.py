@@ -46,7 +46,7 @@ def app_pid(udid):
 
 def collect(folder, udid, context, stop):
     metadata = dict(utc=utc(), simulatorUDID=udid, context=context)
-    process = None
+    samples = []
     try:
         if stop.is_set():
             raise RuntimeError('Test already completed; sampling skipped')
@@ -56,25 +56,48 @@ def collect(folder, udid, context, stop):
         metadata['pid'] = pid
         if stop.is_set():
             raise RuntimeError('Test completed during process lookup; sampling skipped')
-        process = subprocess.Popen(['/usr/bin/sample', str(pid), '3', '10', '-file', str(folder / 'threads.txt')],
+        metadata['startedUTC'] = utc()
+        primary = subprocess.Popen(['/usr/bin/sample', str(pid), '1', '10', '-file', str(folder / 'threads.txt')],
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        deadline = time.monotonic() + 8
+        samples.append((primary, metadata))
+        started = time.monotonic()
+        deadline = started + 8
         while True:
-            if stop.is_set() or time.monotonic() >= deadline:
+            now = time.monotonic()
+            if stop.is_set() or now >= deadline:
                 metadata['stopped'] = 'test-completed' if stop.is_set() else '8-second-limit'
-                process.kill()
-            try:
-                stdout, stderr = process.communicate(timeout=0.1)
-                metadata.update(exitStatus=process.returncode, stdout=stdout, stderr=stderr)
+                metadata['stoppedUTC'] = utc()
+                for process, _ in samples:
+                    if process.poll() is None:
+                        process.kill()
+            elif len(samples) == 1 and now - started >= 4 and primary.poll() is None:
+                # One observation of our own blocked sampler, sharing the original deadline.
+                metadata['primaryStderrAtSecondary'] = metadata.get('stderr', '')
+                secondary_metadata = dict(startedUTC=utc(), targetPID=primary.pid)
+                metadata['sampler'] = secondary_metadata
+                secondary = subprocess.Popen(['/usr/bin/sample', str(primary.pid), '1', '10', '-file',
+                                               str(folder / 'sampler-threads.txt')],
+                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                samples.append((secondary, secondary_metadata))
+            for process, details in samples:
+                if 'exitStatus' in details:
+                    continue
+                try:
+                    stdout, stderr = process.communicate(timeout=0.05)
+                    details.update(exitStatus=process.returncode, stdout=stdout, stderr=stderr, finishedUTC=utc())
+                except subprocess.TimeoutExpired as error:
+                    partial = error.stderr or b''
+                    details['stderr'] = partial.decode(errors='replace') if isinstance(partial, bytes) else partial
+            if all('exitStatus' in details for _, details in samples):
                 break
-            except subprocess.TimeoutExpired:
-                pass
     except Exception as error:
         metadata['diagnosticMiss'] = str(error)
     finally:
-        if process is not None and process.poll() is None:
-            process.kill()
-            process.communicate()
+        for process, details in samples:
+            if process.poll() is None:
+                process.kill()
+                stdout, stderr = process.communicate()
+                details.update(exitStatus=process.returncode, stdout=stdout, stderr=stderr, finishedUTC=utc())
         metadata['finishedUTC'] = utc()
         (folder / 'sample.json').write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + '\n')
 
