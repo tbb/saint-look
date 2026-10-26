@@ -2,7 +2,8 @@
 // No retries, no uploads of personal photos, no raw provider response logs.
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, appendFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import sharp from '../../backend/node_modules/sharp/lib/index.js';
+import { createRequire } from 'node:module';
+const sharp = createRequire(new URL('../../backend/package.json', import.meta.url))('sharp');
 import { jevRequest, jevAttributes } from '../../backend/src/jev.mjs';
 const folder = 'client-ios/SaintLook/TrialPhotos';
 const manifest = JSON.parse(readFileSync(`${folder}/manifest.json`));
