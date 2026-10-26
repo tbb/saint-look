@@ -252,9 +252,9 @@ final class WardrobeFlowTests: XCTestCase {
         app.buttons["add-demo-photo"].tap()
         app.buttons["add-demo-photo"].tap()
         await waitForSummary(app, ready: 0, pending: 2, timeout: 5)
-        try tapVisibleButton("delete-item", in: app)
+        try deleteFirstItem(in: app)
         await waitForSummary(app, ready: 0, pending: 1, timeout: 5)
-        try tapVisibleButton("delete-item", in: app)
+        try deleteFirstItem(in: app)
         await waitForSummary(app, ready: 0, pending: 0, timeout: 5)
         XCTAssertFalse(app.images["item-photo"].exists)
         app.terminate()
@@ -283,7 +283,7 @@ final class WardrobeFlowTests: XCTestCase {
         app.buttons["add-demo-photo"].tap()
         await waitForSummary(app, ready: 1, pending: 0)
         try await control(mode: "offline")
-        try tapVisibleButton("delete-item", in: app)
+        try deleteFirstItem(in: app)
         await waitForSummary(app, ready: 0, pending: 0, timeout: 5)
         XCTAssertFalse(app.images["item-photo"].exists)
         app.terminate()
@@ -321,7 +321,7 @@ final class WardrobeFlowTests: XCTestCase {
         app.buttons["add-demo-photo"].tap()
         XCTAssertTrue(app.staticTexts["failed-status"].firstMatch.waitForExistence(timeout: 40))
         try await control(mode: "offline")
-        try tapVisibleButton("delete-item", in: app)
+        try deleteFirstItem(in: app)
         await waitForSummary(app, ready: 0, pending: 0, timeout: 5)
         app.terminate()
 
@@ -617,7 +617,7 @@ final class WardrobeFlowTests: XCTestCase {
         try tapVisibleButton("replace-demo-photo", in: app)
         let held = try await waitForTransportCount("heldResultResponses", equalTo: 1, timeout: 10)
         XCTAssertTrue(held, "The replacement result must be held before deleting the thing")
-        try tapVisibleButton("delete-item", in: app)
+        try deleteFirstItem(in: app)
         await waitForSummary(app, ready: 0, pending: 0, timeout: 5)
         try await control(mode: "online")
         let deleted = try await waitForTransportCount("deletedItems", equalTo: 1, timeout: 10)
@@ -678,6 +678,14 @@ final class WardrobeFlowTests: XCTestCase {
         }
         XCTFail("Button \(identifier) did not become fully visible")
         throw InteractionError.buttonNotVisible(identifier)
+    }
+
+    @MainActor
+    private func deleteFirstItem(in app: XCUIApplication) throws {
+        try tapVisibleButton("delete-item", in: app)
+        let confirmation = app.alerts.buttons.matching(identifier: "confirm-delete-item").firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.tap()
     }
 
     @MainActor

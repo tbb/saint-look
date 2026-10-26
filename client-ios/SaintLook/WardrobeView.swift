@@ -9,6 +9,7 @@ struct WardrobeView: View {
     @State private var showSettings = false
     @State private var importing = false
     @State private var editingItem: WardrobeItem?
+    @State private var itemPendingDeletion: WardrobeItem?
     #if DEBUG
     @State private var trialImported = false
     #endif
@@ -76,7 +77,7 @@ struct WardrobeView: View {
                             .accessibilityIdentifier("edit-item")
                             .disabled(!store.storageAvailable)
                         ItemRecoveryActions(store: store, item: item)
-                        Button("Удалить вещь", role: .destructive) { store.deleteItem(item.id) }
+                        Button("Удалить вещь", role: .destructive) { itemPendingDeletion = item }
                             .buttonStyle(.borderless)
                             .accessibilityIdentifier("delete-item")
                             .disabled(!store.storageAvailable)
@@ -88,6 +89,17 @@ struct WardrobeView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Настройки", systemImage: "gearshape") { showSettings = true }
                 }
+            }
+            .alert("Удалить вещь?", isPresented: Binding(
+                get: { itemPendingDeletion != nil },
+                set: { if !$0 { itemPendingDeletion = nil } }
+            ), presenting: itemPendingDeletion) { item in
+                Button("Удалить вещь", role: .destructive) { store.deleteItem(item.id) }
+                    .accessibilityIdentifier("confirm-delete-item")
+                Button("Отмена", role: .cancel) { }
+                    .accessibilityIdentifier("cancel-delete-item")
+            } message: { _ in
+                Text("Вещь исчезнет из гардероба. В сохранённых луках её места останутся пустыми.")
             }
             .sheet(isPresented: $showSettings) { SettingsView(store: store) }
             .sheet(item: $editingItem) { item in ItemEditView(store: store, item: item) }

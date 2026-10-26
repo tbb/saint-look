@@ -84,6 +84,14 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
+    private func deleteFirstItem(in app: XCUIApplication) {
+        tap(app.buttons["delete-item"].firstMatch, in: app)
+        let confirmation = app.alerts.buttons.matching(identifier: "confirm-delete-item").firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.tap()
+    }
+
+    @MainActor
     private func chooseCandidate(_ candidate: XCUIElement, in app: XCUIApplication) {
         tap(candidate, in: app)
         expectGone(app.buttons["cancel-outfit-picker"], "Selecting a thing must immediately return to the constructor")
@@ -173,9 +181,21 @@ final class OutfitFlowTests: XCTestCase {
         offline.navigationBars.buttons.firstMatch.tap()
         offline.tabBars.buttons["Гардероб"].tap()
         // Delete the newest (unselected) thing, then trousers belonging to the outfit.
-        tap(offline.buttons["delete-item"].firstMatch, in: offline)
+        deleteFirstItem(in: offline)
         await summary(offline, ready: 2, pending: 0)
         tap(offline.buttons["delete-item"].firstMatch, in: offline)
+        let cancelDeletion = offline.alerts.buttons.matching(identifier: "cancel-delete-item").firstMatch
+        XCTAssertTrue(cancelDeletion.waitForExistence(timeout: 5))
+        cancelDeletion.tap()
+        await summary(offline, ready: 2, pending: 0)
+        offline.tabBars.buttons["Луки"].tap()
+        offline.buttons[savedCardID].tap()
+        XCTAssertFalse(button(prefix: "repair-slot-", in: offline).exists,
+                       "Cancelling wardrobe deletion must preserve the saved outfit's links")
+        XCTAssertTrue(offline.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Брюки'")).firstMatch.exists)
+        offline.navigationBars.buttons.firstMatch.tap()
+        offline.tabBars.buttons["Гардероб"].tap()
+        deleteFirstItem(in: offline)
         await summary(offline, ready: 1, pending: 0)
         offline.tabBars.buttons["Луки"].tap()
         offline.buttons[savedCardID].tap()
@@ -392,7 +412,7 @@ final class OutfitFlowTests: XCTestCase {
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).count, 2)
         app.tabBars.buttons["Гардероб"].tap()
-        tap(app.buttons["delete-item"].firstMatch, in: app)
+        deleteFirstItem(in: app)
         await summary(app, ready: 1, pending: 0)
         app.tabBars.buttons["Луки"].tap()
         app.buttons[cardIDs[0]].tap()
