@@ -28,6 +28,8 @@ final class OutfitFlowTests: XCTestCase {
         app.launchEnvironment["SAINT_LOOK_UI_TESTING"] = "1"
         app.launchEnvironment["SAINT_LOOK_RESET_DATA"] = reset ? "1" : "0"
         app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10),
+                      "Launch must reach the foreground before UI interaction; current state: \(app.state.rawValue)")
         return app
     }
 
@@ -246,7 +248,8 @@ final class OutfitFlowTests: XCTestCase {
         offline.tabBars.buttons["Луки"].tap()
         XCTAssertTrue(offline.buttons[savedCardID].waitForExistence(timeout: 5))
         offline.buttons[savedCardID].tap()
-        XCTAssertTrue(offline.navigationBars["Лук без названия"].exists)
+        XCTAssertTrue(offline.staticTexts["Лук без названия"].exists)
+        capture("outfit-detail-composition")
         XCTAssertTrue(offline.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Футболка'")).firstMatch.exists)
         offline.navigationBars.buttons.firstMatch.tap()
         offline.tabBars.buttons["Гардероб"].tap()
@@ -470,7 +473,7 @@ final class OutfitFlowTests: XCTestCase {
         XCTAssertTrue(app.textFields["outfit-name"].exists)
         app.buttons["cancel-outfit"].tap()
         app.alerts.buttons.matching(identifier: "discard-outfit-changes").firstMatch.tap()
-        XCTAssertTrue(app.navigationBars["Первый"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Первый"].waitForExistence(timeout: 5))
         app.buttons["edit-outfit"].tap()
         enterName(" сохранён", in: app)
         let bottom = button(prefix: "outfit-slot-bottom-", in: app)
@@ -481,7 +484,7 @@ final class OutfitFlowTests: XCTestCase {
         chooseCandidate(button(prefix: "outfit-candidate-", in: app), in: app)
         tap(app.buttons["add-body-layer"], in: app)
         app.buttons["save-outfit"].tap()
-        XCTAssertTrue(app.navigationBars["Первый сохранён"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Первый сохранён"].waitForExistence(timeout: 5))
         capture("outfit-07-edited")
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).count, 2)
@@ -494,7 +497,7 @@ final class OutfitFlowTests: XCTestCase {
         enterName(" неполный", in: app)
         XCTAssertTrue(app.buttons["save-outfit"].isEnabled)
         app.buttons["save-outfit"].tap()
-        XCTAssertTrue(app.navigationBars["Первый сохранён неполный"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Первый сохранён неполный"].waitForExistence(timeout: 5))
         tap(app.buttons["delete-outfit"], in: app)
         XCTAssertTrue(app.alerts.buttons.matching(identifier: "cancel-delete-outfit").firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.alerts.buttons.matching(identifier: "confirm-delete-outfit").firstMatch.exists)
@@ -569,7 +572,8 @@ final class OutfitFlowTests: XCTestCase {
         app.buttons["edit-outfit"].tap()
         enterName("На прогулку", in: app)
         app.buttons["save-outfit"].tap()
-        XCTAssertTrue(app.navigationBars["На прогулку"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["На прогулку"].waitForExistence(timeout: 5))
+        capture("outfit-detail-renamed")
         tap(app.buttons["delete-outfit"], in: app)
         XCTAssertTrue(app.alerts.buttons.matching(identifier: "confirm-delete-outfit").firstMatch.waitForExistence(timeout: 5))
         app.alerts.buttons.matching(identifier: "confirm-delete-outfit").firstMatch.tap()

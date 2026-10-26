@@ -4,6 +4,7 @@ import SwiftUI
 struct OutfitsView: View {
     @ObservedObject var store: WardrobeStore
     @State private var creating = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         NavigationStack {
@@ -20,24 +21,41 @@ struct OutfitsView: View {
                             .disabled(!store.storageAvailable)
                     }
                 } else {
-                    List(store.outfits) { outfit in
-                        NavigationLink {
-                            OutfitDetailView(store: store, outfitID: outfit.id)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text(outfit.displayName).font(.headline)
-                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 58, maximum: 80))], spacing: 8) {
-                                    ForEach(outfit.slots) { slot in
-                                        OutfitThumbnail(store: store, slot: slot)
-                                            .frame(height: 64)
+                    ScrollView {
+                        LazyVGrid(columns: collectionColumns, spacing: 24) {
+                            ForEach(store.outfits) { outfit in
+                                NavigationLink {
+                                    OutfitDetailView(store: store, outfitID: outfit.id)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 12) {
+                                        OutfitComposition(store: store, outfit: outfit, compact: true)
+                                        Text(outfit.displayName)
+                                            .font(.headline)
+                                            .foregroundStyle(.primary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        if outfit.slots.contains(where: \.needsReplacement) {
+                                            Label("Нужна замена", systemImage: "arrow.triangle.2.circlepath")
+                                                .font(.subheadline)
+                                                .foregroundStyle(.secondary)
+                                        }
                                     }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
                                 }
-                                Text("Вещей: \(outfit.selectedIDs.count)")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }.padding(.vertical, 8)
+                                .buttonStyle(.plain)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel(outfit.displayName)
+                                .accessibilityValue(outfit.slots.contains(where: \.needsReplacement)
+                                                    ? "Вещей: \(outfit.selectedIDs.count). Нужна замена"
+                                                    : "Вещей: \(outfit.selectedIDs.count)")
+                                .accessibilityIdentifier("outfit-card-\(outfit.id)")
+                            }
                         }
-                        .accessibilityIdentifier("outfit-card-\(outfit.id)")
+                        .padding(16)
+                        .frame(maxWidth: SaintLookStyle.contentWidth)
+                        .frame(maxWidth: .infinity)
                     }
+                    .background(SaintLookStyle.canvas)
                 }
             }
             .navigationTitle("Луки")
@@ -52,6 +70,12 @@ struct OutfitsView: View {
                 OutfitEditorView(store: store, draft: Outfit())
             }
         }
+    }
+
+    private var collectionColumns: [GridItem] {
+        dynamicTypeSize.isAccessibilitySize
+            ? [GridItem(.flexible())]
+            : [GridItem(.adaptive(minimum: 280, maximum: 440), spacing: 24)]
     }
 }
 
@@ -69,19 +93,21 @@ struct OutfitDetailView: View {
     var body: some View {
         Group {
             if let outfit {
-                List {
-                    ForEach(outfit.slots) { slot in
-                        Section(outfitSlotTitle(slot, in: outfit)) {
-                            OutfitSlotContent(store: store, slot: slot)
-                            if slot.needsReplacement {
-                                Button("Подобрать замену") { showingEditor = true }
-                                    .accessibilityIdentifier("repair-slot-\(slot.id)")
-                            }
-                        }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        Text(outfit.displayName)
+                            .font(.title2.bold())
+                            .fixedSize(horizontal: false, vertical: true)
+                        OutfitComposition(store: store, outfit: outfit) { _ in showingEditor = true }
+                        deleteAction
+                            .frame(minHeight: 44)
                     }
-                    Section { deleteAction }
+                    .padding(16)
+                    .frame(maxWidth: 620)
+                    .frame(maxWidth: .infinity)
                 }
-                .navigationTitle(outfit.displayName)
+                .background(SaintLookStyle.canvas)
+                .navigationTitle("Лук")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -119,6 +145,87 @@ struct OutfitDetailView: View {
             dismiss()
         } catch {
             deletionError = "Не удалось удалить лук с устройства. Он сохранён — попробуйте ещё раз."
+        }
+    }
+}
+
+/// The same ordered zones form a readable preview in the collection and detail.
+/// Ordinary empty zones are omitted; deleted references retain a visible replacement place.
+@MainActor
+private struct OutfitComposition: View {
+    @ObservedObject var store: WardrobeStore
+    let outfit: Outfit
+    var compact = false
+    var repair: ((OutfitSlot) -> Void)?
+
+    private var visibleSlots: [OutfitSlot] {
+        outfit.slots.filter { $0.itemID != nil || $0.needsReplacement }
+    }
+
+    var body: some View {
+        VStack(spacing: compact ? 12 : 24) {
+            ForEach(visibleSlots) { slot in
+                VStack(spacing: 8) {
+                    if let item = store.items.first(where: { $0.id == slot.itemID }) {
+                        if let image = store.displayImage(for: item) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: .infinity)
+                                .frame(height: photoHeight(for: slot.zone))
+                                .accessibilityHidden(true)
+                        } else {
+                            Label("Фото недоступно", systemImage: "photo")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, minHeight: photoHeight(for: slot.zone))
+                        }
+                        if !compact {
+                            Text(item.displayedType ?? "Вещь")
+                                .font(.headline)
+                            if !item.displayedColors.isEmpty {
+                                Text(item.displayedColors.joined(separator: ", "))
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.title2)
+                                .accessibilityHidden(true)
+                            Text("Нужна замена").font(.subheadline)
+                            if !compact {
+                                Text(outfitSlotTitle(slot, in: outfit))
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                            }
+                            if let repair {
+                                Button("Подобрать замену") { repair(slot) }
+                                    .buttonStyle(.bordered)
+                                    .frame(minHeight: 44)
+                                    .accessibilityLabel("Подобрать замену: \(outfitSlotTitle(slot, in: outfit))")
+                                    .accessibilityIdentifier("repair-slot-\(slot.id)")
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: compact ? 64 : 100)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("outfit-content-\(slot.id)")
+            }
+        }
+        .padding(compact ? 16 : 24)
+        .frame(maxWidth: .infinity)
+        .background(SaintLookStyle.photoSurface)
+        .clipShape(RoundedRectangle(cornerRadius: SaintLookStyle.cornerRadius))
+    }
+
+    private func photoHeight(for zone: OutfitZone) -> CGFloat {
+        switch zone {
+        case .head: return compact ? 56 : 80
+        case .body: return compact ? 112 : 160
+        case .bottom: return compact ? 144 : 200
+        case .shoes: return compact ? 72 : 104
         }
     }
 }
