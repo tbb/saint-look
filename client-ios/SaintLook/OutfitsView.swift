@@ -137,7 +137,7 @@ struct OutfitDetailView: View {
                         self.queuedEditor = nil
                     }
                 }) { slot in
-                    OutfitPickerView(store: store, zone: slot.zone,
+                    OutfitPickerView(store: store, zone: slot.zone, selectedItemID: nil,
                                      excluding: outfit.selectedIDs.subtracting(slot.itemID.map { [$0] } ?? [])) { itemID in
                         replace(itemID, in: slot.id)
                     }
@@ -381,7 +381,7 @@ struct OutfitEditorView: View {
                     .accessibilityIdentifier("continue-outfit-editing")
             }
             .sheet(item: $choosingSlot) { slot in
-                OutfitPickerView(store: store, zone: slot.zone,
+                OutfitPickerView(store: store, zone: slot.zone, selectedItemID: slot.itemID,
                                  excluding: draft.selectedIDs.subtracting(slot.itemID.map { [$0] } ?? [])) { itemID in
                     select(itemID, for: slot.id)
                     choosingSlot = nil
@@ -529,11 +529,23 @@ struct OutfitEditorView: View {
 struct OutfitPickerView: View {
     @ObservedObject var store: WardrobeStore
     let zone: OutfitZone
+    let selectedItemID: UUID?
     let excluding: Set<UUID>
     let choose: (UUID) -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var selectedType: String?
 
     private var candidates: [WardrobeItem] { store.outfitCandidates(for: zone, excluding: excluding) }
+    private var types: [WardrobeTaxonomy.Option] {
+        let labels = Set(candidates.compactMap(\.displayedType))
+        return WardrobeTaxonomy.shared.types.filter { labels.contains($0.label) }
+    }
+    private var currentType: WardrobeTaxonomy.Option? { types.first { $0.id == selectedType } }
+    private var filteredCandidates: [WardrobeItem] {
+        guard let currentType else { return candidates }
+        return candidates.filter { $0.displayedType == currentType.label }
+    }
 
     var body: some View {
         NavigationStack {
@@ -543,25 +555,93 @@ struct OutfitPickerView: View {
                         description: Text("Здесь появятся вещи для этой зоны с готовой вырезкой и известным типом. Уже выбранные вещи не повторяются."))
                         .accessibilityIdentifier("outfit-picker-empty")
                 } else {
-                    List(candidates) { item in
-                        Button { choose(item.id) } label: {
-                            OutfitSlotContent(store: store, slot: OutfitSlot(zone: zone, itemID: item.id))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
+                    ScrollView {
+                        LazyVGrid(columns: SaintLookStyle.columns(accessibilitySize: dynamicTypeSize.isAccessibilitySize), spacing: 20) {
+                            ForEach(filteredCandidates) { item in
+                                candidateButton(item)
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("outfit-candidate-\(item.id)")
+                        .padding(16)
+                        .frame(maxWidth: SaintLookStyle.contentWidth)
+                        .frame(maxWidth: .infinity)
                     }
                 }
             }
+            .background(SaintLookStyle.canvas)
             .navigationTitle(zone.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { dismiss() }.accessibilityIdentifier("cancel-outfit-picker")
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("Отмена")
+                    .accessibilityIdentifier("cancel-outfit-picker")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if types.count > 1 { typeFilter }
                 }
             }
+            .onChange(of: types.map(\.id)) { _, available in
+                if let selectedType, !available.contains(selectedType) { self.selectedType = nil }
+            }
         }
+    }
+
+    private var typeFilter: some View {
+        Menu {
+            Button { selectedType = nil } label: {
+                if currentType == nil { Label("Все типы", systemImage: "checkmark") }
+                else { Text("Все типы") }
+            }
+            .accessibilityIdentifier("outfit-filter-all")
+            ForEach(types) { type in
+                Button { selectedType = type.id } label: {
+                    if currentType?.id == type.id { Label(type.label, systemImage: "checkmark") }
+                    else { Text(type.label) }
+                }
+                .accessibilityIdentifier("outfit-filter-\(type.id)")
+            }
+        } label: {
+            Label(currentType?.label ?? "Все типы", systemImage: "line.3.horizontal.decrease")
+                .labelStyle(.titleAndIcon)
+                .frame(minHeight: 44)
+        }
+        .accessibilityLabel("Тип: \(currentType?.label ?? "Все типы")")
+        .accessibilityIdentifier("outfit-type-filter")
+    }
+
+    private func candidateButton(_ item: WardrobeItem) -> some View {
+        let selected = item.id == selectedItemID
+        return Button { choose(item.id) } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                GarmentPhoto(image: store.displayImage(for: item), accessibilityIdentifier: "outfit-candidate-photo-\(item.id)")
+                    .aspectRatio(1, contentMode: .fit)
+                    .overlay(alignment: .topTrailing) {
+                        if selected {
+                            Image(systemName: "checkmark.circle.fill")
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(.white, SaintLookStyle.accent)
+                                .font(.title2)
+                                .padding(10)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                Text(item.displayedType ?? "Вещь")
+                    .font(.headline).foregroundStyle(.primary)
+                if !item.displayedColors.isEmpty {
+                    Text(item.displayedColors.joined(separator: ", "))
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(([item.displayedType ?? "Вещь"] + item.displayedColors).joined(separator: ", "))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("outfit-candidate-\(item.id)")
     }
 }
 
