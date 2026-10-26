@@ -67,6 +67,80 @@ struct OutfitCoreChecks {
         precondition(emptyRestored.outfits.count == 1, "An empty look survives deleting its last thing")
         print("PASS: selection validation, idempotent save, and durable empty placeholders")
 
+        // Body rows keep their identity, order and deliberate gaps across restart.
+        var layered = Outfit()
+        let firstBody = layered.slots[1].id
+        let middleBody = layered.addBodyLayer()
+        let lastBody = layered.addBodyLayer()
+        layered.selectItem(shirtID, for: firstBody)
+        layered.selectItem(jeansID, for: layered.slots.first { $0.zone == .bottom }!.id)
+        var layeredCatalog = WardrobeCatalog(items: [shirt, jeans])
+        try layeredCatalog.saveOutfit(layered, taxonomy: taxonomy, availableCutouts: cutouts)
+        try file.save(layeredCatalog)
+        let layeredRestored = try file.load().outfits[0]
+        precondition(layeredRestored.slots.filter { $0.zone == .body }.map(\.id) == [firstBody, middleBody, lastBody])
+        precondition(layeredRestored.slots.filter { $0.zone == .body }.map(\.itemID) == [shirtID, nil, nil])
+        layered.removeBodyLayer(middleBody)
+        layered.removeBodyLayer(lastBody)
+        layered.removeBodyLayer(firstBody)
+        precondition(layered.slots.filter { $0.zone == .body }.map(\.id) == [firstBody])
+        precondition(layered.slots.first { $0.id == firstBody }!.itemID == nil)
+        precondition(layered.slots.first { $0.zone == .bottom }!.itemID == jeansID)
+        print("PASS: body rows preserve order and empty gaps; the last row clears instead of disappearing")
+
+        // Cycling changes only the addressed row and cannot reuse another layer's thing.
+        var hoodie = WardrobeItem(id: UUID(), operationID: UUID(), photoVersionID: UUID())
+        hoodie.status = .ready; hoodie.type = "Худи"; hoodie.resultFilename = "result.png"
+        var jacket = WardrobeItem(id: UUID(), operationID: UUID(), photoVersionID: UUID())
+        jacket.status = .ready; jacket.type = "Куртка"; jacket.resultFilename = "result.png"
+        var cycling = Outfit()
+        let cyclingFirst = cycling.slots[1].id
+        let cyclingSecond = cycling.addBodyLayer()
+        cycling.selectItem(shirtID, for: cyclingFirst)
+        cycling.selectItem(hoodie.id, for: cyclingSecond)
+        cycling.cycleItem(for: cyclingFirst, among: [shirtID, hoodie.id, jacket.id], forward: true)
+        precondition(cycling.slots.first { $0.id == cyclingFirst }!.itemID == jacket.id)
+        precondition(cycling.slots.first { $0.id == cyclingSecond }!.itemID == hoodie.id)
+        cycling.cycleItem(for: cyclingFirst, among: [shirtID, hoodie.id, jacket.id], forward: true)
+        precondition(cycling.slots.first { $0.id == cyclingFirst }!.itemID == shirtID)
+        cycling.cycleItem(for: cyclingFirst, among: [shirtID, hoodie.id, jacket.id], forward: false)
+        precondition(cycling.slots.first { $0.id == cyclingFirst }!.itemID == jacket.id)
+        cycling.selectItem(hoodie.id, for: cyclingFirst)
+        precondition(cycling.slots.first { $0.id == cyclingFirst }!.itemID == jacket.id)
+        var cyclingCatalog = WardrobeCatalog(items: [shirt, hoodie, jacket])
+        try cyclingCatalog.saveOutfit(cycling, taxonomy: taxonomy, availableCutouts: [shirtID, hoodie.id, jacket.id])
+        try file.save(cyclingCatalog)
+        let twoLayers = try file.load().outfits[0]
+        precondition(twoLayers.slots.filter { $0.zone == .body }.map(\.itemID) == [jacket.id, hoodie.id])
+        precondition(twoLayers.slots.first { $0.zone == .bottom }!.itemID == nil)
+        print("PASS: forward/backward cycling wraps independently, excludes duplicates, and two body layers save")
+
+        // A changed wardrobe never revives an old candidate or erases a row by accident.
+        let beforeSmallPool = cycling
+        cycling.cycleItem(for: cyclingFirst, among: [], forward: true)
+        cycling.cycleItem(for: cyclingFirst, among: [jacket.id], forward: false)
+        precondition(cycling == beforeSmallPool)
+        cyclingCatalog.removeItem(jacket.id)
+        var afterDeletion = cyclingCatalog.outfits[0]
+        precondition(afterDeletion.slots.filter { $0.zone == .body }.map(\.id) == [cyclingFirst, cyclingSecond])
+        precondition(afterDeletion.slots.first { $0.id == cyclingFirst }!.needsReplacement)
+        let replacementID = UUID()
+        afterDeletion.cycleItem(for: cyclingFirst, among: [shirtID, hoodie.id, replacementID], forward: true)
+        precondition(afterDeletion.slots.first { $0.id == cyclingFirst }!.itemID == shirtID)
+        precondition(!afterDeletion.slots.first { $0.id == cyclingFirst }!.needsReplacement)
+        precondition(afterDeletion.slots.first { $0.id == cyclingSecond }!.itemID == hoodie.id)
+        // A former candidate changes type while selected; the fresh pool does not contain it.
+        afterDeletion.cycleItem(for: cyclingFirst, among: [hoodie.id, replacementID, jeansID], forward: false)
+        precondition(afterDeletion.slots.first { $0.id == cyclingFirst }!.itemID == jeansID)
+        afterDeletion.selectItem(nil, for: cyclingFirst)
+        afterDeletion.cycleItem(for: cyclingFirst, among: [replacementID], forward: true)
+        precondition(afterDeletion.slots.first { $0.id == cyclingFirst }!.itemID == nil)
+        afterDeletion.removeBodyLayer(cyclingFirst)
+        let afterRemoval = afterDeletion
+        afterDeletion.cycleItem(for: cyclingFirst, among: [shirtID, replacementID], forward: true)
+        precondition(afterDeletion == afterRemoval, "A stale gesture cannot target a different row")
+        print("PASS: empty/single pools, removed candidates and stale row gestures keep the remaining composition safe")
+
         // Both historical formats are loaded without replacing the user's wardrobe.
         let catalogURL = root.appendingPathComponent("catalog.json")
         try JSONEncoder().encode([shirt, jeans]).write(to: catalogURL)

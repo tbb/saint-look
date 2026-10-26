@@ -60,6 +60,47 @@ extension OutfitZone {
 extension Outfit {
     var selectedIDs: Set<UUID> { Set(slots.compactMap(\.itemID)) }
 
+    @discardableResult
+    mutating func addBodyLayer() -> UUID {
+        let slot = OutfitSlot(zone: .body)
+        let insertion = slots.lastIndex(where: { $0.zone == .body }).map { $0 + 1 }
+            ?? slots.firstIndex(where: { $0.zone == .bottom }) ?? slots.count
+        slots.insert(slot, at: insertion)
+        return slot.id
+    }
+
+    mutating func removeBodyLayer(_ slotID: UUID) {
+        guard let index = slots.firstIndex(where: { $0.id == slotID && $0.zone == .body }) else { return }
+        if slots.filter({ $0.zone == .body }).count == 1 {
+            selectItem(nil, for: slotID)
+        } else {
+            slots.remove(at: index)
+        }
+    }
+
+    mutating func selectItem(_ itemID: UUID?, for slotID: UUID) {
+        guard let index = slots.firstIndex(where: { $0.id == slotID }) else { return }
+        if let itemID, slots.contains(where: { $0.id != slotID && $0.itemID == itemID }) { return }
+        slots[index].itemID = itemID
+        slots[index].needsReplacement = false
+    }
+
+    /// Candidates are refreshed by the caller for every gesture; only IDs survive between gestures.
+    mutating func cycleItem(for slotID: UUID, among candidateIDs: [UUID], forward: Bool) {
+        guard let slot = slots.first(where: { $0.id == slotID }) else { return }
+        let occupied = Set(slots.filter { $0.id != slotID }.compactMap(\.itemID))
+        let candidates = candidateIDs.filter { !occupied.contains($0) }
+        guard candidates.count > 1 else { return }
+        let next: UUID
+        if let itemID = slot.itemID, let current = candidates.firstIndex(of: itemID) {
+            let offset = forward ? 1 : candidates.count - 1
+            next = candidates[(current + offset) % candidates.count]
+        } else {
+            next = forward ? candidates[0] : candidates[candidates.count - 1]
+        }
+        selectItem(next, for: slotID)
+    }
+
     func removingItem(_ id: UUID) -> Outfit {
         var updated = self
         for index in updated.slots.indices where updated.slots[index].itemID == id {

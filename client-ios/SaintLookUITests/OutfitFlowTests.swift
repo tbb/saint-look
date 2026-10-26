@@ -133,6 +133,119 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testIndependentBodyLayersCycleAndSurviveOfflineRestart() async throws {
+        let app = launch(reset: true)
+        // Distinct types make selection observable without depending on generated IDs/order.
+        for (index, type) in ["t_shirt", "hoodie", "jacket", "sweater", "trousers"].enumerated() {
+            app.buttons["add-demo-photo"].tap()
+            await summary(app, ready: index + 1, pending: 0)
+            tap(app.buttons["edit-item"].firstMatch, in: app)
+            tap(app.buttons["choose-type"], in: app)
+            tap(app.buttons["type-\(type)"], in: app)
+            app.buttons["save-item-edits"].tap()
+            await summary(app, ready: index + 1, pending: 0)
+        }
+        app.tabBars.buttons["Луки"].tap()
+        app.buttons["create-first-outfit"].tap()
+        let first = button(prefix: "outfit-slot-body-", in: app)
+        let firstID = first.identifier
+        func choose(_ type: String, row: XCUIElement) {
+            tap(row, in: app)
+            let candidate = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-' AND label CONTAINS %@", type)).firstMatch
+            tap(candidate, in: app)
+        }
+        choose("Футболка", row: first)
+        tap(app.buttons["add-body-layer"], in: app)
+        let second = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-slot-body-' AND label BEGINSWITH 'Тело · слой 2' ")).firstMatch
+        choose("Худи", row: second)
+        let secondID = second.identifier
+        XCTAssertTrue(app.buttons["save-outfit"].isEnabled, "Two body layers alone form a valid look")
+        tap(app.buttons["add-body-layer"], in: app)
+        let third = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-slot-body-' AND label BEGINSWITH 'Тело · слой 3' ")).firstMatch
+        choose("Куртка", row: third)
+        let thirdID = third.identifier
+        choose("Брюки", row: button(prefix: "outfit-slot-bottom-", in: app))
+        // Scroll back to the first row without changing the selection.
+        for _ in 0..<5 where !app.buttons[firstID].isHittable { app.swipeDown() }
+        XCTAssertTrue(app.buttons[firstID].label.contains("Футболка"))
+        app.buttons[firstID].swipeLeft()
+        XCTAssertTrue(app.buttons[firstID].label.contains("Свитер"))
+        XCTAssertTrue(app.buttons[secondID].label.contains("Худи"))
+        XCTAssertTrue(app.buttons[thirdID].label.contains("Куртка"))
+        app.buttons[firstID].swipeLeft()
+        XCTAssertTrue(app.buttons[firstID].label.contains("Футболка"))
+        app.buttons[firstID].swipeRight()
+        XCTAssertTrue(app.buttons[firstID].label.contains("Свитер"))
+        tap(app.buttons[firstID], in: app)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-' ")).count, 2)
+        app.buttons["cancel-outfit-picker"].tap()
+        XCTAssertTrue(app.buttons[firstID].label.contains("Свитер"))
+        tap(app.buttons["add-body-layer"], in: app)
+        // A deliberately empty final layer is also durable.
+        capture("outfit-04-independent-layers")
+        app.buttons["save-outfit"].tap()
+        let card = button(prefix: "outfit-card-", in: app)
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        let cardID = card.identifier
+        try await control("offline")
+        XCUIDevice.shared.press(.home)
+        app.terminate()
+        let offline = launch(reset: false)
+        offline.tabBars.buttons["Луки"].tap()
+        offline.buttons[cardID].tap()
+        XCTAssertTrue(offline.staticTexts["Тело · слой 1"].exists)
+        XCTAssertTrue(offline.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Свитер'")).firstMatch.exists)
+        for _ in 0..<4 where !offline.staticTexts["Тело · слой 3"].isHittable { offline.swipeUp() }
+        XCTAssertTrue(offline.staticTexts["Тело · слой 3"].exists)
+        XCTAssertTrue(offline.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Куртка'")).firstMatch.exists)
+        for _ in 0..<4 where !offline.staticTexts["Тело · слой 4"].isHittable { offline.swipeUp() }
+        XCTAssertTrue(offline.staticTexts["Тело · слой 4"].exists)
+        capture("outfit-05-layers-offline")
+        XCUIDevice.shared.press(.home)
+        offline.terminate()
+    }
+
+    @MainActor
+    func testEmptyAndSingleCandidateRowsCanClearAndRemoveWithoutLosingLastBodyRow() async throws {
+        let app = launch(reset: true)
+        app.buttons["add-demo-photo"].tap()
+        await summary(app, ready: 1, pending: 0)
+        app.tabBars.buttons["Луки"].tap()
+        app.buttons["create-first-outfit"].tap()
+        let head = button(prefix: "outfit-slot-head-", in: app)
+        let originalHead = head.label
+        head.swipeLeft()
+        XCTAssertEqual(head.label, originalHead)
+        let first = button(prefix: "outfit-slot-body-", in: app)
+        tap(first, in: app)
+        button(prefix: "outfit-candidate-", in: app).tap()
+        let firstID = first.identifier
+        let selectedLabel = first.label
+        first.swipeLeft()
+        XCTAssertEqual(first.label, selectedLabel, "One candidate must never clear a selection")
+        tap(app.buttons["add-body-layer"], in: app)
+        let second = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-slot-body-' AND label BEGINSWITH 'Тело · слой 2' ")).firstMatch
+        tap(second, in: app)
+        XCTAssertTrue(app.otherElements["outfit-picker-empty"].waitForExistence(timeout: 5)
+            || app.staticTexts["Подходящих вещей пока нет"].exists)
+        app.buttons["cancel-outfit-picker"].tap()
+        let secondID = second.identifier.replacingOccurrences(of: "outfit-slot-body-", with: "")
+        second.swipeRight()
+        XCTAssertTrue(second.label.contains("Выбрать вещь"))
+        tap(app.buttons["remove-body-layer-\(secondID)"], in: app)
+        let firstSlotID = firstID.replacingOccurrences(of: "outfit-slot-body-", with: "")
+        tap(app.buttons["clear-slot-\(firstSlotID)"], in: app)
+        XCTAssertTrue(app.buttons[firstID].label.contains("Выбрать вещь"))
+        tap(app.buttons["remove-body-layer-\(firstSlotID)"], in: app)
+        XCTAssertTrue(app.buttons[firstID].exists, "Removing the last body row keeps an empty row")
+        XCTAssertFalse(app.buttons["save-outfit"].isEnabled)
+        capture("outfit-06-empty-last-layer")
+        app.buttons["cancel-outfit"].tap()
+        XCUIDevice.shared.press(.home)
+        app.terminate()
+    }
+
+    @MainActor
     func testCancelDraftDoesNotCreateOutfit() {
         let app = launch(reset: true)
         app.tabBars.buttons["Луки"].tap()
