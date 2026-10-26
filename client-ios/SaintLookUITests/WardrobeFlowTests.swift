@@ -337,6 +337,51 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testManualEditDraftCanContinueOrDiscardAndOnlySavePersists() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        let before = try await transportState()
+        try tapVisibleButton("edit-item", in: app)
+        app.buttons["cancel-item-edits"].tap()
+        XCTAssertFalse(app.alerts.firstMatch.exists, "An unchanged editor closes directly")
+        XCTAssertFalse(app.buttons["save-item-edits"].exists)
+        try tapVisibleButton("edit-item", in: app)
+        try chooseType("shirt", in: app)
+        app.buttons["cancel-item-edits"].tap()
+        let keepEditing = app.alerts.buttons.matching(identifier: "continue-item-editing").firstMatch
+        XCTAssertTrue(keepEditing.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.alerts.buttons.matching(identifier: "discard-item-changes").firstMatch.exists)
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "item-draft-discard-confirmation"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        keepEditing.tap()
+        XCTAssertTrue(app.buttons["choose-type"].label.contains("Рубашка"))
+        let header = app.navigationBars["Тип и цвета"]
+        header.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05))
+            .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
+        XCTAssertTrue(app.buttons["save-item-edits"].exists, "A dirty sheet must survive a dismissal drag")
+        app.buttons["cancel-item-edits"].tap()
+        app.alerts.buttons.matching(identifier: "discard-item-changes").firstMatch.tap()
+        XCTAssertFalse(app.buttons["save-item-edits"].exists)
+        XCTAssertTrue(app.staticTexts["Футболка"].exists)
+        XCTAssertFalse(app.staticTexts["Рубашка"].exists)
+        try tapVisibleButton("edit-item", in: app)
+        try chooseType("shirt", in: app)
+        app.buttons["save-item-edits"].tap()
+        XCTAssertTrue(app.staticTexts["Рубашка"].waitForExistence(timeout: 5))
+        try await control(mode: "offline")
+        app.terminate()
+        let restored = launch(reset: false, baseURL: testURL)
+        try tapVisibleButton("edit-item", in: restored)
+        XCTAssertTrue(restored.buttons["choose-type"].label.contains("Рубашка"))
+        let after = try await transportState()
+        XCTAssertEqual(after["forwardedUploads"] as? Int, before["forwardedUploads"] as? Int)
+        XCTAssertEqual(after["acceptedOperations"] as? Int, before["acceptedOperations"] as? Int)
+    }
+
+    @MainActor
     func testManualTypeSurvivesAutomaticResultAndOfflineColorEditsPersistWithoutUploadingAgain() async throws {
         try await control(mode: "offline")
         let app = launch(reset: true, baseURL: testURL)
