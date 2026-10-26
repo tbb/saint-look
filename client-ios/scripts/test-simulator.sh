@@ -243,4 +243,11 @@ fi
 if [[ -n "${SAINT_LOOK_UI_TEST_ONLY:-}" ]]; then
   test_options+=("-only-testing:${SAINT_LOOK_UI_TEST_ONLY}")
 fi
-xcodebuild "${test_options[@]}" -resultBundlePath "$result_path" test-without-building
+if [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" && "${SAINT_LOOK_OBSERVE_VISUAL_STALLS:-0}" == 1 ]]; then
+  # Observe the existing 60-second XCTest warning; do not retry or change its verdict.
+  python3 scripts/observe-visual-stalls.py --udid "$simulator_id" \
+    --profile "$SAINT_LOOK_VISUAL_PROFILE" --output "$(pwd)/build/visual-stall-diagnostics" \
+    -- xcodebuild "${test_options[@]}" -resultBundlePath "$result_path" test-without-building
+else
+  xcodebuild "${test_options[@]}" -resultBundlePath "$result_path" test-without-building
+fi
