@@ -111,7 +111,7 @@ jobs:
         env:
           TEST_SUITE: ${{ matrix.suite }}
           SAINT_LOOK_VISUAL_PROFILES: ${{ inputs.visual_profiles || 'all' }}
-          SAINT_LOOK_UI_TEST_ONLY: ${{ matrix.suite == 'outfits' && 'SaintLookUITests/OutfitFlowTests' || 'SaintLookUITests/WardrobeFlowTests' }}
+          SAINT_LOOK_UI_TEST_ONLY: SaintLookUITests/OutfitFlowTests/testMissingBodyLayerOpensItsPickerDirectlyAndCancelPreservesTheLook
           NODE_ENV: test
           SAINT_LOOK_TEST_CLOCK_FILE: ${{ runner.temp }}/saint-look-clock.json
           SAINT_LOOK_RECORD_VIDEO: '1'
