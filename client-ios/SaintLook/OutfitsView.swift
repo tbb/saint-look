@@ -26,10 +26,10 @@ struct OutfitsView: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text(outfit.displayName).font(.headline)
-                                HStack(spacing: 8) {
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 58, maximum: 80))], spacing: 8) {
                                     ForEach(outfit.slots) { slot in
                                         OutfitThumbnail(store: store, slot: slot)
-                                            .frame(width: 58, height: 64)
+                                            .frame(height: 64)
                                     }
                                 }
                                 Text("Вещей: \(outfit.selectedIDs.count)")
@@ -68,7 +68,7 @@ struct OutfitDetailView: View {
             if let outfit {
                 List {
                     ForEach(outfit.slots) { slot in
-                        Section(slot.zone.title) {
+                        Section(outfitSlotTitle(slot, in: outfit)) {
                             OutfitSlotContent(store: store, slot: slot)
                             if slot.needsReplacement {
                                 Button("Подобрать замену") { repairing = true }
@@ -104,17 +104,48 @@ struct OutfitEditorView: View {
                         .accessibilityIdentifier("outfit-name")
                 }
                 ForEach(draft.slots) { slot in
-                    Section(slot.zone.title) {
+                    Section(outfitSlotTitle(slot, in: draft)) {
                         Button { choosingSlot = slot } label: {
-                            OutfitSlotContent(store: store, slot: slot)
-                                .contentShape(Rectangle())
+                            VStack(alignment: .leading, spacing: 8) {
+                                OutfitSlotContent(store: store, slot: slot)
+                                if slot.itemID == nil && candidates(for: slot).isEmpty {
+                                    Text("Нет доступных вещей для этой зоны. Нужны готовая вырезка и подходящий тип.")
+                                        .font(.footnote).foregroundStyle(.secondary)
+                                }
+                            }
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("outfit-slot-\(slot.zone.rawValue)-\(slot.id)")
-                        .accessibilityLabel("\(slot.zone.title). \(itemLabel(slot))")
-                        if slot.itemID != nil {
+                        .accessibilityLabel("\(outfitSlotTitle(slot, in: draft)). \(itemLabel(slot))")
+                        .accessibilityValue(itemLabel(slot))
+                        .accessibilityHint("Нажмите для выбора. Смахните влево или вправо, чтобы сменить вещь.")
+                        .accessibilityAction(named: Text("Следующая вещь")) { cycle(slot.id, forward: true) }
+                        .accessibilityAction(named: Text("Предыдущая вещь")) { cycle(slot.id, forward: false) }
+                        .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { value in
+                            let horizontal = value.translation.width
+                            guard abs(horizontal) > 40, abs(horizontal) > abs(value.translation.height) * 1.3 else { return }
+                            cycle(slot.id, forward: horizontal < 0)
+                        })
+                        if slot.itemID != nil || slot.needsReplacement {
                             Button("Очистить", role: .destructive) { select(nil, for: slot.id) }
+                                .accessibilityLabel("Очистить: \(outfitSlotTitle(slot, in: draft))")
                                 .accessibilityIdentifier("clear-slot-\(slot.id)")
+                        }
+                        if slot.zone == .body {
+                            Button("Убрать слой", role: .destructive) {
+                                draft.removeBodyLayer(slot.id)
+                                errorMessage = nil
+                            }
+                            .accessibilityLabel("Убрать: \(outfitSlotTitle(slot, in: draft))")
+                            .accessibilityIdentifier("remove-body-layer-\(slot.id)")
+                            if slot.id == draft.slots.reversed().first(where: { $0.zone == .body })?.id {
+                                Button("Добавить слой", systemImage: "plus") {
+                                    draft.addBodyLayer()
+                                    errorMessage = nil
+                                }
+                                .accessibilityIdentifier("add-body-layer")
+                            }
                         }
                     }
                 }
@@ -160,9 +191,20 @@ struct OutfitEditorView: View {
     }
 
     private func select(_ itemID: UUID?, for slotID: UUID) {
-        guard let index = draft.slots.firstIndex(where: { $0.id == slotID }) else { return }
-        draft.slots[index].itemID = itemID
-        draft.slots[index].needsReplacement = false
+        guard let slot = draft.slots.first(where: { $0.id == slotID }) else { return }
+        if let itemID, !candidates(for: slot).contains(where: { $0.id == itemID }) { return }
+        draft.selectItem(itemID, for: slotID)
+        errorMessage = nil
+    }
+
+    private func candidates(for slot: OutfitSlot) -> [WardrobeItem] {
+        let occupied = Set(draft.slots.filter { $0.id != slot.id }.compactMap(\.itemID))
+        return store.outfitCandidates(for: slot.zone, excluding: occupied)
+    }
+
+    private func cycle(_ slotID: UUID, forward: Bool) {
+        guard let slot = draft.slots.first(where: { $0.id == slotID }) else { return }
+        draft.cycleItem(for: slotID, among: candidates(for: slot).map(\.id), forward: forward)
         errorMessage = nil
     }
 
@@ -262,4 +304,12 @@ struct OutfitThumbnail: View {
         }
         .accessibilityHidden(true)
     }
+}
+
+private func outfitSlotTitle(_ slot: OutfitSlot, in outfit: Outfit) -> String {
+    guard slot.zone == .body,
+          let index = outfit.slots.filter({ $0.zone == .body }).firstIndex(where: { $0.id == slot.id }) else {
+        return slot.zone.title
+    }
+    return "Тело · слой \(index + 1)"
 }

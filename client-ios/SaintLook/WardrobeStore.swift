@@ -196,7 +196,7 @@ final class WardrobeStore: ObservableObject {
         items.filter {
             $0.status == .ready && $0.resultFilename != nil && !selectedIDs.contains($0.id)
                 && zone.accepts($0, taxonomy: .shared) && displayImage(for: $0) != nil
-        }
+        }.sorted { $0.id.uuidString < $1.id.uuidString }
     }
 
     func saveOutfit(_ draft: Outfit) throws {
