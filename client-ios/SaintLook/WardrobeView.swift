@@ -9,6 +9,7 @@ struct WardrobeView: View {
     @State private var showSettings = false
     @State private var importing = false
     @State private var editingItem: WardrobeItem?
+    @State private var itemPendingDeletion: WardrobeItem?
     #if DEBUG
     @State private var trialImported = false
     #endif
@@ -76,7 +77,7 @@ struct WardrobeView: View {
                             .accessibilityIdentifier("edit-item")
                             .disabled(!store.storageAvailable)
                         ItemRecoveryActions(store: store, item: item)
-                        Button("Удалить вещь", role: .destructive) { store.deleteItem(item.id) }
+                        Button("Удалить вещь", role: .destructive) { itemPendingDeletion = item }
                             .buttonStyle(.borderless)
                             .accessibilityIdentifier("delete-item")
                             .disabled(!store.storageAvailable)
@@ -88,6 +89,17 @@ struct WardrobeView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Настройки", systemImage: "gearshape") { showSettings = true }
                 }
+            }
+            .alert("Удалить вещь?", isPresented: Binding(
+                get: { itemPendingDeletion != nil },
+                set: { if !$0 { itemPendingDeletion = nil } }
+            ), presenting: itemPendingDeletion) { item in
+                Button("Удалить вещь", role: .destructive) { store.deleteItem(item.id) }
+                    .accessibilityIdentifier("confirm-delete-item")
+                Button("Отмена", role: .cancel) { }
+                    .accessibilityIdentifier("cancel-delete-item")
+            } message: { _ in
+                Text("Вещь исчезнет из гардероба. В сохранённых луках её места останутся пустыми.")
             }
             .sheet(isPresented: $showSettings) { SettingsView(store: store) }
             .sheet(item: $editingItem) { item in ItemEditView(store: store, item: item) }
@@ -223,6 +235,15 @@ private struct ItemEditView: View {
     @State private var type: String
     @State private var colors: [String]
     @State private var error: String?
+    @State private var confirmingDiscard = false
+
+    private var dirty: Bool {
+        type != (item.displayedType ?? "") || Set(colors) != Set(item.displayedColors)
+    }
+
+    private var invalidColors: Bool {
+        Set(colors) != Set(item.displayedColors) && !WardrobeTaxonomy.shared.contains(colors: colors)
+    }
 
     init(store: WardrobeStore, item: WardrobeItem) {
         self.store = store
@@ -242,7 +263,7 @@ private struct ItemEditView: View {
                     }
                     .accessibilityIdentifier("choose-type")
                     NavigationLink {
-                        ColorSelectionView(selection: $colors)
+                        ColorSelectionView(selection: $colors, originalSelection: item.displayedColors)
                     } label: {
                         LabeledContent("Цвета", value: colors.isEmpty ? "Выбрать" : colors.joined(separator: ", "))
                     }
@@ -250,17 +271,32 @@ private struct ItemEditView: View {
                 } footer: {
                     Text("Правки сохраняются на устройстве без интернета. Повторная обработка фото не нужна.")
                 }
+                if invalidColors {
+                    Text("Выберите от одного до пяти цветов, чтобы сохранить правки.")
+                        .foregroundStyle(.secondary)
+                }
                 if let error { Text(error).foregroundStyle(.red) }
             }
             .navigationTitle("Тип и цвета")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { dismiss() }
+                    Button("Отмена") {
+                        if dirty { confirmingDiscard = true } else { dismiss() }
+                    }
+                    .accessibilityIdentifier("cancel-item-edits")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Сохранить") { save() }
                         .accessibilityIdentifier("save-item-edits")
+                        .disabled(invalidColors)
                 }
+            }
+            .interactiveDismissDisabled(dirty)
+            .alert("Отбросить изменения?", isPresented: $confirmingDiscard) {
+                Button("Отбросить изменения", role: .destructive) { dismiss() }
+                    .accessibilityIdentifier("discard-item-changes")
+                Button("Продолжить редактирование", role: .cancel) { }
+                    .accessibilityIdentifier("continue-item-editing")
             }
         }
     }
@@ -308,6 +344,7 @@ private struct TypeSelectionView: View {
 
 private struct ColorSelectionView: View {
     @Binding var selection: [String]
+    let originalSelection: [String]
     @Environment(\.dismiss) private var dismiss
     private let taxonomy = WardrobeTaxonomy.shared
 
@@ -341,11 +378,26 @@ private struct ColorSelectionView: View {
             }
         }
         .navigationTitle("Цвета")
+        .safeAreaInset(edge: .bottom) {
+            Text(invalidSelection ? "Выберите хотя бы один цвет." : "Готово применит выбор к черновику вещи.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+                .background(.bar)
+                .accessibilityIdentifier("color-selection-requirement")
+        }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Готово") { dismiss() }.accessibilityIdentifier("done-colors")
+                Button("Готово") { dismiss() }
+                    .accessibilityIdentifier("done-colors")
+                    .disabled(invalidSelection)
             }
         }
+    }
+
+    private var invalidSelection: Bool {
+        Set(selection) != Set(originalSelection) && !taxonomy.contains(colors: selection)
     }
 
     private var canonicalSelectionCount: Int {

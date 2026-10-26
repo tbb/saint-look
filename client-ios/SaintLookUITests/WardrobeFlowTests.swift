@@ -218,15 +218,43 @@ final class WardrobeFlowTests: XCTestCase {
 
 
     @MainActor
+    func testCancelDeletionKeepsPhotoAndDoesNotSendDelete() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        let before = try await transportState()
+        try tapVisibleButton("delete-item", in: app)
+        let cancel = app.alerts.buttons.matching(identifier: "cancel-delete-item").firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5), "Deletion must wait for explicit confirmation")
+        XCTAssertTrue(app.alerts.staticTexts["Вещь исчезнет из гардероба. В сохранённых луках её места останутся пустыми."].exists)
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "item-delete-confirmation"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let during = try await transportState()
+        XCTAssertEqual(during["forwardedDeletes"] as? Int, before["forwardedDeletes"] as? Int)
+        cancel.tap()
+        XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["ready-status"].firstMatch.exists)
+        app.terminate()
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 1, pending: 0)
+        XCTAssertTrue(restored.images["item-photo"].firstMatch.exists)
+        let after = try await transportState()
+        XCTAssertEqual(after["forwardedDeletes"] as? Int, before["forwardedDeletes"] as? Int)
+        XCTAssertEqual(after["forwardedUploads"] as? Int, before["forwardedUploads"] as? Int)
+    }
+
+    @MainActor
     func testDeletingTwoOfflineThingsSurvivesRelaunchAndNeverUploadsTheirPhotos() async throws {
         try await control(mode: "offline")
         let app = launch(reset: true, baseURL: testURL)
         app.buttons["add-demo-photo"].tap()
         app.buttons["add-demo-photo"].tap()
         await waitForSummary(app, ready: 0, pending: 2, timeout: 5)
-        try tapVisibleButton("delete-item", in: app)
+        try deleteFirstItem(in: app)
         await waitForSummary(app, ready: 0, pending: 1, timeout: 5)
-        try tapVisibleButton("delete-item", in: app)
+        try deleteFirstItem(in: app)
         await waitForSummary(app, ready: 0, pending: 0, timeout: 5)
         XCTAssertFalse(app.images["item-photo"].exists)
         app.terminate()
@@ -255,7 +283,7 @@ final class WardrobeFlowTests: XCTestCase {
         app.buttons["add-demo-photo"].tap()
         await waitForSummary(app, ready: 1, pending: 0)
         try await control(mode: "offline")
-        try tapVisibleButton("delete-item", in: app)
+        try deleteFirstItem(in: app)
         await waitForSummary(app, ready: 0, pending: 0, timeout: 5)
         XCTAssertFalse(app.images["item-photo"].exists)
         app.terminate()
@@ -293,7 +321,7 @@ final class WardrobeFlowTests: XCTestCase {
         app.buttons["add-demo-photo"].tap()
         XCTAssertTrue(app.staticTexts["failed-status"].firstMatch.waitForExistence(timeout: 40))
         try await control(mode: "offline")
-        try tapVisibleButton("delete-item", in: app)
+        try deleteFirstItem(in: app)
         await waitForSummary(app, ready: 0, pending: 0, timeout: 5)
         app.terminate()
 
@@ -306,6 +334,51 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertFalse(restored.images["item-photo"].exists)
         let state = try await transportState()
         XCTAssertEqual(state["forwardedUploads"] as? Int, 1, "Deleting a failed thing must not retry processing")
+    }
+
+    @MainActor
+    func testManualEditDraftCanContinueOrDiscardAndOnlySavePersists() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        let before = try await transportState()
+        try tapVisibleButton("edit-item", in: app)
+        app.navigationBars["Тип и цвета"].buttons["Отмена"].tap()
+        XCTAssertFalse(app.alerts.firstMatch.exists, "An unchanged editor closes directly")
+        XCTAssertFalse(app.buttons["save-item-edits"].exists)
+        try tapVisibleButton("edit-item", in: app)
+        try chooseType("shirt", in: app)
+        app.navigationBars["Тип и цвета"].buttons["Отмена"].tap()
+        let keepEditing = app.alerts.buttons.matching(identifier: "continue-item-editing").firstMatch
+        XCTAssertTrue(keepEditing.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.alerts.buttons.matching(identifier: "discard-item-changes").firstMatch.exists)
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "item-draft-discard-confirmation"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        keepEditing.tap()
+        XCTAssertTrue(app.staticTexts["Рубашка"].exists)
+        let header = app.navigationBars["Тип и цвета"]
+        header.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05))
+            .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
+        XCTAssertTrue(app.buttons["save-item-edits"].exists, "A dirty sheet must survive a dismissal drag")
+        app.navigationBars["Тип и цвета"].buttons["Отмена"].tap()
+        app.alerts.buttons.matching(identifier: "discard-item-changes").firstMatch.tap()
+        XCTAssertFalse(app.buttons["save-item-edits"].exists)
+        XCTAssertTrue(app.staticTexts["Футболка"].exists)
+        XCTAssertFalse(app.staticTexts["Рубашка"].exists)
+        try tapVisibleButton("edit-item", in: app)
+        try chooseType("shirt", in: app)
+        app.buttons["save-item-edits"].tap()
+        XCTAssertTrue(app.staticTexts["Рубашка"].waitForExistence(timeout: 5))
+        try await control(mode: "offline")
+        app.terminate()
+        let restored = launch(reset: false, baseURL: testURL)
+        try tapVisibleButton("edit-item", in: restored)
+        XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
+        let after = try await transportState()
+        XCTAssertEqual(after["forwardedUploads"] as? Int, before["forwardedUploads"] as? Int)
+        XCTAssertEqual(after["acceptedOperations"] as? Int, before["acceptedOperations"] as? Int)
     }
 
     @MainActor
@@ -352,6 +425,39 @@ final class WardrobeFlowTests: XCTestCase {
         let after = try await transportState()
         XCTAssertEqual(after["acceptedOperations"] as? Int, 1)
         XCTAssertEqual(after["forwardedUploads"] as? Int, 1, "Local edits must not submit a new processing operation")
+    }
+
+    @MainActor
+    func testEmptyNewColorSelectionCannotFinishAndDoneOnlyUpdatesDraft() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        let before = try await transportState()
+        try tapVisibleButton("edit-item", in: app)
+        try tapVisibleButton("choose-colors", in: app)
+        try tapColor("blue", in: app)
+        XCTAssertFalse(app.buttons["done-colors"].isEnabled, "Removing the final color must not finish a new invalid selection")
+        XCTAssertTrue(app.staticTexts["color-selection-requirement"].exists)
+        try tapColor("green", in: app)
+        XCTAssertTrue(app.buttons["done-colors"].isEnabled)
+        app.buttons["done-colors"].tap()
+        XCTAssertTrue(app.staticTexts["Зелёный"].exists)
+        app.navigationBars["Тип и цвета"].buttons["Отмена"].tap()
+        XCTAssertTrue(app.alerts.buttons.matching(identifier: "discard-item-changes").firstMatch.waitForExistence(timeout: 5))
+        app.alerts.buttons.matching(identifier: "discard-item-changes").firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Синий"].exists, "Done must not persist before the item editor is saved")
+        XCTAssertFalse(app.staticTexts["Зелёный"].exists)
+        try tapVisibleButton("edit-item", in: app)
+        try chooseColors(["green"], replacing: ["blue"], in: app)
+        app.buttons["save-item-edits"].tap()
+        try await control(mode: "offline")
+        app.terminate()
+        let restored = launch(reset: false, baseURL: testURL)
+        try tapVisibleButton("edit-item", in: restored)
+        XCTAssertTrue(restored.staticTexts["Зелёный"].exists)
+        let after = try await transportState()
+        XCTAssertEqual(after["forwardedUploads"] as? Int, before["forwardedUploads"] as? Int)
+        XCTAssertEqual(after["acceptedOperations"] as? Int, before["acceptedOperations"] as? Int)
     }
 
     @MainActor
@@ -589,7 +695,7 @@ final class WardrobeFlowTests: XCTestCase {
         try tapVisibleButton("replace-demo-photo", in: app)
         let held = try await waitForTransportCount("heldResultResponses", equalTo: 1, timeout: 10)
         XCTAssertTrue(held, "The replacement result must be held before deleting the thing")
-        try tapVisibleButton("delete-item", in: app)
+        try deleteFirstItem(in: app)
         await waitForSummary(app, ready: 0, pending: 0, timeout: 5)
         try await control(mode: "online")
         let deleted = try await waitForTransportCount("deletedItems", equalTo: 1, timeout: 10)
@@ -650,6 +756,14 @@ final class WardrobeFlowTests: XCTestCase {
         }
         XCTFail("Button \(identifier) did not become fully visible")
         throw InteractionError.buttonNotVisible(identifier)
+    }
+
+    @MainActor
+    private func deleteFirstItem(in app: XCUIApplication) throws {
+        try tapVisibleButton("delete-item", in: app)
+        let confirmation = app.alerts.buttons.matching(identifier: "confirm-delete-item").firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.tap()
     }
 
     @MainActor
