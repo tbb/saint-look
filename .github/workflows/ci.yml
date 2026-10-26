@@ -88,7 +88,7 @@ jobs:
       matrix:
         suite: ${{ fromJSON(inputs.ios_suite == 'outfits' && '["outfits"]' || inputs.ios_suite == 'wardrobe' && '["wardrobe"]' || '["wardrobe","outfits"]') }}
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.suite == 'outfits' && 45 || 30 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -151,12 +151,22 @@ jobs:
           node client-ios/scripts/ui-test-proxy.mjs > "$RUNNER_TEMP/ui-proxy.log" 2>&1 &
           proxy_pid=$!
           wait_for_health http://127.0.0.1:8788/health
-          bash client-ios/scripts/test-simulator.sh
           if [[ "$TEST_SUITE" == "outfits" ]]; then
-          SAINT_LOOK_UI_CONTENT_SIZE=accessibility-extra-extra-extra-large \
-          SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/OutfitFlowTests/testOutfitActionsStayLocalAndAccessibleWithoutSwipes \
-          bash client-ios/scripts/test-simulator.sh
+            # Run both independent font-size checks, preserving failure and cancellation.
+            trap 'exit 130' INT
+            trap 'exit 143' TERM
+            normal_status=0
+            bash client-ios/scripts/test-simulator.sh || normal_status=$?
+            if (( normal_status >= 128 )); then exit "$normal_status"; fi
+            large_status=0
+            SAINT_LOOK_UI_CONTENT_SIZE=accessibility-extra-extra-extra-large \
+            SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/OutfitFlowTests/testOutfitActionsStayLocalAndAccessibleWithoutSwipes \
+            bash client-ios/scripts/test-simulator.sh || large_status=$?
+            if (( large_status >= 128 )); then exit "$large_status"; fi
+            if (( normal_status != 0 )); then exit "$normal_status"; fi
+            exit "$large_status"
           fi
+          bash client-ios/scripts/test-simulator.sh
           if [[ "$TEST_SUITE" == "wardrobe" ]]; then
           # Exercise the explicit XCTest manifest using one existing local test.
           # This validates the runner path; it is not a remote deployment demonstration.

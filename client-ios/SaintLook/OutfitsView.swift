@@ -133,6 +133,7 @@ struct OutfitEditorView: View {
     @State private var saving = false
     @State private var initial: Outfit
     @State private var confirmingDiscard = false
+    @FocusState private var naming: Bool
 
     init(store: WardrobeStore, draft: Outfit) {
         self.store = store
@@ -148,6 +149,9 @@ struct OutfitEditorView: View {
             List {
                 Section {
                     TextField("Название — необязательно", text: $draft.name)
+                        .focused($naming)
+                        .submitLabel(.done)
+                        .onSubmit { naming = false }
                         .accessibilityIdentifier("outfit-name")
                 }
                 ForEach(draft.slots) { slot in
@@ -327,6 +331,8 @@ struct OutfitPickerView: View {
                     List(candidates) { item in
                         Button { choose(item.id) } label: {
                             OutfitSlotContent(store: store, slot: OutfitSlot(zone: zone, itemID: item.id))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("outfit-candidate-\(item.id)")
