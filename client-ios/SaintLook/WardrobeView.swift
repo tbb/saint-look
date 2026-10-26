@@ -233,7 +233,7 @@ private struct ItemDetailView: View {
                         }
                         Button { editingItem = item } label: {
                             Label("Изменить тип и цвета", systemImage: "slider.horizontal.3")
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                         }
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("edit-item")

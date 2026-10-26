@@ -188,6 +188,7 @@ final class VisualAcceptanceTests: XCTestCase {
         hitEvidence.name = "\(profile)-item-edit-hit-frame"
         hitEvidence.lifetime = .keepAlways
         add(hitEvidence)
+        XCTAssertGreaterThanOrEqual(edit.frame.height, 44, "Item editing needs a native hit target at least 44 points tall")
         edit.tap()
         tap(app.buttons["choose-colors"], in: app)
         XCTAssertTrue(app.buttons["color-white"].waitForExistence(timeout: 5))
