@@ -15,6 +15,12 @@ on:
       - 'fly.toml'
       - '.dockerignore'
   workflow_dispatch:
+    inputs:
+      ios_suite:
+        description: Local Simulator suite
+        type: choice
+        default: all
+        options: [all, wardrobe, outfits]
 
 permissions:
   contents: read
@@ -76,6 +82,10 @@ jobs:
   ios:
     if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.ios == 'true'
     needs: changes
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJSON(inputs.ios_suite == 'outfits' && '["outfits"]' || inputs.ios_suite == 'wardrobe' && '["wardrobe"]' || '["wardrobe","outfits"]') }}
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -88,8 +98,11 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm --prefix backend ci --ignore-scripts
+      - run: bash client-ios/scripts/test-outfit-core.sh
       - name: Real Simulator and local backend (controlled providers)
         env:
+          TEST_SUITE: ${{ matrix.suite }}
+          SAINT_LOOK_UI_TEST_ONLY: ${{ matrix.suite == 'outfits' && 'SaintLookUITests/OutfitFlowTests' || 'SaintLookUITests/WardrobeFlowTests' }}
           NODE_ENV: test
           SAINT_LOOK_TEST_CLOCK_FILE: ${{ runner.temp }}/saint-look-clock.json
           SAINT_LOOK_RECORD_VIDEO: '1'
@@ -138,6 +151,7 @@ jobs:
           proxy_pid=$!
           wait_for_health http://127.0.0.1:8788/health
           bash client-ios/scripts/test-simulator.sh
+          if [[ "$TEST_SUITE" == "wardrobe" ]]; then
           # Exercise the explicit XCTest manifest using one existing local test.
           # This validates the runner path; it is not a remote deployment demonstration.
           SAINT_LOOK_REMOTE_SMOKE=1 \
@@ -148,16 +162,25 @@ jobs:
           SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/WardrobeFlowTests/testPhotoBecomesReadyThroughBackendAndSurvivesOfflineRelaunch \
           SAINT_LOOK_RECORD_VIDEO=0 \
           bash client-ios/scripts/test-simulator.sh
+          fi
       - name: Upload Simulator screencast
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-ui-video
+          name: simulator-ui-video-${{ matrix.suite }}
           path: client-ios/build/videos/*.mp4
           if-no-files-found: warn
           retention-days: 7
           compression-level: 0
 
+      - name: Upload local XCTest results and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-results-${{ matrix.suite }}
+          path: client-ios/build/*.xcresult
+          if-no-files-found: warn
+          retention-days: 7
 
   deploy-policy:
     if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
