@@ -10,7 +10,15 @@ struct OutfitsView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if store.outfits.isEmpty {
+                if !store.storageAvailable {
+                    ContentUnavailableView {
+                        Label {
+                            Text("Луки недоступны").accessibilityIdentifier("outfits-unavailable")
+                        } icon: { Image(systemName: "exclamationmark.triangle") }
+                    } description: {
+                        Text("Не удалось прочитать данные на устройстве. Попробуйте открыть приложение снова.")
+                    }
+                } else if store.outfits.isEmpty {
                     ContentUnavailableView {
                         Label("Пока нет луков", systemImage: "square.grid.2x2")
                     } description: {
@@ -68,8 +76,9 @@ struct OutfitsView: View {
                     .background(SaintLookStyle.canvas)
                 }
             }
+            .safeAreaInset(edge: .top, spacing: 0) { AppNoticeView(store: store) }
             .safeAreaInset(edge: .top, spacing: 0) {
-                if !store.outfits.isEmpty && eligibleCount < 2 {
+                if store.storageAvailable && !store.outfits.isEmpty && eligibleCount < 2 {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Для нового лука нужны хотя бы две готовые вещи.")
                             .font(.footnote).foregroundStyle(.secondary)
@@ -85,9 +94,10 @@ struct OutfitsView: View {
             .navigationTitle("Луки")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Создать", systemImage: "plus") { creating = true }
-                        .accessibilityIdentifier("create-outfit")
-                        .disabled(!store.storageAvailable)
+                    if store.storageAvailable {
+                        Button("Создать", systemImage: "plus") { creating = true }
+                            .accessibilityIdentifier("create-outfit")
+                    }
                 }
             }
             .sheet(isPresented: $creating) {
@@ -145,6 +155,7 @@ struct OutfitDetailView: View {
                     .frame(maxWidth: 620)
                     .frame(maxWidth: .infinity)
                 }
+                .safeAreaInset(edge: .top, spacing: 0) { AppNoticeView(store: store) }
                 .background(SaintLookStyle.canvas)
                 .navigationTitle("Лук")
                 .navigationBarTitleDisplayMode(.inline)
