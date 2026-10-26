@@ -42,3 +42,9 @@ xcuserdata/
 
 # Generated immutable deployment identity
 /backend/REVISION
+
+# Personal iPhone packages and age decryption identities
+*.ipa
+*.ipa.age
+*age-identity*.txt
+saint-look-identity.txt
