@@ -84,7 +84,7 @@ class ObserverTests(unittest.TestCase):
         processes = []
 
         def fake_sample(command, **kwargs):
-            self.assertEqual(command[:4], ['/usr/bin/sample', '123', '3', '10'])
+            self.assertEqual(command[:4], ['/usr/bin/sample', '123', '1', '10'])
             process = real_popen([sys.executable, '-c', 'import time; time.sleep(30)'], **kwargs)
             processes.append(process)
             return process
@@ -104,6 +104,52 @@ class ObserverTests(unittest.TestCase):
             self.assertEqual(len(processes), 1)
             self.assertIsNotNone(processes[0].returncode)
             self.assertEqual(json.loads((Path(folder) / 'sample.json').read_text())['stopped'], 'test-completed')
+
+    def test_blocked_sampler_observes_owned_pid_and_reaps_both_with_common_bound(self):
+        real_popen = subprocess.Popen
+        for stop_after in (None, 4.5):
+            with self.subTest(stop_after=stop_after), tempfile.TemporaryDirectory() as folder:
+                processes, commands, started = [], [], []
+                stop = threading.Event()
+
+                def fake_sample(command, **kwargs):
+                    commands.append(command)
+                    started.append(time.monotonic())
+                    process = real_popen([sys.executable, '-u', '-c',
+                        'import sys,time; print("Sampling process", file=sys.stderr); time.sleep(30)'], **kwargs)
+                    processes.append(process)
+                    return process
+
+                timer = threading.Timer(stop_after, stop.set) if stop_after else None
+                try:
+                    if timer:
+                        timer.start()
+                    before = time.monotonic()
+                    with patch.object(observer, 'app_pid', return_value=123), \
+                            patch.object(observer.Path, 'is_file', return_value=True), \
+                            patch.object(observer.subprocess, 'Popen', side_effect=fake_sample):
+                        observer.collect(Path(folder), UDID, ['action'], stop)
+                    elapsed = time.monotonic() - before
+                    self.assertEqual(len(processes), 2)
+                    self.assertEqual(commands[1][:4], ['/usr/bin/sample', str(processes[0].pid), '1', '10'])
+                    self.assertEqual(Path(commands[1][-1]).name, 'sampler-threads.txt')
+                    self.assertGreaterEqual(started[1] - started[0], 4)
+                    self.assertLess(elapsed, (stop_after or 8) + 1.5)
+                    for process in processes:
+                        self.assertIsNotNone(process.returncode)
+                        with self.assertRaises(ChildProcessError):
+                            os.waitpid(process.pid, os.WNOHANG)
+                    metadata = json.loads((Path(folder) / 'sample.json').read_text())
+                    self.assertEqual(metadata['stopped'], 'test-completed' if stop_after else '8-second-limit')
+                    self.assertIn('Sampling process', metadata['primaryStderrAtSecondary'])
+                finally:
+                    if timer:
+                        timer.cancel()
+                        timer.join()
+                    for process in processes:
+                        if process.poll() is None:
+                            process.kill()
+                            process.communicate()
 
 
 if __name__ == '__main__':

@@ -113,7 +113,8 @@ final class VisualAcceptanceTests: XCTestCase {
     private func waitNavigation(_ title: String, in app: XCUIApplication) throws {
         let bar = app.navigationBars[title]
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            bar.exists && bar.identifier == title && self.hasReachableNavigationControl(bar, in: app)
+            // Error destinations may intentionally offer no toolbar actions.
+            bar.exists && bar.identifier == title && !bar.frame.intersection(app.frame).isEmpty
         }, object: bar)
         guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
             diagnose("unavailable-navigation", app: app, detail: "Expected destination: \(title)")
@@ -134,6 +135,7 @@ final class VisualAcceptanceTests: XCTestCase {
         }
         try nativeTap(button, in: app)
         try waitNavigation(title, in: app)
+        try require(button.isSelected, "The intended native tab must be selected")
     }
 
     @MainActor
@@ -347,7 +349,19 @@ final class VisualAcceptanceTests: XCTestCase {
         try nativeTap(app.buttons["cancel-item-edits"], in: app)
         try back(app)
         try selectTab("Луки", in: app)
-        try tap(app.buttons["create-first-outfit"], in: app)
+        let createFirst = app.buttons["create-first-outfit"]
+        let outfitsBar = try navigationBar(app)
+        try requireEqual(outfitsBar.identifier, "Луки")
+        let overlays = app.tabBars.allElementsBoundByIndex + app.keyboards.allElementsBoundByIndex
+        // ContentUnavailableView has no ScrollView when its contents already fit (iPad).
+        let creationIsVisible = createFirst.exists && createFirst.isHittable
+            && app.frame.contains(createFirst.frame) && createFirst.frame.minY >= outfitsBar.frame.maxY
+            && !overlays.contains { $0.exists && $0.frame.intersects(createFirst.frame) }
+        if creationIsVisible {
+            try nativeTap(createFirst, in: app)
+        } else {
+            try tap(createFirst, in: app) // Maximum text still exercises bounded native scrolling.
+        }
         try waitVisible(app.buttons["cancel-outfit"], in: app)
         try tap(slot("body", in: app), in: app)
         try choose(0, in: app)
