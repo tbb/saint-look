@@ -88,11 +88,26 @@ final class VisualAcceptanceTests: XCTestCase {
 
     @MainActor
     private func navigationBar(_ app: XCUIApplication) throws -> XCUIElement {
-        guard let bar = app.navigationBars.allElementsBoundByIndex.reversed().first(where: { $0.isHittable }) else {
+        guard let bar = app.navigationBars.allElementsBoundByIndex.reversed().first(where: {
+            $0.exists && !$0.frame.intersection(app.frame).isEmpty
+        }) else {
             diagnose("missing-foreground-navigation", app: app)
             throw JourneyFailure.failed
         }
         return bar
+    }
+
+    @MainActor
+    private func waitNavigation(_ title: String, in app: XCUIApplication) throws {
+        let bar = app.navigationBars[title]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            bar.exists && bar.identifier == title && !bar.frame.intersection(app.frame).isEmpty
+        }, object: bar)
+        guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
+            diagnose("unavailable-navigation", app: app, detail: "Expected destination: \(title)")
+            try require(false, "Expected navigation title must be visible")
+            return
+        }
     }
 
     @MainActor
@@ -106,7 +121,7 @@ final class VisualAcceptanceTests: XCTestCase {
             button = app.buttons.matching(NSPredicate(format: "identifier == %@ AND label == %@", symbol, title)).firstMatch
         }
         try nativeTap(button, in: app)
-        try waitVisible(app.navigationBars[title], in: app)
+        try waitNavigation(title, in: app)
     }
 
     @MainActor
@@ -127,7 +142,7 @@ final class VisualAcceptanceTests: XCTestCase {
         let bar = try navigationBar(app)
         try require(bar.identifier != destination, "Back requires a detail screen, not the destination itself")
         try nativeTap(bar.buttons.firstMatch, in: app)
-        try waitVisible(app.navigationBars[destination], in: app)
+        try waitNavigation(destination, in: app)
     }
 
     @MainActor
@@ -148,8 +163,19 @@ final class VisualAcceptanceTests: XCTestCase {
         try reveal(field, in: app, towardTop: true)
         let current = (field.value as? String) ?? ""
         let populated = !current.isEmpty && current != "Название — необязательно"
+        // Focus once, then perform the distinct selection gesture on the focused field.
+        try nativeTap(field, in: app)
+        let keyboardReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let keyboard = app.keyboards.firstMatch
+            return keyboard.exists && keyboard.isHittable && !keyboard.frame.isEmpty && app.frame.intersects(keyboard.frame)
+        }, object: app)
+        guard XCTWaiter.wait(for: [keyboardReady], timeout: 15) == .completed else {
+            diagnose("keyboard-focus-unavailable", app: app)
+            try require(false, "No visible, hittable Simulator keyboard; stop before typing")
+            return
+        }
         if populated {
-            // One intended native replacement gesture; no assumption about the current caret position.
+            // Select the complete value without assuming the current caret position.
             let failures = testRun?.failureCount ?? 0
             field.press(forDuration: 1.1)
             try requireEqual(testRun?.failureCount ?? 0, failures, "Native text selection gesture failed")
@@ -165,17 +191,6 @@ final class VisualAcceptanceTests: XCTestCase {
                 return
             }
             try nativeTap(selectAllMenu.exists && selectAllMenu.isHittable ? selectAllMenu : selectAllButton, in: app)
-        } else {
-            try nativeTap(field, in: app)
-        }
-        let keyboardReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            let keyboard = app.keyboards.firstMatch
-            return keyboard.exists && keyboard.isHittable && !keyboard.frame.isEmpty && app.frame.intersects(keyboard.frame)
-        }, object: app)
-        guard XCTWaiter.wait(for: [keyboardReady], timeout: 15) == .completed else {
-            diagnose("keyboard-focus-unavailable", app: app)
-            try require(false, "No visible, hittable Simulator keyboard; stop before typing")
-            return
         }
         let failures = testRun?.failureCount ?? 0
         field.typeText(name)
@@ -205,7 +220,7 @@ final class VisualAcceptanceTests: XCTestCase {
         case "Тип и цвета": query = app.collectionViews.containing(.button, identifier: "choose-type")
         case "Собрать лук", "Изменить лук": query = app.scrollViews.containing(.textField, identifier: "outfit-name")
         case "Голова", "Тело", "Низ", "Обувь": query = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-'"))
-        case "Луки": query = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-'"))
+        case "Луки": query = app.scrollViews.containing(NSPredicate(format: "identifier == 'create-first-outfit' OR identifier BEGINSWITH 'outfit-card-'"))
         case "Лук": query = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH 'repair-slot-'"))
         default: query = app.scrollViews.containing(.button, identifier: "edit-item")
         }
@@ -320,7 +335,7 @@ final class VisualAcceptanceTests: XCTestCase {
         try nativeTap(app.buttons["cancel-item-edits"], in: app)
         try back(app)
         try selectTab("Луки", in: app)
-        try nativeTap(app.buttons["create-first-outfit"], in: app)
+        try tap(app.buttons["create-first-outfit"], in: app)
         try waitVisible(app.buttons["cancel-outfit"], in: app)
         try tap(slot("body", in: app), in: app)
         try choose(0, in: app)
