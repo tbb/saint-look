@@ -60,18 +60,106 @@ final class WardrobeFlowTests: XCTestCase {
         await fulfillment(of: [expectation], timeout: timeout)
     }
 
-    private func launch(reset: Bool, baseURL: String, trialIndex: Int? = nil) -> XCUIApplication {
+    private func launch(reset: Bool, baseURL: String, trialIndex: Int? = nil, cameraProblem: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["SAINT_LOOK_BASE_URL"] = baseURL
         app.launchEnvironment["SAINT_LOOK_OWNER_TOKEN"] = testToken
         app.launchEnvironment["SAINT_LOOK_UI_TESTING"] = "1"
         app.launchEnvironment["SAINT_LOOK_RESET_DATA"] = reset ? "1" : "0"
+        if let cameraProblem { app.launchEnvironment["SAINT_LOOK_CAMERA_TEST_PROBLEM"] = cameraProblem }
         if let trialIndex {
             app.launchEnvironment["SAINT_LOOK_LIVE_TRIAL"] = "1"
             app.launchEnvironment["SAINT_LOOK_TRIAL_PHOTO_INDEX"] = String(trialIndex)
         }
         app.launch()
         return app
+    }
+
+    @MainActor
+    func testSourceCancellationAndUnavailableCameraDoNotCreateAnItem() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        XCTAssertTrue(app.buttons["add-photo"].waitForExistence(timeout: 5))
+        app.buttons["add-photo"].tap()
+        XCTAssertTrue(app.buttons["photo-source-camera"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["photo-source-library"].exists)
+        capturePhotoSource("photo-source-chooser-empty", in: app)
+        app.buttons["photo-source-cancel"].tap()
+        XCTAssertTrue(app.staticTexts["wardrobe-empty"].exists)
+
+        app.buttons["add-photo"].tap()
+        app.buttons["photo-source-camera"].tap()
+        // Real Simulator capability check: no fake camera image or granted permission.
+        XCTAssertTrue(app.alerts["Камера недоступна"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["На этом устройстве камера недоступна. Выберите фото из галереи."].exists)
+        XCTAssertFalse(app.buttons["camera-open-settings"].exists)
+        capturePhotoSource("photo-source-camera-unavailable", in: app)
+        app.buttons["camera-error-cancel"].tap()
+        XCTAssertTrue(app.staticTexts["wardrobe-empty"].exists)
+        let state = try await transportState()
+        XCTAssertEqual(state["acceptedOperations"] as? Int, 0)
+    }
+
+    @MainActor
+    func testDeniedCameraOffersSettingsAndGalleryWithoutCreatingAnItem() async throws {
+        // Only the failure is injected; this tests app recovery, not the OS permission dialog.
+        let app = launch(reset: true, baseURL: testURL, cameraProblem: "denied")
+        app.buttons["add-photo"].tap()
+        app.buttons["photo-source-camera"].tap()
+        XCTAssertTrue(app.alerts["Камера недоступна"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["camera-open-settings"].exists)
+        XCTAssertTrue(app.buttons["camera-use-library"].exists)
+        capturePhotoSource("photo-source-camera-denied", in: app)
+        app.buttons["camera-use-library"].tap()
+        let alertDismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+                                                       object: app.alerts["Камера недоступна"])
+        await fulfillment(of: [alertDismissed], timeout: 5)
+
+        // PhotosPicker remains the actual system picker, with its own cancellation.
+        let cancel = app.buttons.matching(NSPredicate(format: "label IN %@",
+            ["Cancel", "Отмена", "Отменить", "Close", "Закрыть"])).firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10), "The system gallery must open after denied camera access")
+        capturePhotoSource("photo-source-system-gallery", in: app)
+        cancel.tap()
+        XCTAssertTrue(app.buttons["add-photo"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["wardrobe-empty"].exists)
+        let state = try await transportState()
+        XCTAssertEqual(state["acceptedOperations"] as? Int, 0)
+    }
+
+    @MainActor
+    func testReplacementSourceCancellationAndRestrictedCameraKeepTheItem() async throws {
+        let app = launch(reset: true, baseURL: testURL, cameraProblem: "restricted")
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        // A populated collection exposes the same source choices through its toolbar.
+        app.buttons["add-photo"].tap()
+        XCTAssertTrue(app.buttons["photo-source-camera"].waitForExistence(timeout: 5))
+        capturePhotoSource("photo-source-chooser-populated", in: app)
+        app.buttons["photo-source-cancel"].tap()
+        try tapVisibleButton("replace-photo", in: app)
+        XCTAssertTrue(app.buttons["photo-source-library"].waitForExistence(timeout: 5))
+        capturePhotoSource("photo-source-replacement", in: app)
+        app.buttons["photo-source-cancel"].tap()
+        try tapVisibleButton("replace-photo", in: app)
+        app.buttons["photo-source-camera"].tap()
+        XCTAssertTrue(app.alerts["Камера недоступна"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Доступ к камере ограничен настройками устройства. Можно выбрать фото из галереи."].exists)
+        XCTAssertFalse(app.buttons["camera-open-settings"].exists)
+        capturePhotoSource("photo-source-camera-restricted", in: app)
+        app.buttons["camera-error-cancel"].tap()
+        returnToCollection(in: app)
+        await waitForSummary(app, ready: 1, pending: 0)
+        let state = try await transportState()
+        XCTAssertEqual(state["acceptedOperations"] as? Int, 1,
+                       "Canceling or failing to open the camera must not replace the ready photo")
+    }
+
+    @MainActor
+    private func capturePhotoSource(_ name: String, in app: XCUIApplication) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     @MainActor
