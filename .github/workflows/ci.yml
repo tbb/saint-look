@@ -20,7 +20,12 @@ on:
         description: Local Simulator suite
         type: choice
         default: all
-        options: [all, wardrobe, outfits]
+        options: [all, wardrobe, outfits, visual]
+      visual_profiles:
+        description: Visual evidence profiles (only used by the visual suite)
+        type: choice
+        default: all
+        options: [all, iphone-light, iphone-dark, iphone-max-text, ipad-light]
 
 permissions:
   contents: read
@@ -80,15 +85,17 @@ jobs:
       - run: npm --prefix backend test
 
   ios:
-    name: ${{ matrix.suite == 'wardrobe' && 'ios' || 'ios-outfits' }}
+    name: ${{ matrix.suite == 'wardrobe' && 'ios' || format('ios-{0}', matrix.suite) }}
     if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.ios == 'true'
     needs: changes
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(inputs.ios_suite == 'outfits' && '["outfits"]' || inputs.ios_suite == 'wardrobe' && '["wardrobe"]' || '["wardrobe","outfits"]') }}
+        suite: ${{ fromJSON(inputs.ios_suite == 'outfits' && '["outfits"]' || inputs.ios_suite == 'wardrobe' && '["wardrobe"]' || inputs.ios_suite == 'visual' && '["visual"]' || '["wardrobe","outfits","visual"]') }}
     runs-on: macos-26
-    timeout-minutes: ${{ matrix.suite == 'outfits' && 45 || 30 }}
+    # Wardrobe includes cold Simulator startup (~9 min observed), 21 checks and manifest smoke.
+    # Keep a bounded 40 min for that job; outfits and four visual profiles retain their own caps.
+    timeout-minutes: ${{ matrix.suite == 'visual' && 90 || matrix.suite == 'outfits' && 60 || 40 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -100,9 +107,14 @@ jobs:
           cache-dependency-path: backend/package-lock.json
       - run: npm --prefix backend ci --ignore-scripts
       - run: bash client-ios/scripts/test-outfit-core.sh
+      - run: bash client-ios/scripts/test-visual-fixtures.sh
+      - name: Check bounded visual diagnostic observer
+        if: matrix.suite == 'visual'
+        run: PYTHONDONTWRITEBYTECODE=1 python3 client-ios/scripts/tests/test-visual-stall-observer.py
       - name: Real Simulator and local backend (controlled providers)
         env:
           TEST_SUITE: ${{ matrix.suite }}
+          SAINT_LOOK_VISUAL_PROFILES: ${{ inputs.visual_profiles || 'all' }}
           SAINT_LOOK_UI_TEST_ONLY: ${{ matrix.suite == 'outfits' && 'SaintLookUITests/OutfitFlowTests' || 'SaintLookUITests/WardrobeFlowTests' }}
           NODE_ENV: test
           SAINT_LOOK_TEST_CLOCK_FILE: ${{ runner.temp }}/saint-look-clock.json
@@ -151,6 +163,10 @@ jobs:
           node client-ios/scripts/ui-test-proxy.mjs > "$RUNNER_TEMP/ui-proxy.log" 2>&1 &
           proxy_pid=$!
           wait_for_health http://127.0.0.1:8788/health
+          if [[ "$TEST_SUITE" == "visual" ]]; then
+            bash client-ios/scripts/test-visual-acceptance.sh
+            exit $?
+          fi
           if [[ "$TEST_SUITE" == "outfits" ]]; then
             # Run both independent font-size checks, preserving failure and cancellation.
             trap 'exit 130' INT
@@ -193,6 +209,9 @@ jobs:
         if: always()
         run: |
           mkdir -p client-ios/build/screenshots
+          for evidence in client-ios/build/*-profile.json client-ios/build/*-devices.json; do
+            if [[ -f "$evidence" ]]; then cp "$evidence" client-ios/build/screenshots/; fi
+          done
           for result in client-ios/build/*.xcresult; do
             [[ -d "$result" ]] || continue
             output="client-ios/build/screenshots/$(basename "$result" .xcresult)"
@@ -204,6 +223,14 @@ jobs:
         with:
           name: simulator-screenshots-${{ matrix.suite }}
           path: client-ios/build/screenshots
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload visual stall diagnostics
+        if: always() && matrix.suite == 'visual'
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-stall-diagnostics-visual
+          path: client-ios/build/visual-stall-diagnostics
           if-no-files-found: warn
           retention-days: 7
       - name: Upload local XCTest results and screenshots

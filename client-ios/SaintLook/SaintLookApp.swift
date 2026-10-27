@@ -4,16 +4,20 @@ import SwiftUI
 @MainActor
 struct SaintLookApp: App {
     @StateObject private var store = WardrobeStore()
+    @State private var selectedTab = AppTab.wardrobe
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
-            TabView {
+            TabView(selection: $selectedTab) {
                 WardrobeView(store: store)
                     .tabItem { Label("Гардероб", systemImage: "tshirt") }
-                OutfitsView(store: store)
+                    .tag(AppTab.wardrobe)
+                OutfitsView(store: store) { selectedTab = .wardrobe }
                     .tabItem { Label("Луки", systemImage: "square.grid.2x2") }
+                    .tag(AppTab.outfits)
             }
+                .tint(SaintLookStyle.accent)
                 .task { store.resumePendingItems() }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { store.resumePendingItems() }
@@ -21,4 +25,8 @@ struct SaintLookApp: App {
                 }
         }
     }
+}
+
+private enum AppTab: Hashable {
+    case wardrobe, outfits
 }

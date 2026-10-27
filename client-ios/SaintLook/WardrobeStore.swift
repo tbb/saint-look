@@ -25,10 +25,13 @@ final class WardrobeStore: ObservableObject {
         catch { notice = error.localizedDescription }
         do {
             let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            let root = support.appendingPathComponent("wardrobe", isDirectory: true)
+            var root = support.appendingPathComponent("wardrobe", isDirectory: true)
             #if DEBUG
             let env = ProcessInfo.processInfo.environment
-            if env["SAINT_LOOK_UI_TESTING"] == "1", env["SAINT_LOOK_RESET_DATA"] == "1",
+            if let visualRoot = try VisualFixtures.prepare(environment: env, support: support,
+                                                           resources: Bundle.main.bundleURL, taxonomy: .shared) {
+                root = visualRoot
+            } else if env["SAINT_LOOK_UI_TESTING"] == "1", env["SAINT_LOOK_RESET_DATA"] == "1",
                FileManager.default.fileExists(atPath: root.path) {
                 try FileManager.default.removeItem(at: root)
             }
