@@ -80,20 +80,20 @@ final class WardrobeFlowTests: XCTestCase {
         let app = launch(reset: true, baseURL: testURL)
         XCTAssertTrue(app.buttons["add-photo"].waitForExistence(timeout: 5))
         app.buttons["add-photo"].tap()
-        XCTAssertTrue(app.buttons["photo-source-camera"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["photo-source-library"].exists)
+        XCTAssertTrue(app.buttons.matching(identifier: "photo-source-camera").firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons.matching(identifier: "photo-source-library").firstMatch.exists)
         capturePhotoSource("photo-source-chooser-empty", in: app)
-        app.buttons["photo-source-cancel"].tap()
+        try await dismissPhotoSource(in: app)
         XCTAssertTrue(app.staticTexts["wardrobe-empty"].exists)
 
         app.buttons["add-photo"].tap()
-        app.buttons["photo-source-camera"].tap()
+        app.buttons.matching(identifier: "photo-source-camera").firstMatch.tap()
         // Real Simulator capability check: no fake camera image or granted permission.
         XCTAssertTrue(app.alerts["Камера недоступна"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["На этом устройстве камера недоступна. Выберите фото из галереи."].exists)
-        XCTAssertFalse(app.buttons["camera-open-settings"].exists)
+        XCTAssertFalse(app.buttons.matching(identifier: "camera-open-settings").firstMatch.exists)
         capturePhotoSource("photo-source-camera-unavailable", in: app)
-        app.buttons["camera-error-cancel"].tap()
+        app.buttons.matching(identifier: "camera-error-cancel").firstMatch.tap()
         XCTAssertTrue(app.staticTexts["wardrobe-empty"].exists)
         let state = try await transportState()
         XCTAssertEqual(state["acceptedOperations"] as? Int, 0)
@@ -104,12 +104,12 @@ final class WardrobeFlowTests: XCTestCase {
         // Only the failure is injected; this tests app recovery, not the OS permission dialog.
         let app = launch(reset: true, baseURL: testURL, cameraProblem: "denied")
         app.buttons["add-photo"].tap()
-        app.buttons["photo-source-camera"].tap()
+        app.buttons.matching(identifier: "photo-source-camera").firstMatch.tap()
         XCTAssertTrue(app.alerts["Камера недоступна"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["camera-open-settings"].exists)
-        XCTAssertTrue(app.buttons["camera-use-library"].exists)
+        XCTAssertTrue(app.buttons.matching(identifier: "camera-open-settings").firstMatch.exists)
+        XCTAssertTrue(app.buttons.matching(identifier: "camera-use-library").firstMatch.exists)
         capturePhotoSource("photo-source-camera-denied", in: app)
-        app.buttons["camera-use-library"].tap()
+        app.buttons.matching(identifier: "camera-use-library").firstMatch.tap()
         let alertDismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
                                                        object: app.alerts["Камера недоступна"])
         await fulfillment(of: [alertDismissed], timeout: 5)
@@ -133,25 +133,54 @@ final class WardrobeFlowTests: XCTestCase {
         await waitForSummary(app, ready: 1, pending: 0)
         // A populated collection exposes the same source choices through its toolbar.
         app.buttons["add-photo"].tap()
-        XCTAssertTrue(app.buttons["photo-source-camera"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons.matching(identifier: "photo-source-camera").firstMatch.waitForExistence(timeout: 5))
         capturePhotoSource("photo-source-chooser-populated", in: app)
-        app.buttons["photo-source-cancel"].tap()
+        try await dismissPhotoSource(in: app)
         try tapVisibleButton("replace-photo", in: app)
-        XCTAssertTrue(app.buttons["photo-source-library"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons.matching(identifier: "photo-source-library").firstMatch.waitForExistence(timeout: 5))
         capturePhotoSource("photo-source-replacement", in: app)
-        app.buttons["photo-source-cancel"].tap()
+        try await dismissPhotoSource(in: app)
         try tapVisibleButton("replace-photo", in: app)
-        app.buttons["photo-source-camera"].tap()
+        app.buttons.matching(identifier: "photo-source-camera").firstMatch.tap()
         XCTAssertTrue(app.alerts["Камера недоступна"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Доступ к камере ограничен настройками устройства. Можно выбрать фото из галереи."].exists)
-        XCTAssertFalse(app.buttons["camera-open-settings"].exists)
+        XCTAssertFalse(app.buttons.matching(identifier: "camera-open-settings").firstMatch.exists)
         capturePhotoSource("photo-source-camera-restricted", in: app)
-        app.buttons["camera-error-cancel"].tap()
+        app.buttons.matching(identifier: "camera-error-cancel").firstMatch.tap()
         returnToCollection(in: app)
         await waitForSummary(app, ready: 1, pending: 0)
         let state = try await transportState()
         XCTAssertEqual(state["acceptedOperations"] as? Int, 1,
                        "Canceling or failing to open the camera must not replace the ready photo")
+    }
+
+    @MainActor
+    private func dismissPhotoSource(in app: XCUIApplication) async throws {
+        let chooser = app.sheets.matching(identifier: "Источник фото").firstMatch
+        XCTAssertTrue(chooser.waitForExistence(timeout: 5))
+        let cancel = chooser.buttons.matching(identifier: "photo-source-cancel").firstMatch
+        if cancel.exists && cancel.isHittable {
+            cancel.tap()
+        } else {
+            // iOS 26 presents confirmationDialog as a popover, omitting its cancel
+            // action. Use the native dismiss region, never a background app control.
+            let region = app.otherElements.matching(identifier: "PopoverDismissRegion").firstMatch
+            XCTAssertTrue(region.exists, "The source chooser must offer native cancellation")
+            let popover = app.popovers.firstMatch
+            XCTAssertTrue(popover.exists)
+            let frame = region.frame
+            let candidates = [CGPoint(x: frame.midX, y: frame.maxY - 80),
+                              CGPoint(x: frame.minX + 20, y: frame.midY),
+                              CGPoint(x: frame.maxX - 20, y: frame.midY),
+                              CGPoint(x: frame.midX, y: frame.minY + 80)]
+            let point = try XCTUnwrap(candidates.first { !popover.frame.contains($0) },
+                                     "A dismiss point must lie outside the actual popover")
+            region.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: point.x - frame.minX, dy: point.y - frame.minY)).tap()
+        }
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: chooser)
+        await fulfillment(of: [dismissed], timeout: 5)
+        XCTAssertFalse(app.buttons.matching(identifier: "photo-source-camera").firstMatch.exists)
     }
 
     @MainActor
