@@ -189,11 +189,13 @@ final class VisualAcceptanceTests: XCTestCase {
             return
         }
         if populated {
+            diagnose("[DEBUG-name-selection]-focused", app: app, detail: field.debugDescription)
             // This single-line name is one paragraph: native triple tap selects its full text.
             // Long press instead repositions the insertion point through the magnifier.
             let failures = testRun?.failureCount ?? 0
             field.tap(withNumberOfTaps: 3, numberOfTouches: 1)
             try requireEqual(testRun?.failureCount ?? 0, failures, "Native paragraph selection gesture failed")
+            diagnose("[DEBUG-name-selection]-after-triple-tap", app: app, detail: field.debugDescription)
         }
         let failures = testRun?.failureCount ?? 0
         field.typeText(name)
@@ -346,6 +348,47 @@ final class VisualAcceptanceTests: XCTestCase {
             for key in keys { counts[key] = try XCTUnwrap(state[key] as? Int) }
         }
         return counts
+    }
+
+    @MainActor
+    func testNativeLongOutfitNameReplacement() async throws {
+        let before = try await activityCounts()
+        let app = try launch()
+        try require(card(0, in: app).waitForExistence(timeout: 10))
+        try selectTab("Луки", in: app)
+        try nativeTap(app.buttons["create-outfit"], in: app)
+        try waitVisible(app.buttons["cancel-outfit"], in: app)
+        try tap(slot("body", in: app), in: app)
+        try choose(0, in: app)
+        try tap(slot("bottom", in: app), in: app)
+        try choose(1, in: app)
+        let original = "Прогулка по осеннему городу после работы"
+        try enterName(original, in: app)
+        try nativeTap(app.buttons["save-outfit"], in: app)
+        try expectGone(app.textFields["outfit-name"], "Saved name editor must disappear")
+        let outfit = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-'")).firstMatch
+        try require(outfit.waitForExistence(timeout: 5))
+        let outfitID = outfit.identifier
+        try requireEqual(outfit.label, original, "Collection must retain the full original name")
+        try nativeTap(outfit, in: app)
+        try nativeTap(app.buttons["edit-outfit"], in: app)
+        try waitVisible(app.buttons["cancel-outfit"], in: app)
+        try requireEqual(app.textFields["outfit-name"].value as? String, original)
+        try enterName("Черновик", in: app)
+        try nativeTap(app.buttons["save-outfit"], in: app)
+        try expectGone(app.textFields["outfit-name"], "Saved replacement editor must disappear")
+        try require(app.staticTexts["Черновик"].waitForExistence(timeout: 5), "Detail must show the exact replacement")
+        try back(app, to: "Луки")
+        let saved = app.descendants(matching: .any).matching(identifier: outfitID).firstMatch
+        try requireEqual(saved.label, "Черновик", "Collection must retain the exact replacement")
+        try nativeTap(saved, in: app)
+        try nativeTap(app.buttons["edit-outfit"], in: app)
+        try waitVisible(app.buttons["cancel-outfit"], in: app)
+        try requireEqual(app.textFields["outfit-name"].value as? String, "Черновик", "Reopened editor must retain the exact replacement")
+        try nativeTap(app.buttons["cancel-outfit"], in: app)
+        let after = try await activityCounts()
+        try requireEqual(after, before, "Renaming a local outfit must not call ingestion or providers")
     }
 
     @MainActor
