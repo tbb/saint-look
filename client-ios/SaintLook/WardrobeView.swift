@@ -413,7 +413,8 @@ private struct ItemEditView: View {
             .alert("Отбросить изменения?", isPresented: $confirmingDiscard) {
                 Button("Отбросить изменения", role: .destructive) { dismiss() }
                     .accessibilityIdentifier("discard-item-changes")
-                Button("Продолжить редактирование", role: .cancel) { }
+                Button("Остаться", role: .cancel) { }
+                    .accessibilityLabel("Продолжить редактирование")
                     .accessibilityIdentifier("continue-item-editing")
             }
         }
