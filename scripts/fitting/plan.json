@@ -395,16 +395,17 @@
     "Creepers use already-published background-removed image, not raw camera input.",
     "No headwear or tall boots: do not declare these categories visually validated."
   ],
-  "seed": "saint-look-fitting-trial-v1",
+  "seed": "saint-look-fitting-photoroom-first-v2",
   "template": "mannequin.svg",
   "templateVersion": "front-360x560-proposed-v1",
   "model": "local-fixture-v1",
   "candidateEndpoint": "fal-ai/nano-banana-pro/edit",
   "requiresSegmentation": true,
   "ratesMicrousd": {
+    "preparation": 0,
     "attributes": 2753,
     "generation": 150000,
-    "segmentation": 18000
+    "segmentation": 0
   },
   "parameters": {
     "pose": "front-arms-slightly-away",
@@ -419,10 +420,13 @@
   "proposedLiveCeilings": {
     "items": 10,
     "additionalInputSets": 2,
+    "preparation": 12,
     "attributes": 14,
     "generation": 28,
     "segmentation": 28,
-    "reservedEstimateMicrousd": 4742542,
+    "totalRequests": 82,
+    "photoroomSandboxCalls": 40,
+    "reservedEstimateMicrousd": 4238542,
     "proposedBudgetMicrousd": 10000000
   },
   "evaluation": {
@@ -463,5 +467,14 @@
       "hoodie-over-jeans"
     ],
     "realQualityVerdict": null
+  },
+  "pipelineVersion": "photoroom-first-v2",
+  "preparationEndpoint": "photoroom-sandbox/v1/segment",
+  "segmentationEndpoint": "photoroom-sandbox/v1/segment",
+  "pipelineDecision": {
+    "date": "2026-10-27",
+    "source": "Owner instruction: Photoroom sandbox first, then JEV and Nano; Photoroom sandbox for opaque output.",
+    "budgetApproved": false,
+    "watermarkPolicy": "Sandbox watermark is a processing artifact, not a garment feature. Original photos remain the fidelity reference."
   }
 }

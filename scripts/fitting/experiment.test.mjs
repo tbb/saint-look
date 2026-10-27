@@ -246,16 +246,95 @@ test('a multi-photo top can be compared with single-photo trousers without dropp
 test('the committed licensed dataset completes offline and repeats the same blinded review', async t => {
   const f = await setup(t);
   const planPath = resolve('scripts/fitting/plan.json');
-  const result = await f.run(['--plan', planPath, '--max-requests', '60', '--max-cost-microusd', '4065036']);
+  const result = await f.run(['--plan', planPath, '--max-requests', '72', '--max-cost-microusd', '3633036']);
   assert.equal(result.code, 0, result.stderr);
   const report = JSON.parse(await readFile(join(f.out, 'report.json')));
   assert.equal(report.sourceHashes.length, 12);
   assert.equal(report.comparisons, 24);
   assert.equal(report.combinations, 14);
-  assert.equal(report.completed, 60);
+  assert.equal(report.completed, 72);
+  assert.equal(report.preparedSources.length, 12);
+  assert.equal(report.plan.pipelineVersion, 'photoroom-first-v2');
   assert.equal(report.qualityEvidence, false);
   const repeat = join(f.dir, 'repeat');
-  const second = await f.run(['--plan', planPath, '--out', repeat, '--max-requests', '60', '--max-cost-microusd', '4065036']);
+  const second = await f.run(['--plan', planPath, '--out', repeat, '--max-requests', '72', '--max-cost-microusd', '3633036']);
   assert.equal(second.code, 0, second.stderr);
   assert.equal(await readFile(join(f.out, 'review.html'), 'utf8'), await readFile(join(repeat, 'review.html'), 'utf8'));
+});
+
+test('free preparation consumes slots once per unique photo before either A/B input set', async t => {
+  const f = await setup(t);
+  await writeFile(join(f.dir, 'detail.png'), await readFile(new URL('./fixtures/white-tee.png', import.meta.url)));
+  f.plan.items[0].photos.push('detail.png');
+  f.plan.items[0].photoRoles = ['front', 'back'];
+  f.plan.preparationEndpoint = 'photoroom-sandbox/v1/segment';
+  f.plan.ratesMicrousd.preparation = 0;
+  await writeFile(f.planPath, JSON.stringify(f.plan));
+  const tooFew = await f.run(['--max-requests', '7']);
+  assert.equal(tooFew.code, 1);
+  assert.equal(f.calls.length, 0, 'Free preparation still reserves quota slots before dispatch');
+  const result = await f.run(['--max-requests', '8']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(f.calls.map(c => c.path), ['/prepare', '/prepare', '/attributes', '/generate', '/generate', '/attributes', '/generate', '/generate']);
+  assert.deepEqual(f.calls[2].body.photoRoles, ['front:original', 'front:prepared']);
+  assert.deepEqual(f.calls[5].body.photoRoles, ['front:original', 'front:prepared', 'back:original', 'back:prepared']);
+  assert.equal(f.calls[3].body.photos.length, 2);
+  assert.equal(f.calls[6].body.photos.length, 4);
+  assert.deepEqual(f.calls[3].body.photos, f.calls[4].body.photos);
+  assert.deepEqual(f.calls[3].body.photos, f.calls[6].body.photos.slice(0, 2), 'Prepared front is reused across single/multi');
+  assert.match(f.calls[2].body.watermarkGuidance, /not.*garment/i);
+  const report = JSON.parse(await readFile(join(f.out, 'report.json')));
+  assert.equal(report.completed, 8);
+  assert.equal(report.reservedEstimateMicrousd, 82000);
+  assert.equal(report.preparedSources.length, 2);
+});
+
+test('identical source bytes are prepared once even when reused by another item', async t => {
+  const f = await setup(t);
+  f.plan.items.push({ ...f.plan.items[0], id: 'second-shirt' });
+  f.plan.preparationEndpoint = 'photoroom-sandbox/v1/segment';
+  f.plan.ratesMicrousd.preparation = 0;
+  await writeFile(f.planPath, JSON.stringify(f.plan));
+  const result = await f.run(['--max-requests', '7']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(f.calls.filter(c => c.path === '/prepare').length, 1);
+  assert.equal(f.calls.length, 7);
+  const report = JSON.parse(await readFile(join(f.out, 'report.json')));
+  assert.equal(report.preparedSources.length, 1);
+  assert.equal(report.sourceHashes.length, 2);
+});
+
+test('an unknown free preparation consumes its slot and stops all dependent requests without retry', async t => {
+  const f = await setup(t, request => request.socket.destroy());
+  f.plan.preparationEndpoint = 'photoroom-sandbox/v1/segment';
+  f.plan.ratesMicrousd.preparation = 0;
+  await writeFile(f.planPath, JSON.stringify(f.plan));
+  const result = await f.run();
+  assert.equal(result.code, 1);
+  assert.deepEqual(f.calls.map(c => c.path), ['/prepare']);
+  const report = JSON.parse(await readFile(join(f.out, 'report.json')));
+  assert.equal(report.unknown, 1);
+  assert.equal(report.reservedEstimateMicrousd, 0);
+  assert.equal(report.preparedSources.length, 0);
+  const journal = (await readFile(join(f.out, 'journal.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(journal.map(e => [e.stage, e.status]), [['preparation', 'started'], ['preparation', 'unknown']]);
+  assert.equal((await f.run()).code, 1);
+  assert.equal(f.calls.length, 1);
+});
+
+test('free final segmentation also consumes bounded quota slots', async t => {
+  const f = await setup(t);
+  f.plan.preparationEndpoint = 'photoroom-sandbox/v1/segment';
+  f.plan.segmentationEndpoint = 'photoroom-sandbox/v1/segment';
+  f.plan.requiresSegmentation = true;
+  f.plan.ratesMicrousd.preparation = 0;
+  f.plan.ratesMicrousd.segmentation = 0;
+  await writeFile(f.planPath, JSON.stringify(f.plan));
+  assert.equal((await f.run(['--max-requests', '5'])).code, 1);
+  assert.equal(f.calls.length, 0);
+  const result = await f.run(['--max-requests', '6']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(f.calls.map(c => c.path), ['/prepare', '/attributes', '/generate', '/segment', '/generate', '/segment']);
+  const report = JSON.parse(await readFile(join(f.out, 'report.json')));
+  assert.equal(report.reservedEstimateMicrousd, 41000);
 });

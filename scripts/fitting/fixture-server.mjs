@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 const image = readFileSync(new URL('../deploy/synthetic.png', import.meta.url)).toString('base64');
 const server = createServer(async (request, response) => {
-  if (request.method !== 'POST' || !['/attributes', '/generate', '/segment'].includes(request.url)) {
+  if (request.method !== 'POST' || !['/prepare', '/attributes', '/generate', '/segment'].includes(request.url)) {
     response.writeHead(404); response.end(); return;
   }
   let bytes = 0;

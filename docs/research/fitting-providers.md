@@ -1,109 +1,77 @@
-# #44 — поставщики для стилизованных вещей и bounded trial
+# Поставщики для стилизованных вещей — #44
 
-Проверено 27 октября 2026. Только чтение публичной документации; нет регистрации, оплаты, чтения секретов, вызовов генерации или изменений репозитория/Issues. Цель — подготовить #45; ниже **предложение**, а не уже одобренный поставщик или доказательство качества.
+Проверено 27 октября 2026 по первичным источникам. Исследование только read-only: ключи и аккаунты не читались, реальные API не вызывались. Качество генерации, доступ конкретному аккаунту и фактическая скорость пока не измерены.
 
-## Вывод для оркестратора
+## Текущее решение пользователя
 
-Предлагаю первую полную A/B-пробу на **fal `fal-ai/nano-banana-pro/edit`, 1K**, сравнивая один и тот же генератор с признаками JEV и без них. Преимущество для первой проверки — известная цена за изображение и документированный multi-reference, а не обещание лучшего результата. Для альфы — отдельный fal `fal-ai/bria/background/remove` без prompt, только если изображению нужна сегментация. Дешёвый Qwen и FLUX.2 — исследованные альтернативы, не автоматические fallback. Photoroom остаётся sandbox и в этот эксперимент не включается.
+27 октября владелец изменил порядок: **Photoroom sandbox сначала удаляет фон → JEV извлекает признаки → Nano генерирует стилизованную вещь**. Для непрозрачного результата Nano используется та же Photoroom sandbox-вырезка. BRIA была ранним исследованным вариантом, **не входит в выбранный план, бюджет или fallback**.
 
-**Конкретный запрос на допуск #45:** до 12 вещей, 4 дополнительных набора фото тех же вещей, до 36 генераций Nano Banana Pro, до 36 сегментаций BRIA и до 18 JEV-запросов; общий cap **$10 потребления API** на весь эксперимент. Расчёт при опубликованных ставках ниже даёт верхнюю резервируемую стоимость около **$6.10**. $10 — предложенный запас, а не разрешение увеличить число запросов. Неиспользованные средства не расходовать. Пополнение аккаунта/налоги — отдельно от стоимости потребления, сумму покупки не предполагать.
+Версия pipeline в плане — `photoroom-first-v2`; исходные фото, геометрия манекена и рубрика сохраняются. Каждый новый план фиксируется отдельным SHA и новым каталогом, старые результаты не перезаписываются. Подготовка #44 остаётся loopback-only. Бюджет реальной пробы #45 пока не согласован.
 
-Нужны до настоящих вызовов: утверждённый набор разрешённых изображений и бюджет, доступный fal API key/кредиты, существующий JEV key. Я не проверял аккаунты и не читал ключи. Возможность оплаты, конкретное минимальное пополнение и доступ endpoint данному аккаунту пока не подтверждены. Если существующий fal доступ есть для другого эксперимента, его бюджет не переносится сюда.
+## Photoroom sandbox: подготовка и финальная вырезка
 
-## Три кандидата по первичным источникам
+Sandbox использует тот же `POST https://sdk.photoroom.com/v1/segment`, что Basic production, но отдельный sandbox key с `sandbox_` prefix; результат имеет watermark. В #45 требуется dedicated sandbox environment variable: отсутствие sandbox-префикса — отказ до сети, без fallback на production и без изменения Fly secrets. [Sandbox](https://docs.photoroom.com/remove-background-api-basic-plan/sandbox-mode), [API keys](https://help.photoroom.com/en/articles/15419535-find-your-photoroom-api-keys-web-app).
 
-| Endpoint | Документированные вход/выход и цена | Оценка применимости, не гарантия |
+Multipart: `image_file`, `format=png`, `channels=rgba`, `size=full`, `crop=false`, `despill=false`; без `bg_color`. В ответе binary PNG. `despill=false` сохраняет исходные цвета предмета от этой дополнительной обработки. Это синхронный API без описанного queue receipt/poll/cancel. [Basic OpenAPI](https://docs.photoroom.com/getting-started/api-reference-openapi.md#remove-background-basic-plan), [Quickstart](https://docs.photoroom.com/remove-background-api-basic-plan/quickstart-guide).
+
+Документация указывает 1000 бесплатных sandbox-вызовов в месяц и 100 в день; считать 100/day общим консервативным потолком, не обещать отдельный пул для Basic и Image Editing. Текущее потребление аккаунта не проверено. Действуют также rate limits; при исчерпании/429 остановиться, а не переходить на live. Бесплатные production trial calls в этот опыт не входят. [Sandbox](https://docs.photoroom.com/remove-background-api-basic-plan/sandbox-mode), [Pricing](https://docs.photoroom.com/getting-started/pricing), [FAQ](https://docs.photoroom.com/getting-started/frequently-asked-questions).
+
+Для каждого уникального SHA исходного фото вырезка выполняется один раз и переиспользуется между single/multi и A/B. Пока подготовка фото не завершена валидным результатом, связанные JEV/Nano не запускаются. Неизвестный исход бесплатного вызова тоже занимает quota slot и не повторяется автоматически.
+
+Sandbox watermark — артефакт обработки, а не признак одежды. JEV и Nano получают оригинал вместе с вырезкой, роли различаются явно. Оригинал остаётся источником достоверных принтов/надписей/цветов. Watermark нельзя считать брендом или переносить в описание; отдельная операция его удаления не вводится. Это ограничение опыта, не обещание clean production output.
+
+## Кандидаты генератора
+
+| Endpoint | Проверенные свойства | Оценка применимости |
 | --- | --- | --- |
-| `fal-ai/nano-banana-pro/edit` | Prompt + до 14 reference images; 1K/2K $0.15 за изображение, 4K $0.30, web search ещё $0.015. PNG/JPEG/WebP; `num_images`, `seed`, aspect ratio. | Предлагаемый основной: общая иллюстрация-референс + фото вещи + детали в одном запросе. Сам по себе PNG не гарантирует alpha, опорные точки или правильные принты. |
-| `fal-ai/qwen-image-edit-2511` | Prompt + `image_urls`, custom `image_size`, seed, negative prompt, guidance и steps; PNG/JPEG/WebP; $0.03/MP. API schema не указывает максимальное число images. | Дешёвый challenger. До отдельного допуска не считать произвольное число reference images проверенным; не смешивать его результаты с A/B на Nano. |
-| `fal-ai/flux-2-pro/edit` | До 9 reference images/9 MP total input по странице модели; $0.03 за первый MP output, доплата $0.015 за дополнительные MP input/output с округлением. | Тоже подходит по форме запроса, но цена зависит от размера входов. Не считать плоской ставкой $0.03 при нескольких фото. |
+| `fal-ai/nano-banana-pro/edit` | Prompt, до 14 reference images, 1K/2K $0.15 за изображение; 4K $0.30. PNG/JPEG/WebP. Web search отдельно оплачивается. | Основной кандидат пробы: фиксированная цена и multi-reference. Качество позы/принтов/alpha не подтверждено. |
+| `fal-ai/qwen-image-edit-2511` | Prompt + image_urls, custom image_size и seed; $0.03/MP. | Исследованная более дешёвая альтернатива, не автоматический fallback и не второй опыт в согласуемом бюджете. |
+| `fal-ai/flux-2-pro/edit` | До 9 reference images / 9 MP total input; $0.03 за первый output MP, доплата за дополнительные input/output MP. | Цена зависит от размера входов, не считать плоской ставкой $0.03 для нескольких фото. |
 
-Все три публичные страницы помечены Commercial use. Это означает доступность коммерческого hosted API, но не гарантирует права на любые загруженные фотографии или уникальность результата. [Nano pricing/model](https://fal.ai/models/fal-ai/nano-banana-pro/edit), [Nano API](https://fal.ai/models/fal-ai/nano-banana-pro/edit/api), [Qwen pricing](https://fal.ai/models/fal-ai/qwen-image-edit-2511), [Qwen API](https://fal.ai/models/fal-ai/qwen-image-edit-2511/api), [FLUX pricing/model](https://fal.ai/models/fal-ai/flux-2-pro/edit), [FLUX API](https://fal.ai/models/fal-ai/flux-2-pro/edit/api).
+Источники: [Nano model/pricing](https://fal.ai/models/fal-ai/nano-banana-pro/edit), [Nano schema](https://fal.ai/models/fal-ai/nano-banana-pro/edit/api), [Qwen](https://fal.ai/models/fal-ai/qwen-image-edit-2511), [Qwen API](https://fal.ai/models/fal-ai/qwen-image-edit-2511/api), [FLUX](https://fal.ai/models/fal-ai/flux-2-pro/edit), [FLUX API](https://fal.ai/models/fal-ai/flux-2-pro/edit/api). Выбирать по точному endpoint ID, не по похожим маркетинговым названиям.
 
-На fal встречаются устаревшие описания Nano «2 references» и смешанные заголовки Nano Banana2/Pro. Опираться на точный endpoint ID выше, schema и актуальный лимит14, а не маркетинговое имя. Сохранить выбранные настройки и дату проверки в манифесте. Ни одна из этих страниц не доказывает совместимость независимо нарисованных слоёв нашего манекена.
+В A и B одинаковые `original_i, cutout_i` плюс один общий template: **2k+1 references**. Для одного фото 3, двух 5, максимальных трёх 7 — меньше лимита 14. Роли переда/спинки сохраняются; только B получает блок валидированных признаков. `num_images=1`, разрешение1K, `enable_web_search=false`, фиксированные seed/параметры. Seed не обещает битовой воспроизводимости hosted-модели. Наличие PNG не означает usable alpha.
 
-## JEV: что действительно доступно
+Nano может вернуть квадратный canvas. Общая геометрия манекена 360×560 требует подтверждённого aspect ratio либо единой обратимой letterbox-нормализации. Нельзя растягивать или индивидуально случайно обрезать результаты ради красивого наложения. Это проверяется в #45.
 
-Текущий pin `jev-1.14.0`, POST `https://api.typesafe.ai/v1/systemone`. Цена **$0.042/M входных токенов**, output бесплатный; обычный context 64k/request и32k/question. Не включать experimental long context для этой пробы. [Models](https://docs.typesafe.ai/models).
+## JEV: признаки, а не свободное описание
 
-Фото поддерживаются с `TypeSafe-Danger-Zone-Images: true`; vision прямо обозначен как экспериментальный. Допускается несколько изображений в labeled/nested `state`; каждое перечисляется в `assets` и ссылается из state один раз. PNG/JPEG, каждая сторона280–1568px, файл≤16MiB, запрос и expanded images≤32MiB. EXIF orientation API не применяет — pixels заранее upright. `usage.input_tokens` включает изображения, публичной формулы image-token estimate ещё нет. [Images](https://docs.typesafe.ai/images).
+Текущий pin `jev-1.14.0`, POST `https://api.typesafe.ai/v1/systemone`, $0.042/M input tokens, output бесплатный; обычный context 64k/request и 32k/question. Фото входят в token usage, публичного точного image-token estimator нет. [Models](https://docs.typesafe.ai/models).
 
-JEV — **не генератор свободного JSON-описания**. `Choice` выбирает одну заранее заданную категорию и возвращает confidence/probabilities; `Noul` — вероятность yes без отдельной confidence; `Score` — значение описанной шкалы. Vision `Box` даёт прямоугольник, не segmentation mask/позу ткани. Для характеристик нужны атомарные вопросы и последующая сборка prompt нашим кодом. [Primitives](https://docs.typesafe.ai/primitives), [Box](https://docs.typesafe.ai/primitives/box).
+Images экспериментальны и требуют `TypeSafe-Danger-Zone-Images:true`. Несколько labeled images поддержаны: каждый asset имеет отдельную ссылку и появляется в state один раз. PNG/JPEG, стороны 280–1568px, файл≤16MiB, request/expanded images≤32MiB. EXIF API не применяет: нормализовать пиксели до отправки. Оригинал+вырезка увеличивает размер/токены; проверять лимит после раскрытия пар. Style/mannequin в извлечение признаков не отправлять. [Images](https://docs.typesafe.ai/images).
 
-### Предлагаемый словарь для пробы
+JEV возвращает `Choice`/`Noul`/`Score`, не произвольное свободнотекстовое описание. Choice даёт confidence/probabilities; Noul — вероятность yes без отдельной confidence. Box не является маской ткани. [Primitives](https://docs.typesafe.ai/primitives), [Box](https://docs.typesafe.ai/primitives/box).
 
-Это инженерный дизайн поверх API; качество каждого признака пока не измерено.
+Начальный словарь для проверки: наблюдаемый силуэт fitted/straight/relaxed/unknown; длина корпуса и рукавов; горловина/воротник; застёжка; рисунок plain/stripes/checks/graphic/mixed/unknown; наличие капюшона, кармана-кенгуру, контрастных манжет и спущенных плеч; основные цвета и расположение деталей по конечным зонам; smooth/knitted/fuzzy/glossy/unknown. Для каждого применимого признака нужны unknown/visibility gate, а не принудительное угадывание. Точный состав ткани, текст неразборчивой надписи и оверсайз на конкретном человеке не выводятся из фото. Не учитывать фон, вешалку, тень и sandbox watermark. Ручной тип/цвет имеет приоритет. Конкретная полезность этого словаря ещё не измерена.
 
-- Choice: категория из существующей taxonomy; наблюдаемый силуэт `fitted/straight/relaxed/unknown/not_applicable`; длина корпуса `cropped/regular/long/unknown/not_applicable`; длина рукава; форма горловины/воротника; вид застёжки; рисунок `plain/stripes/checks/graphic/mixed/unknown`.
-- Noul: наличие капюшона, кармана-кенгуру, накладных карманов, спущенных плеч, контрастных манжет, видимых надписей/логотипа. Не трактовать 0.5 как «немного есть». Для отсутствия данных предусмотреть отдельный visibility gate или Choice yes/no/unknown.
-- Цвета: существующая палитра независимыми вопросами; положение рисунка по конечному набору зон (центр, левая/правая грудь, рукава, по всей поверхности, неизвестно), размер small/medium/large/unknown.
-- Поверхность: наблюдаемая smooth/knitted/fuzzy/glossy/mixed/unknown, не «100% шерсть». Широкий корпус — наблюдение; посадка oversize на конкретном человеке — не подтверждена.
-- Нельзя свободно распознать неизвестную надпись через Choice. Сам принт остаётся визуальным reference; не придумывать текст/бренд. Ручные исправления типа/цветов задаются как приоритетные ограничения.
-- Складки, тень, фон и вешалка исключаются из признаков вещи. Лицевая/оборотная сторона и detail-photo получают явные labels; при противоречии флаг unclear, а не слияние несовместимых конструкций.
+## Конкретный план #45
 
-## Конкретный план и стоимость
+Текущая выборка: **10 вещей, 12 уникальных фото, 12 input-set** (10 single + 2 multi), 24 baseline генерации. Текущий mock консервативно проходит final cutout после каждого результата; live сможет пропустить его, только подтвердив пригодную alpha.
 
-Для N основных вещей (8≤N≤12), M=4 дополнительных наборов фото тех же вещей:
-
-1. Один JEV-запрос на каждый input-set: N+M. Его результат используется только в B; в A признаки не передаются.
-2. Для каждого input-set генерации A и B с одинаковыми source/template/settings (различие только в блоке признаков): 2×(N+M).
-3. Максимум 4 явно разрешённых дополнительных generation attempts на всю пробу; failed/unknown attempts учитываются, не скрываются выбором удачного результата. Максимум2 дополнительных JEV-attempts. Не повторять неизвестный исход автоматически.
-4. По одной BRIA-сегментации на каждый generation attempt с пригодным изображением, если alpha отсутствует. Повторная сегментация только в пределах выделенного числа calls; не дополнительный безлимитный этап.
-
-При N=12: **18 JEV +36 generation +36 segmentation =90 billable-call slots максимум** (status/result polling не является новой generation, но его тоже ограничивать по времени/числу запросов).
-
-| Категория | Верхняя резервация на вызов | Максимум | Резерв |
+| Стадия | Baseline | Явный максимум | Резерв на вызов |
 | --- | ---: | ---: | ---: |
-| Nano Pro1K, 1image, websearch=false |150000 microUSD ($0.15)|36|$5.40|
-| BRIA, без prompt |18000 microUSD ($0.018)|36|$0.648|
-| JEV normal context |2753 microUSD ($0.002753), **не фактическая flat price** |18|$0.049554|
-| Итого | |90|**$6.097554**|
+| Photoroom initial sandbox |12|12|$0, но quota slot занят |
+| JEV |12|14 (2 дополнительных слота)|2753microUSD |
+| Nano1K |24|28 (4 дополнительных слота)|150000microUSD |
+| Photoroom final sandbox |до24|до28|$0, но quota slot занят |
+| Итого |до72|до82|$3.633036 baseline; $4.238542 максимум |
 
-JEV резерв рассчитан консервативно как ceil(65536×$0.042/M) в microUSD; фактическую стоимость писать из `usage.input_tokens×0.042/M`, не приравнивать к резерву. Без usage или при неизвестном исходе резерв остаётся занят до сверки; нельзя считать «ошибка=бесплатно». BRIA без prompt стоит $0.018, с prompt уже $0.03: в этом плане prompt запрещён. [BRIA pricing](https://fal.ai/models/fal-ai/bria/background/remove), [BRIA API](https://fal.ai/models/fal-ai/bria/background/remove/api).
+Максимум Photoroom — **40 sandbox calls**:12 initial + 28 final. Не расходовать оставшийся дневной пул без проверки доступности. Дополнительные generation/JEV слоты не разрешают повторную initial-вырезку. $10 общего потребления — только предложенный cap, ещё не разрешение на реальные вызовы и не команда израсходовать остаток. Покупка credits/налоги отдельно. Бюджет другого эксперимента не переносится сюда.
 
-Дополнительные сравнения с Qwen/FLUX в эту сумму **не входят**. Можно выбрать один из них вместо Nano, но перепинить plan/rates до согласования, не переключать автоматически. Стоимость должна повторно проверяться непосредственно перед разрешённой пробой. Оценка скорости не измерена: выделить рабочую сессию на очередь/оценку, логировать submit→complete отдельно; SLA в секундах не обещать. Локальные таймауты и лимит ожидания не означают разрешение заново оплатить ту же работу.
+JEV резерв = ceil(65536×$0.042/M) в microUSD, **не flat price**. Фактическую стоимость писать из usage.input_tokens; missing usage/unknown не освобождает резерв. Нулевой денежный резерв Photoroom не означает неограниченные calls. Локальный ledger ограничивает dispatch по pinned rates, не гарантирует абсолютный provider-side hard cap при изменении тарифа. Перед реальной пробой перепроверить ставки, quota и доступ endpoint аккаунту.
 
-## Контракт live-adapter для #45, не для CI
+## Ограничения будущего live-adapter
 
-Предлагаемый точный минимальный payload Nano:
+Только после допуска: долговечный reserve → один dispatch → receipt/результат → проверка/сохранение. Для Nano queue receipt сохранять до polling; после потери receipt — unknown без повторного submit. Для синхронного Photoroom обрыв после отправки тоже unknown quota slot. Повторный запуск переиспользует лишь полностью проверенные и сохранённые артефакты. Ошибка alpha/disk full не делает вызов бесплатным.
 
-```json
-{
-  "prompt": "<base instruction + optional validated feature block>",
-  "image_urls": ["<garment-front data URI>", "<optional garment detail URI>", "<common style/pose template URI>"],
-  "num_images": 1,
-  "aspect_ratio": "1:1",
-  "output_format": "png",
-  "resolution": "1K",
-  "limit_generations": true,
-  "enable_web_search": false,
-  "seed": 12345
-}
-```
+На Nano-submit нужны `X-Fal-No-Retry:1`, `x-app-fal-disable-fallback:true`; отключить SDK retries. Queue timeout клиента не доказывает отмену обработки. Не брать произвольные response URLs для отправки ключа; exact host/path allowlist, redirect запрещён, CDN-download без provider auth, bounded streaming и настоящее декодирование PNG. [Queue](https://fal.ai/docs/documentation/model-apis/inference/queue), [Common parameters](https://fal.ai/docs/documentation/model-apis/common-parameters), [Reliability](https://fal.ai/docs/documentation/model-apis/inference/reliability).
 
-Приложение ограничивает входы: одно основное +до2 дополнительных фото вещи +один общий template. Это наш лимит, не заявленный максимум API. В prompt объяснить роль каждого изображения и запретить рисовать тело/дополнительную одежду; белый фон допустим для последующей сегментации. Требование alpha не заменяет реальную проверку канала. Seed фиксируется для сопоставимости, но битовая воспроизводимость hosted-модели не обещается.
+Длительность пока не измерена. Проба должна отдельно записывать ожидание очереди, время обработки, число запросов и ошибки; задержка не является разрешением платить повторно. Photoroom и Nano результаты сохраняются отдельно, включая raw generation и итоговый watermarked слой.
 
-fal `POST https://queue.fal.run/fal-ai/nano-banana-pro/edit`, auth `Authorization: Key ...`; сохранять `request_id` до polling. При полученном receipt запрашивать status/result того же request, а не submit повторно. При сетевом обрыве после dispatch без receipt — `unknown`, сохранять резерв, остановить автоматические действия. Подробный HTTP queue контракт надо сверить в #45 до написания адаптера; модельные страницы подтверждают queue submit/status/result. Ответ image schema — `images[]` с URL; BRIA возвращает **`image`**, а не `images`. Доставленные байты валидировать: MIME/размер/декодирование/alpha, затем локально сохранить.
+## Данные и доступность
 
-До первого paid dispatch: локальный allowlist endpoint IDs, максимальные rates/calls, approved plan hash, проверенные source hashes и права, явный manual mode, отсутствие CI environment. Перед dispatch reserve→persist; по receipt→persist; по результату reconcile usage; на crash resume не создавать новые оплаченные операции. #44 harness остаётся localhost-only, даже если окружение случайно содержит настоящие credentials.
+Для fal публичная документация указывает default 90 дней IO-retention. `X-Fal-Store-IO:0` отключает request-history payload, lifecycle expiration 3600 ограничивает generated CDN files; это не ZDR и не удаление app-owner logs. До live проверить account terms и обозначение Excluded Models: договорное no-training имеет исключения. Не обещать EU-only обработку. [API Services](https://fal.ai/legal/api-services), [Retention](https://fal.ai/docs/documentation/model-apis/media-expiration), [Privacy](https://fal.ai/legal/privacy-policy).
 
-## Права, retention и доступность
+TypeSafe запрещает обучение весов на Customer Data без предварительного согласия, но это не ZDR. [MCA](https://typesafe.ai/legal/mca), [DPA](https://typesafe.ai/legal/data-processing). FAQ Photoroom заявляет отсутствие сохранения API images и обработку в Eastern USA; не выдавать это за независимо проверенную end-to-end ZDR-гарантию. [FAQ](https://docs.photoroom.com/getting-started/frequently-asked-questions).
 
-fal API Services §2.4 запрещает использовать Client Content для разработки/обучения продуктов fal; правило распространяется на third-party APIs, **кроме Excluded Models** с Pending Enterprise Ready или иным заранее сообщённым обозначением. §2.3 предупреждает о передаче данных API-партнёру. На изученных публичных страницах кандидатов нет такого исключающего badge; это не доказательство ZDR конкретного аккаунта. Проверить designation при live-preflight. [API Services](https://fal.ai/legal/api-services).
-
-fal хранит request input/output по умолчанию **90 дней** (актуальная официальная страница; сторонние обзоры с30днями не использовать). `X-Fal-Store-IO:0` убирает только request history; `X-Fal-Object-Lifecycle-Preference` с `expiration_duration_seconds:3600` ограничивает CDN-срок. Логи deployment owner независимы, ZDR требует отдельного покрытия и не включён по умолчанию. Input CDN files не удаляются при удалении request payload автоматически. [Data retention](https://fal.ai/docs/documentation/model-apis/media-expiration).
-
-Для публичных разрешённых fixtures: отправлять data URI, без отдельного upload в fal storage; сразу скачать outputs и не публиковать их временные URL/личные фото. Для будущих личных снимков отдельно проверить File ACL и end-to-end retention; никаких заявлений «один header удаляет всё». Резидентность EU-only не подтверждена: privacy описывает обработку в США и других странах. [Privacy](https://fal.ai/legal/privacy-policy), [File ACL](https://fal.ai/docs/documentation/model-apis/file-access-controls).
-
-TypeSafe MCA§4.1 запрещает обучение весов на Customer Data без prior consent; разрешённая обработка для сервиса/учёта/антиабьюза не равна ZDR. Это допускает описанную пробу с разрешёнными фото при действующем договоре, но не обещает удаления за короткий срок. [MCA](https://typesafe.ai/legal/mca), [DPA](https://typesafe.ai/legal/data-processing).
-
-У fal тариф prepaid credits; нельзя утверждать конкретную сумму минимального пополнения без проверки checkout. Формальный доступ из Финляндии/всего СНГ и текущую способность зарегистрироваться этот research не проверял; использовать поддерживаемый аккаунт и фактический preflight, а не обход географических ограничений. [Terms](https://fal.ai/legal/terms-of-service).
-
-## Что остаётся недоказанным
-
-- Генератор может дорисовать принт, поменять длину/крой, вставить нижний слой под куртку и сдвинуть вещь относительно template.
-- Сегментация может удалить тонкие завязки/принт или сделать дырку вместо полупрозрачной ткани.
-- JEV vision experimental; высокая confidence не доказывает точность. Атомарные признаки и multi-view требуют собственного замера.
-- Один template не гарантирует одинаковую позу и взаимное перекрытие вещей. Go/no-go оценивает реальные композиции, а не только красивые thumbnails.
-
-Эти риски — именно измеряемый предмет #45, не повод заявить подход уже рабочим или снять исходный budget gate.
+Применяются публичные лицензированные fixtures с сохранёнными атрибуциями и SHA. Права на фото не заменяют бюджет, доступ аккаунта и проверку условий поставщика. Никаких личных фото пользователя или live-секретов в публичном репозитории.

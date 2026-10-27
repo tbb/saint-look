@@ -35,7 +35,7 @@ async function main() {
       || c.items.length < 1 || new Set(c.items).size !== c.items.length || c.items.some(id => !plan.items.some(i => i.id === id)))) {
     throw new Error('Invalid experiment plan');
   }
-  const prepared = new Map(), sourceHashes = [];
+  const prepared = new Map(), sourceHashes = [], uniqueSources = new Map();
   for (const item of plan.items) {
     const photos = [];
     for (const file of item.photos) {
@@ -44,24 +44,33 @@ async function main() {
       const digest = hash(bytes), declared = item.sources?.find(source => source.path === file)?.sha256;
       if (declared && declared !== digest) throw new Error('Source hash mismatch');
       sourceHashes.push({ itemId: item.id, path: file, sha256: digest });
-      photos.push(`data:image/${extname(file).toLowerCase() === '.png' ? 'png' : 'jpeg'};base64,${bytes.toString('base64')}`);
+      const photo = `data:image/${extname(file).toLowerCase() === '.png' ? 'png' : 'jpeg'};base64,${bytes.toString('base64')}`;
+      photos.push(photo);
+      if (!uniqueSources.has(digest)) uniqueSources.set(digest, { itemId: item.id, photo });
     }
     prepared.set(item.id, photos);
   }
   const maxRequests = Number(args['--max-requests']);
   const maxCost = Number(args['--max-cost-microusd']);
-  const rates = [plan.ratesMicrousd?.attributes, plan.ratesMicrousd?.generation, ...(plan.requiresSegmentation ? [plan.ratesMicrousd?.segmentation] : [])];
-  if (![maxRequests, maxCost, ...rates].every(n => Number.isSafeInteger(n) && n > 0)) {
-    throw new Error('Positive integer request/cost limits and stage reservations are required');
+  const preparation = Boolean(plan.preparationEndpoint);
+  if (preparation && plan.preparationEndpoint !== 'photoroom-sandbox/v1/segment') throw new Error('Unsupported preparation endpoint');
+  const paidRates = [plan.ratesMicrousd?.attributes, plan.ratesMicrousd?.generation];
+  const cutoutRates = [...(preparation ? [plan.ratesMicrousd?.preparation] : []), ...(plan.requiresSegmentation ? [plan.ratesMicrousd?.segmentation] : [])];
+  if (![maxRequests, maxCost, ...paidRates].every(n => Number.isSafeInteger(n) && n > 0)
+    || !cutoutRates.every(n => Number.isSafeInteger(n) && n >= 0)) {
+    throw new Error('Positive request/cost limits and paid stage reservations; nonnegative cutout reservations are required');
   }
   const sets = plan.items.reduce((sum, item) => sum + (item.photos.length > 1 ? 2 : 1), 0);
   const templateSvg = await readFile(resolve(dirname(planPath), plan.template), 'utf8');
-  const forecast = { requests: sets * (plan.requiresSegmentation ? 5 : 3), reservedEstimateMicrousd: sets * (rates[0] + rates[1] * 2 + (rates[2] || 0) * 2) };
+  const preparationCalls = preparation ? uniqueSources.size : 0;
+  const forecast = { requests: preparationCalls + sets * (plan.requiresSegmentation ? 5 : 3),
+    reservedEstimateMicrousd: preparationCalls * (plan.ratesMicrousd.preparation || 0)
+      + sets * (paidRates[0] + paidRates[1] * 2 + (plan.requiresSegmentation ? plan.ratesMicrousd.segmentation * 2 : 0)) };
   if (forecast.requests > maxRequests || forecast.reservedEstimateMicrousd > maxCost) throw new Error('Plan exceeds request or reserved-cost ceiling');
   const out = resolve(args['--out']);
   await mkdir(out, { mode: 0o700 });
   await writeFile(join(out, 'plan.json'), JSON.stringify({ plan, sourceHashes, templateSha256: hash(templateSvg) }, null, 2));
-  const results = [], key = {}, events = [];
+  const results = [], key = {}, events = [], preparedSources = [], cutouts = new Map();
   let reserved = 0;
   function record(event) {
     const descriptor = openSync(join(out, 'journal.jsonl'), 'a', 0o600);
@@ -75,12 +84,12 @@ async function main() {
     if (sequence > maxRequests || reserved + reserve > maxCost) throw new Error('Runtime budget exhausted');
     reserved += reserve;
     const started = Date.now();
-    const context = { sequence, stage, itemId: body.itemId, reservedMicrousd: reserve };
+    const context = { sequence, stage, itemId: body.itemId, sourceSha256: body.sourceSha256, reservedMicrousd: reserve };
     record({ ...context, status: 'started' });
     try {
       const result = await new Promise((resolveResult, reject) => {
         // Native HTTP has no automatic redirects, proxy environment or provider fallback.
-        const req = request(new URL({ attributes: '/attributes', generation: '/generate', segmentation: '/segment' }[stage], endpoint),
+        const req = request(new URL({ preparation: '/prepare', attributes: '/attributes', generation: '/generate', segmentation: '/segment' }[stage], endpoint),
           { method: 'POST', headers: { 'Content-Type': 'application/json' } }, response => {
             let raw = '', size = 0;
             response.on('data', chunk => {
@@ -127,14 +136,28 @@ async function main() {
   }
   let failure;
   try {
+  if (preparation) {
+    for (const [sourceSha256, source] of uniqueSources) {
+      const result = await call('preparation', { ...source, sourceSha256 });
+      const bytes = Buffer.from(result.pngBase64, 'base64');
+      const artifact = `prepared-${sourceSha256}.png`;
+      await writeFile(join(out, artifact), bytes);
+      cutouts.set(sourceSha256, `data:image/png;base64,${result.pngBase64}`);
+      preparedSources.push({ sourceSha256, resultSha256: hash(bytes), artifact, sandboxWatermarkRisk: true });
+    }
+  }
   for (const item of plan.items) {
     const originals = prepared.get(item.id);
     for (const input of originals.length > 1 ? ['single', 'multi'] : ['single']) {
-      const photos = input === 'single' ? originals.slice(0, 1) : originals;
-      const photoRoles = (item.photoRoles || item.photos.map((_, i) => i === 0 ? 'front' : 'unspecified-detail')).slice(0, photos.length);
-      const { features } = await call('attributes', { itemId: item.id, input, photos, photoRoles });
+      const selected = input === 'single' ? originals.slice(0, 1) : originals;
+      const roles = (item.photoRoles || item.photos.map((_, i) => i === 0 ? 'front' : 'unspecified-detail')).slice(0, selected.length);
+      const photos = preparation ? selected.flatMap((photo, i) => [photo,
+        cutouts.get(sourceHashes.find(source => source.itemId === item.id && source.path === item.photos[i]).sha256)]) : selected;
+      const photoRoles = preparation ? roles.flatMap(role => [`${role}:original`, `${role}:prepared`]) : roles;
+      const watermarkGuidance = preparation ? 'Sandbox watermark is a processing artifact, not a garment feature. Use original photos as truth for print, text and colors; do not reproduce the watermark as a garment detail.' : undefined;
+      const { features } = await call('attributes', { itemId: item.id, input, photos, photoRoles, watermarkGuidance });
       for (const variant of ['without-features', 'with-features']) {
-        let result = await call('generation', { itemId: item.id, input, photos, photoRoles, templateSvg,
+        let result = await call('generation', { itemId: item.id, input, photos, photoRoles, watermarkGuidance, templateSvg,
           templateVersion: plan.templateVersion, model: plan.model, parameters: plan.parameters,
           ...(variant === 'with-features' ? { features } : {}) });
         if (plan.requiresSegmentation) result = await call('segmentation', { itemId: item.id, input, pngBase64: result.pngBase64 });
@@ -186,7 +209,7 @@ async function main() {
   await writeFile(join(out, 'review.html'), html);
   await writeFile(join(out, 'answer-key.json'), JSON.stringify(key, null, 2));
   await writeFile(join(out, 'report.json'), JSON.stringify({ mode: 'local-fixture', qualityEvidence: false,
-    plan, sourceHashes, coordinateSpace: 'full-canvas-360x560', templateSha256: hash(templateSvg), comparisons: results.length, combinations: compositions.length, actualCostMicrousd: 0, reservedEstimateMicrousd: reserved, forecast, status: failure ? 'incomplete' : 'completed',
+    plan, sourceHashes, preparedSources, coordinateSpace: 'full-canvas-360x560', templateSha256: hash(templateSvg), comparisons: results.length, combinations: compositions.length, actualCostMicrousd: 0, reservedEstimateMicrousd: reserved, forecast, status: failure ? 'incomplete' : 'completed',
     completed: events.filter(e => e.status === 'completed').length, unknown: events.filter(e => e.status === 'unknown').length }, null, 2));
   if (failure) throw failure;
   console.log(JSON.stringify({ mode: 'local-fixture', report: join(out, 'review.html') }));
