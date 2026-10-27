@@ -1,0 +1,467 @@
+{
+  "version": 1,
+  "status": "proposed-pre-experiment",
+  "items": [
+    {
+      "id": "white-tee",
+      "category": "top",
+      "photos": [
+        "fixtures/white-tee.png"
+      ],
+      "photoRoles": [
+        "front"
+      ],
+      "source": "https://commons.wikimedia.org/wiki/File:Worn_T-shirt_white.png",
+      "author": "Taylor 49",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "sources": [
+        {
+          "path": "fixtures/white-tee.png",
+          "source": "https://commons.wikimedia.org/wiki/File:Worn_T-shirt_white.png",
+          "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/2/23/Worn_T-shirt_white.png",
+          "author": "Taylor 49",
+          "license": "CC BY-SA 4.0",
+          "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+          "changes": "Unmodified original; renamed locally.",
+          "sha256": "fbc6e902898915c554187d961515c7db2505954c4e46d4a090528de4348cdb50",
+          "bytes": 688834,
+          "verifiedAt": "2026-10-27",
+          "title": "Worn T-shirt white.png"
+        }
+      ],
+      "copyrightUse": "Copy/adaptation permitted subject to listed license; provider terms and account approval remain separate."
+    },
+    {
+      "id": "jeans",
+      "category": "bottom",
+      "photos": [
+        "fixtures/jeans.jpg"
+      ],
+      "photoRoles": [
+        "front"
+      ],
+      "source": "https://commons.wikimedia.org/wiki/File:Jeans.jpg",
+      "author": "Oktaeder",
+      "license": "Public domain (author dedication)",
+      "licenseUrl": "https://commons.wikimedia.org/wiki/File:Jeans.jpg",
+      "sources": [
+        {
+          "path": "fixtures/jeans.jpg",
+          "source": "https://commons.wikimedia.org/wiki/File:Jeans.jpg",
+          "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/5/5a/Jeans.jpg",
+          "author": "Oktaeder",
+          "license": "Public domain (author dedication)",
+          "licenseUrl": "https://commons.wikimedia.org/wiki/File:Jeans.jpg",
+          "changes": "Unmodified original; renamed locally.",
+          "sha256": "b316902ad85e8ff46b164ceb7f2c38d3c1424c9d789703e0267e3dfce68fbe1c",
+          "bytes": 100403,
+          "verifiedAt": "2026-10-27",
+          "title": "Jeans.jpg"
+        }
+      ],
+      "copyrightUse": "Copy/adaptation permitted subject to listed license; provider terms and account approval remain separate."
+    },
+    {
+      "id": "polo",
+      "category": "top",
+      "photos": [
+        "fixtures/polo.jpg"
+      ],
+      "photoRoles": [
+        "front"
+      ],
+      "source": "https://commons.wikimedia.org/wiki/File:Classical_polo_shirt.jpg",
+      "author": "Elkagye",
+      "license": "CC BY-SA 3.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "sources": [
+        {
+          "path": "fixtures/polo.jpg",
+          "source": "https://commons.wikimedia.org/wiki/File:Classical_polo_shirt.jpg",
+          "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/7/7b/Classical_polo_shirt.jpg",
+          "author": "Elkagye",
+          "license": "CC BY-SA 3.0",
+          "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+          "changes": "Unmodified original; renamed locally.",
+          "sha256": "609a842b50d1d15c7ca1800143649769ad817c3b6929e31ee283ef024784b0e2",
+          "bytes": 740322,
+          "verifiedAt": "2026-10-27",
+          "title": "Classical polo shirt.jpg"
+        }
+      ],
+      "copyrightUse": "Copy/adaptation permitted subject to listed license; provider terms and account approval remain separate."
+    },
+    {
+      "id": "creepers",
+      "category": "shoes",
+      "photos": [
+        "fixtures/creepers.png"
+      ],
+      "photoRoles": [
+        "pair-three-quarter"
+      ],
+      "source": "https://commons.wikimedia.org/wiki/File:Creepers_shoes_Transparent.png",
+      "author": "Alchemica (photograph); Il Passeggero (transparent derivative)",
+      "license": "CC BY-SA 3.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "sources": [
+        {
+          "path": "fixtures/creepers.png",
+          "source": "https://commons.wikimedia.org/wiki/File:Creepers_shoes_Transparent.png",
+          "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/d/d7/Creepers_shoes_Transparent.png",
+          "author": "Alchemica; Il Passeggero",
+          "license": "CC BY-SA 3.0",
+          "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+          "changes": "Unmodified published transparent derivative; not local segmentation.",
+          "sha256": "df7642e0879b5a13a35cd46ca4da37173e95a6b32520f3c3c5975cebc75bd229",
+          "bytes": 3488996,
+          "verifiedAt": "2026-10-27",
+          "title": "Creepers shoes Transparent.png"
+        }
+      ],
+      "copyrightUse": "Copy/adaptation permitted subject to listed license; provider terms and account approval remain separate."
+    },
+    {
+      "id": "celine-hoodie",
+      "category": "top",
+      "photos": [
+        "fixtures/celine-hoodie.jpg"
+      ],
+      "photoRoles": [
+        "front"
+      ],
+      "source": "https://commons.wikimedia.org/wiki/File:Celine_Hoodie.jpg",
+      "author": "킥스타일",
+      "license": "CC BY 3.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/3.0",
+      "sources": [
+        {
+          "path": "fixtures/celine-hoodie.jpg",
+          "role": "front",
+          "source": "https://commons.wikimedia.org/wiki/File:Celine_Hoodie.jpg",
+          "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/0/01/Celine_Hoodie.jpg",
+          "author": "킥스타일",
+          "license": "CC BY 3.0",
+          "licenseUrl": "https://creativecommons.org/licenses/by/3.0",
+          "changes": "Unmodified published original; renamed locally.",
+          "sha256": "de14d9f34600e4fa990547e5f029871a8df47f1eea3aeb54bd316491c9f3f0ed",
+          "bytes": 549154,
+          "verifiedAt": "2026-10-27",
+          "title": "Celine Hoodie.jpg"
+        }
+      ],
+      "copyrightUse": "Copy/adaptation permitted subject to listed license; provider terms and account approval remain separate."
+    },
+    {
+      "id": "butterfly-hoodie",
+      "category": "top",
+      "photos": [
+        "fixtures/butterfly-hoodie.jpg",
+        "fixtures/butterfly-hoodie-back.jpg"
+      ],
+      "photoRoles": [
+        "front",
+        "back"
+      ],
+      "source": "https://commons.wikimedia.org/wiki/File:2008_Butterfly_Hoodie_by_Damien_Hirst_for_Adrian_Nyman_01.jpg",
+      "author": "Staff photographer, Rhode Island School of Design Museum of Art",
+      "license": "CC0",
+      "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+      "sources": [
+        {
+          "path": "fixtures/butterfly-hoodie.jpg",
+          "role": "front",
+          "source": "https://commons.wikimedia.org/wiki/File:2008_Butterfly_Hoodie_by_Damien_Hirst_for_Adrian_Nyman_01.jpg",
+          "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/c/c6/2008_Butterfly_Hoodie_by_Damien_Hirst_for_Adrian_Nyman_01.jpg",
+          "author": "Staff photographer, Rhode Island School of Design Museum of Art",
+          "license": "CC0",
+          "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+          "changes": "Unmodified published original; renamed locally.",
+          "sha256": "d872afb8e60fbc1b16d0bd0ba5c6ca65175a3a242f857a8e9aa9dcc24ad9bab5",
+          "bytes": 188066,
+          "verifiedAt": "2026-10-27",
+          "title": "2008 Butterfly Hoodie by Damien Hirst for Adrian Nyman 01.jpg"
+        },
+        {
+          "path": "fixtures/butterfly-hoodie-back.jpg",
+          "role": "back",
+          "source": "https://commons.wikimedia.org/wiki/File:2008_Butterfly_Hoodie_by_Damien_Hirst_for_Adrian_Nyman_02.jpg",
+          "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/f/f5/2008_Butterfly_Hoodie_by_Damien_Hirst_for_Adrian_Nyman_02.jpg",
+          "author": "Staff photographer, Rhode Island School of Design Museum of Art",
+          "license": "CC0",
+          "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+          "changes": "Unmodified published original; renamed locally.",
+          "sha256": "593203ca7d4b158f9f63a3b79fb5970c503f9eb23f587d806b060380c91c4f4a",
+          "bytes": 197995,
+          "verifiedAt": "2026-10-27",
+          "title": "2008 Butterfly Hoodie by Damien Hirst for Adrian Nyman 02.jpg"
+        }
+      ],
+      "sameItemEvidence": "RISD object2009.61.2, same object with2photos in primary museum record",
+      "primaryObjectSource": "https://risdmuseum.org/art-design/collection/limited-edition-butterfly-print-hoodie-2009612",
+      "copyrightUse": "Copy/adaptation permitted subject to listed license; provider terms and account approval remain separate."
+    },
+    {
+      "id": "printed-tee",
+      "category": "top",
+      "photos": [
+        "fixtures/printed-tee.jpg",
+        "fixtures/printed-tee-back.jpg"
+      ],
+      "photoRoles": [
+        "front",
+        "back"
+      ],
+      "source": "https://commons.wikimedia.org/wiki/File:T-shirt_(AM_1999.107.138-6).jpg",
+      "author": "Auckland Museum (photograph); Sportime Manufacturing Ltd (garment maker)",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+      "sources": [
+        {
+          "path": "fixtures/printed-tee.jpg",
+          "role": "front",
+          "source": "https://commons.wikimedia.org/wiki/File:T-shirt_(AM_1999.107.138-6).jpg",
+          "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/7/78/T-shirt_%28AM_1999.107.138-6%29.jpg",
+          "author": "Auckland Museum (photograph); Sportime Manufacturing Ltd (garment maker)",
+          "license": "CC BY 4.0",
+          "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+          "changes": "Unmodified published original; renamed locally.",
+          "sha256": "9ae4f2281bd8a6026b4515b7fe0774a72751ea4803d6bc9324a8c9283cee8d89",
+          "bytes": 24577,
+          "verifiedAt": "2026-10-27",
+          "title": "T-shirt (AM 1999.107.138-6).jpg"
+        },
+        {
+          "path": "fixtures/printed-tee-back.jpg",
+          "role": "back",
+          "source": "https://commons.wikimedia.org/wiki/File:T-shirt_(AM_1999.107.138-7).jpg",
+          "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/4/41/T-shirt_%28AM_1999.107.138-7%29.jpg",
+          "author": "Auckland Museum (photograph); Sportime Manufacturing Ltd (garment maker)",
+          "license": "CC BY 4.0",
+          "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+          "changes": "Unmodified published original; renamed locally.",
+          "sha256": "05cfa8c620e6a2c6778568c64252549e9e7f70a429c48d6bca5dc0b322a0216d",
+          "bytes": 20185,
+          "verifiedAt": "2026-10-27",
+          "title": "T-shirt (AM 1999.107.138-7).jpg"
+        }
+      ],
+      "sameItemEvidence": "Auckland Museum accession1999.107.138, paired source pages reference same object",
+      "copyrightUse": "Copy/adaptation permitted subject to listed license; provider terms and account approval remain separate."
+    },
+    {
+      "id": "open-denim-jacket",
+      "category": "top",
+      "photos": [
+        "fixtures/open-denim-jacket.jpg"
+      ],
+      "photoRoles": [
+        "front-open"
+      ],
+      "source": "https://commons.wikimedia.org/wiki/File:Worn_Tender_Co._denim_jacket.jpg",
+      "author": "Dma132",
+      "license": "CC0",
+      "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+      "sources": [
+        {
+          "path": "fixtures/open-denim-jacket.jpg",
+          "role": "front-open",
+          "source": "https://commons.wikimedia.org/wiki/File:Worn_Tender_Co._denim_jacket.jpg",
+          "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/51/Worn_Tender_Co._denim_jacket.jpg/960px-Worn_Tender_Co._denim_jacket.jpg",
+          "author": "Dma132",
+          "license": "CC0",
+          "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+          "changes": "Official Wikimedia thumbnail; aspect ratio preserved; renamed locally.",
+          "sha256": "e569e4037832e645e31e021f03fd27c79d46d4c1315a33c4a79d7f8342ebe9d2",
+          "bytes": 294462,
+          "verifiedAt": "2026-10-27",
+          "title": "Worn Tender Co. denim jacket.jpg"
+        }
+      ],
+      "copyrightUse": "Copy/adaptation permitted subject to listed license; provider terms and account approval remain separate."
+    },
+    {
+      "id": "trenchcoat",
+      "category": "top",
+      "photos": [
+        "fixtures/trenchcoat.jpg"
+      ],
+      "photoRoles": [
+        "front-closed"
+      ],
+      "source": "https://commons.wikimedia.org/wiki/File:Burberrys_Trenchcoat.jpg",
+      "author": "MB-one",
+      "license": "CC BY-SA 2.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+      "sources": [
+        {
+          "path": "fixtures/trenchcoat.jpg",
+          "role": "front-closed",
+          "source": "https://commons.wikimedia.org/wiki/File:Burberrys_Trenchcoat.jpg",
+          "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2c/Burberrys_Trenchcoat.jpg/500px-Burberrys_Trenchcoat.jpg",
+          "author": "MB-one",
+          "license": "CC BY-SA 2.0",
+          "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+          "changes": "Official Wikimedia thumbnail; aspect ratio preserved; renamed locally.",
+          "sha256": "57f919efc289e866a2acb0815ac9bd50b432b346b03fa732c0c75886c4f75a06",
+          "bytes": 48380,
+          "verifiedAt": "2026-10-27",
+          "title": "Burberrys Trenchcoat.jpg"
+        }
+      ],
+      "copyrightUse": "Copy/adaptation permitted subject to listed license; provider terms and account approval remain separate."
+    },
+    {
+      "id": "ribbed-cardigan",
+      "category": "top",
+      "photos": [
+        "fixtures/ribbed-cardigan.jpg"
+      ],
+      "photoRoles": [
+        "front-closed"
+      ],
+      "source": "https://commons.wikimedia.org/wiki/File:Cardigan,_sweater.JPG",
+      "author": "Rovdyr",
+      "license": "CC BY 2.5",
+      "licenseUrl": "https://creativecommons.org/licenses/by/2.5",
+      "sources": [
+        {
+          "path": "fixtures/ribbed-cardigan.jpg",
+          "role": "front-closed",
+          "source": "https://commons.wikimedia.org/wiki/File:Cardigan,_sweater.JPG",
+          "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/Cardigan%2C_sweater.JPG/960px-Cardigan%2C_sweater.JPG",
+          "author": "Rovdyr",
+          "license": "CC BY 2.5",
+          "licenseUrl": "https://creativecommons.org/licenses/by/2.5",
+          "changes": "Official Wikimedia thumbnail; aspect ratio preserved; renamed locally.",
+          "sha256": "540cb9cda8c24371857fc12803ec5b20ff9e5d296761fe44b2ccfe0afa787836",
+          "bytes": 363615,
+          "verifiedAt": "2026-10-27",
+          "title": "Cardigan, sweater.JPG"
+        }
+      ],
+      "copyrightUse": "Copy/adaptation permitted subject to listed license; provider terms and account approval remain separate."
+    }
+  ],
+  "combinations": [
+    {
+      "id": "open-jacket-over-tee",
+      "items": [
+        "white-tee",
+        "open-denim-jacket",
+        "jeans",
+        "creepers"
+      ]
+    },
+    {
+      "id": "long-top-over-jeans",
+      "items": [
+        "butterfly-hoodie",
+        "jeans",
+        "creepers"
+      ]
+    },
+    {
+      "id": "long-coat-over-tee",
+      "items": [
+        "white-tee",
+        "trenchcoat",
+        "jeans",
+        "creepers"
+      ]
+    },
+    {
+      "id": "print-over-jeans",
+      "items": [
+        "printed-tee",
+        "jeans",
+        "creepers"
+      ]
+    },
+    {
+      "id": "hoodie-over-jeans",
+      "items": [
+        "celine-hoodie",
+        "jeans",
+        "creepers"
+      ]
+    }
+  ],
+  "limitations": [
+    "Only one bottom and one pair of shoes: exploratory feasibility, not broad category qualification.",
+    "Back photos test source-side conditioning; they do not reveal unseen front details.",
+    "Butterfly hoodie is on an inanimate display form; no photograph depicts a human wearing the item.",
+    "Creepers use already-published background-removed image, not raw camera input.",
+    "No headwear or tall boots: do not declare these categories visually validated."
+  ],
+  "seed": "saint-look-fitting-trial-v1",
+  "template": "mannequin.svg",
+  "templateVersion": "front-360x560-proposed-v1",
+  "model": "local-fixture-v1",
+  "candidateEndpoint": "fal-ai/nano-banana-pro/edit",
+  "requiresSegmentation": true,
+  "ratesMicrousd": {
+    "attributes": 2753,
+    "generation": 150000,
+    "segmentation": 18000
+  },
+  "parameters": {
+    "pose": "front-arms-slightly-away",
+    "style": "restrained-editorial-illustration",
+    "output": "garment-only",
+    "preserve": "silhouette, colors, construction and characteristic details; never invent legible text or a second garment"
+  },
+  "approval": {
+    "status": "not-approved",
+    "paidCallsAllowed": false
+  },
+  "proposedLiveCeilings": {
+    "items": 10,
+    "additionalInputSets": 2,
+    "attributes": 14,
+    "generation": 28,
+    "segmentation": 28,
+    "reservedEstimateMicrousd": 4742542,
+    "proposedBudgetMicrousd": 10000000
+  },
+  "evaluation": {
+    "version": "fitting-feasibility-v1",
+    "status": "engineering-proposal-before-live-trial",
+    "itemPassFraction": 0.8,
+    "minimumPassingItems": 8,
+    "totalItems": 10,
+    "forbidZeroScore": true,
+    "metrics": [
+      "identity",
+      "color",
+      "proportions",
+      "construction",
+      "distinctive_details",
+      "pose"
+    ],
+    "detailsMayBeNotApplicable": true,
+    "hardFailures": [
+      "different_item",
+      "invented_body_or_clothing",
+      "lost_characteristic_print",
+      "invented_legible_text",
+      "wrong_side"
+    ],
+    "requiredGroups": [
+      "open-jacket",
+      "long-top",
+      "printed-top",
+      "bottom",
+      "shoes"
+    ],
+    "requiredCombinations": [
+      "open-jacket-over-tee",
+      "long-top-over-jeans",
+      "long-coat-over-tee",
+      "print-over-jeans",
+      "hoodie-over-jeans"
+    ],
+    "realQualityVerdict": null
+  }
+}
