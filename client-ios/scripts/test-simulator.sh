@@ -259,6 +259,8 @@ if [[ -n "${SAINT_LOOK_UI_TEST_ONLY:-}" ]]; then
     test_options+=("-only-testing:$test_selector")
   done <<< "$SAINT_LOOK_UI_TEST_ONLY"
 fi
+# Temporary #53 verification: exactly five iterations, without retry-on-failure.
+test_options+=(-test-iterations 5)
 if [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" && "${SAINT_LOOK_OBSERVE_VISUAL_STALLS:-0}" == 1 ]]; then
   # Observe the existing 60-second XCTest warning; do not retry or change its verdict.
   python3 scripts/observe-visual-stalls.py --udid "$simulator_id" \

@@ -189,11 +189,11 @@ final class VisualAcceptanceTests: XCTestCase {
             return
         }
         if populated {
-            // This single-line name is one paragraph: native triple tap selects its full text.
-            // Long press instead repositions the insertion point through the magnifier.
+            // Select All is explicit: a multi-tap can replace only one word in a long name.
+            try require(field.isEnabled, "The focused name field must allow native editing")
             let failures = testRun?.failureCount ?? 0
-            field.tap(withNumberOfTaps: 3, numberOfTouches: 1)
-            try requireEqual(testRun?.failureCount ?? 0, failures, "Native paragraph selection gesture failed")
+            field.typeKey("a", modifierFlags: .command)
+            try requireEqual(testRun?.failureCount ?? 0, failures, "Native Select All keyboard action failed")
         }
         let failures = testRun?.failureCount ?? 0
         field.typeText(name)
