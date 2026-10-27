@@ -1,4 +1,3 @@
-import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -6,7 +5,7 @@ import UIKit
 struct WardrobeView: View {
     @ObservedObject var store: WardrobeStore
     @Environment(\.dynamicTypeSize) private var typeSize
-    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var showingPhotoSource = false
     @State private var showSettings = false
     @State private var importing = false
     #if DEBUG
@@ -75,22 +74,14 @@ struct WardrobeView: View {
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView(store: store) }
-            .onChange(of: selectedPhoto) { _, photo in
-                guard let photo else { return }
-                importing = true
-                Task {
-                    defer { importing = false; selectedPhoto = nil }
-                    do {
-                        guard let data = try await photo.loadTransferable(type: Data.self) else { throw ClientError.invalidPhoto }
-                        store.addPhoto(data)
-                    } catch { store.notice = "Не удалось получить фотографию. Выберите снимок ещё раз." }
-                }
-            }
+            .photoSourcePicker(isPresented: $showingPhotoSource, importing: $importing,
+                               onPhoto: store.addPhoto,
+                               onError: { store.notice = $0 })
         }
     }
 
     private var photoPicker: some View {
-        PhotosPicker(selection: $selectedPhoto, matching: .images) {
+        Button { showingPhotoSource = true } label: {
             Label("Добавить фото", systemImage: "plus")
         }
         .accessibilityIdentifier("add-photo")
@@ -220,8 +211,7 @@ private struct ItemDetailView: View {
     @State private var editingItem: WardrobeItem?
     @State private var confirmingDeletion = false
     @State private var showingRecovery = false
-    @State private var showingPhotoPicker = false
-    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var showingPhotoSource = false
     @State private var importing = false
 
     private var item: WardrobeItem? { store.items.first { $0.id == itemID } }
@@ -278,23 +268,14 @@ private struct ItemDetailView: View {
             }
         }
         .sheet(item: $editingItem) { ItemEditView(store: store, item: $0) }
-        .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedPhoto, matching: .images)
-        .onChange(of: selectedPhoto) { _, photo in
-            guard let photo else { return }
-            importing = true
-            Task {
-                defer { importing = false; selectedPhoto = nil }
-                do {
-                    guard let data = try await photo.loadTransferable(type: Data.self) else { throw ClientError.invalidPhoto }
-                    store.replacePhoto(itemID, with: data)
-                } catch { store.notice = "Не удалось получить новое фото. Предыдущая карточка сохранена." }
-            }
-        }
+        .photoSourcePicker(isPresented: $showingPhotoSource, importing: $importing,
+                           onPhoto: { store.replacePhoto(itemID, with: $0) },
+                           onError: { store.notice = $0 })
     }
 
     private func actions(for item: WardrobeItem) -> some View {
         Menu {
-            Button("Заменить фото", systemImage: "photo") { showingPhotoPicker = true }
+            Button("Заменить фото", systemImage: "photo") { showingPhotoSource = true }
                 .accessibilityIdentifier("replace-photo")
             if item.status == .ready {
                 Button("Проблема с вырезкой", systemImage: "questionmark.circle") { showingRecovery = true }
@@ -330,7 +311,7 @@ private struct ItemDetailView: View {
                 Button("Повторить обработку") { store.retryProcessing(itemID) }
                     .accessibilityIdentifier("retry-processing")
             }
-            Button("Заменить фото") { showingPhotoPicker = true }
+            Button("Заменить фото") { showingPhotoSource = true }
                 .accessibilityIdentifier("replace-photo")
         }
         .disabled(importing || !store.storageAvailable)
