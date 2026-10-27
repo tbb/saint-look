@@ -80,12 +80,25 @@ private final class NameSelectionTrace: NSObject {
         let names = windows.flatMap { fields(in: $0) }.filter {
             $0.accessibilityIdentifier == "outfit-name" || $0.placeholder == "Название — необязательно"
         }
-        let state = names.map { field in
-            let selection = field.selectedTextRange.map {
-                "\(field.offset(from: field.beginningOfDocument, to: $0.start))..\(field.offset(from: field.beginningOfDocument, to: $0.end))"
-            } ?? "nil"
-            return "id=\(ObjectIdentifier(field)) class=\(String(describing: type(of: field))) first=\(field.isFirstResponder) length=\(field.text?.utf16.count ?? 0) selected=\(selection) marked=\(field.markedTextRange != nil) language=\(field.textInputMode?.primaryLanguage ?? "nil") frame=\(field.convert(field.bounds, to: nil))"
-        }.joined(separator: " | ")
+        var samples: [String] = []
+        for field in names {
+            let selection: String
+            if let range = field.selectedTextRange {
+                let start = field.offset(from: field.beginningOfDocument, to: range.start)
+                let end = field.offset(from: field.beginningOfDocument, to: range.end)
+                selection = "\(start)..\(end)"
+            } else { selection = "nil" }
+            let identity = String(describing: ObjectIdentifier(field))
+            let className = String(describing: type(of: field))
+            let length = field.text?.utf16.count ?? 0
+            let language = field.textInputMode?.primaryLanguage ?? "nil"
+            let marked = field.markedTextRange != nil
+            let frame = field.convert(field.bounds, to: nil)
+            let focus = "first=\(field.isFirstResponder) length=\(length) selected=\(selection)"
+            let context = "marked=\(marked) language=\(language) frame=\(frame)"
+            samples.append("id=\(identity) class=\(className) " + focus + " " + context)
+        }
+        let state = samples.joined(separator: " | ")
         let line = state.isEmpty ? "no-name-field" : state
         if line != previous {
             previous = line
