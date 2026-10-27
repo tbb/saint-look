@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - 'scripts/fitting/**'
+      - 'backend/package.json'
+      - 'backend/package-lock.json'
+      - 'backend/src/jev.mjs'
+      - 'shared/wardrobe-taxonomy.json'
       - 'scripts/deploy/synthetic.png'
       - 'docs/research/fitting-*.md'
       - '.github/workflows/fitting-experiment.yml'
@@ -11,6 +15,10 @@ on:
     branches: [main]
     paths:
       - 'scripts/fitting/**'
+      - 'backend/package.json'
+      - 'backend/package-lock.json'
+      - 'backend/src/jev.mjs'
+      - 'shared/wardrobe-taxonomy.json'
       - 'scripts/deploy/synthetic.png'
       - '.github/workflows/fitting-experiment.yml'
   workflow_dispatch:
@@ -30,5 +38,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Install image decoder from the existing backend lockfile
+        run: npm --prefix backend ci --ignore-scripts
       - name: Test only loopback fixtures; no provider secrets or paid API calls
         run: node --test scripts/fitting/*.test.mjs
