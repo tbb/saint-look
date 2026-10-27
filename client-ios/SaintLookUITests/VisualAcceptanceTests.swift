@@ -261,7 +261,10 @@ final class VisualAcceptanceTests: XCTestCase {
             try require(viewport.width > 40 && viewport.height > 60, "The foreground content viewport must be usable")
             let frame = element.exists ? element.frame : .zero
             last = "target=\(frame), container=\(container.frame), viewport=\(viewport), navigation=\(bar.identifier)"
-            if element.exists && element.isHittable && frame.intersects(viewport) { return }
+            // A partly visible card can report hittable while its native tap center is under a bar.
+            // Requiring the center also works for content taller than the safe viewport.
+            let tapCenter = CGPoint(x: frame.midX, y: frame.midY)
+            if element.exists && element.isHittable && viewport.contains(tapCenter) { return }
             let direction: CGFloat = element.exists ? (frame.midY < viewport.midY ? 1 : -1) : (towardTop ? 1 : -1)
             let distance = min(viewport.height * 0.65, element.exists ? max(40, abs(viewport.midY - frame.midY)) : viewport.height * 0.65)
             let y = direction < 0 ? viewport.maxY - 12 : viewport.minY + 12
