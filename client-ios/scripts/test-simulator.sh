@@ -241,7 +241,11 @@ PYTHON
   test_options=(-xctestrun "$remote_manifest" -destination "platform=iOS Simulator,id=$simulator_id" -parallel-testing-enabled NO)
 fi
 if [[ -n "${SAINT_LOOK_UI_TEST_ONLY:-}" ]]; then
-  test_options+=("-only-testing:${SAINT_LOOK_UI_TEST_ONLY}")
+  # A newline-separated list selects a small regression set in one Simulator run.
+  while IFS= read -r test_selector; do
+    [[ -z "$test_selector" ]] && continue
+    test_options+=("-only-testing:$test_selector")
+  done <<< "$SAINT_LOOK_UI_TEST_ONLY"
 fi
 if [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" && "${SAINT_LOOK_OBSERVE_VISUAL_STALLS:-0}" == 1 ]]; then
   # Observe the existing 60-second XCTest warning; do not retry or change its verdict.

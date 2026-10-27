@@ -217,3 +217,12 @@ xcresult. Сохранение выполняется и после ошибок
 permission-диалога или качества снимка. [UIKit camera picker](https://developer.apple.com/documentation/uikit/uiimagepickercontroller)
 и [разрешения AVFoundation](https://developer.apple.com/documentation/avfoundation/requesting-authorization-to-capture-and-save-media)
 задают нативный путь съёмки и момент запроса доступа.
+
+### Отдельная проверка камеры
+
+Для быстрой проверки трёх сценариев выбора источника запустите workflow
+`Local ingestion checks` вручную с `ios_suite=camera`. Это один Simulator build
+с тремя `-only-testing` фильтрами; обычный PR-прогон гардероба по-прежнему включает
+все 24 сценария. `SAINT_LOOK_UI_TEST_ONLY` локального скрипта также принимает список
+точных XCTest identifiers, разделённых переводами строк. Этот прогон проверяет
+выбор источника, сообщения и отмену; физическую съёмку проверяет владелец на iPhone.
