@@ -70,15 +70,24 @@ private final class NameSelectionTrace: NSObject {
     }
 
     private func fields(in view: UIView) -> [UITextField] {
-        let own = (view as? UITextField).map { [$0] } ?? []
-        return own + view.subviews.flatMap { fields(in: $0) }
+        var result: [UITextField] = []
+        if let field = view as? UITextField { result.append(field) }
+        for child in view.subviews { result.append(contentsOf: fields(in: child)) }
+        return result
     }
 
     @objc private func sample() {
         guard Date() < deadline else { stop(); return }
-        let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap { $0.windows }
-        let names = windows.flatMap { fields(in: $0) }.filter {
-            $0.accessibilityIdentifier == "outfit-name" || $0.placeholder == "Название — необязательно"
+        var names: [UITextField] = []
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            for window in windowScene.windows {
+                for field in fields(in: window) {
+                    let matchesID = field.accessibilityIdentifier == "outfit-name"
+                    let matchesPlaceholder = field.placeholder == "Название — необязательно"
+                    if matchesID || matchesPlaceholder { names.append(field) }
+                }
+            }
         }
         var samples: [String] = []
         for field in names {
@@ -93,7 +102,7 @@ private final class NameSelectionTrace: NSObject {
             let length = field.text?.utf16.count ?? 0
             let language = field.textInputMode?.primaryLanguage ?? "nil"
             let marked = field.markedTextRange != nil
-            let frame = field.convert(field.bounds, to: nil)
+            let frame: CGRect = field.convert(field.bounds, to: nil as UIView?)
             let focus = "first=\(field.isFirstResponder) length=\(length) selected=\(selection)"
             let context = "marked=\(marked) language=\(language) frame=\(frame)"
             samples.append("id=\(identity) class=\(className) " + focus + " " + context)
