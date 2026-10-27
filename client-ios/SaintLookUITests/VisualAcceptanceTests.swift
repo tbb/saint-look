@@ -283,10 +283,9 @@ final class VisualAcceptanceTests: XCTestCase {
     }
 
     @MainActor
-    private func removeBodyLayer(_ id: String, in app: XCUIApplication) throws {
-        let identifier = "remove-body-layer-\(id)"
+    private func tapMenuAction(_ identifier: String, in app: XCUIApplication) throws {
         let action = app.buttons[identifier]
-        try require(action.waitForExistence(timeout: 5), "The addressed layer-removal action must exist")
+        try require(action.waitForExistence(timeout: 5), "The addressed native menu action must exist")
         if action.isHittable && app.frame.contains(action.frame) {
             try nativeTap(action, in: app)
             return
@@ -297,8 +296,8 @@ final class VisualAcceptanceTests: XCTestCase {
             let ancestors = app.otherElements.containing(.button, identifier: identifier).allElementsBoundByIndex
                 .filter { $0.exists && !$0.frame.intersection(app.frame).isEmpty }
             guard let popup = ancestors.min(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
-                diagnose("missing-layer-menu-viewport", app: app)
-                try require(false, "The exact layer action must have a visible native menu ancestor")
+                diagnose("missing-native-menu-viewport", app: app)
+                try require(false, "The exact action must have a visible native menu ancestor")
                 return
             }
             let viewport = popup.frame.intersection(app.frame)
@@ -316,8 +315,8 @@ final class VisualAcceptanceTests: XCTestCase {
             start.press(forDuration: 0.05, thenDragTo: end)
             try requireEqual(testRun?.failureCount ?? 0, failures, "Native menu scroll failed")
         }
-        diagnose("unreachable-layer-menu-action", app: app, detail: action.debugDescription)
-        try require(false, "The exact layer-removal action must become fully visible inside its menu")
+        diagnose("unreachable-native-menu-action", app: app, detail: action.debugDescription)
+        try require(false, "The exact native action must become fully visible inside its menu")
     }
 
     @MainActor
@@ -422,7 +421,7 @@ final class VisualAcceptanceTests: XCTestCase {
         try reveal(firstLayer, in: app, towardTop: true)
         try capture("05-multilayer-editor")
         try tap(app.buttons["outfit-slot-menu-\(secondID)"], in: app)
-        try removeBodyLayer(secondID, in: app)
+        try tapMenuAction("remove-body-layer-\(secondID)", in: app)
         try require(!(second.exists))
         try nativeTap(app.buttons["save-outfit"], in: app)
         let outfit = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).firstMatch
@@ -460,7 +459,7 @@ final class VisualAcceptanceTests: XCTestCase {
         try selectTab("Гардероб", in: app)
         try openItem(0, in: app)
         try nativeTap(app.buttons["item-actions"], in: app)
-        try nativeTap(app.buttons["delete-item"], in: app)
+        try tapMenuAction("delete-item", in: app)
         let deletionAlert = app.alerts["Удалить вещь?"]
         try require(deletionAlert.waitForExistence(timeout: 5))
         try require(deletionAlert.buttons.matching(identifier: "cancel-delete-item").firstMatch.exists)
@@ -468,7 +467,7 @@ final class VisualAcceptanceTests: XCTestCase {
         try nativeTap(deletionAlert.buttons.matching(identifier: "cancel-delete-item").firstMatch, in: app)
         try require(app.buttons["item-actions"].exists)
         try nativeTap(app.buttons["item-actions"], in: app)
-        try nativeTap(app.buttons["delete-item"], in: app)
+        try tapMenuAction("delete-item", in: app)
         try require(deletionAlert.waitForExistence(timeout: 5))
         try nativeTap(deletionAlert.buttons.matching(identifier: "confirm-delete-item").firstMatch, in: app)
         try expectGone(app.buttons["item-actions"], "Confirmed wardrobe deletion dismisses its detail")
