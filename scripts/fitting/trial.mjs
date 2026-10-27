@@ -35,9 +35,9 @@ async function main() {
   const out = resolve(args['--out']), approvalBytes = await readFile(args['--approval']), approval = JSON.parse(approvalBytes);
   if (approval.mode !== mode || approval.planSha256 !== loaded.planSha256 || approval.outputDirectory !== out
     || approval.sourceTermsReviewed !== true || approval.providerTermsReviewed !== true
-    || !Number.isSafeInteger(approval.budgetMicrousd) || approval.budgetMicrousd <= 0 || approval.budgetMicrousd > 10_000_000
+    || !Number.isSafeInteger(approval.budgetMicrousd) || approval.budgetMicrousd <= 0 || approval.budgetMicrousd > 5_000_000
     || !Object.keys(rates).every(k => Number.isSafeInteger(approval.maxCalls?.[k]) && approval.maxCalls[k] >= loaded.forecast[k]
-      && approval.maxCalls[k] <= ({ preparation: 12, attributes: 18, generation: 36, segmentation: 36 })[k])
+      && approval.maxCalls[k] <= ({ preparation: 12, attributes: 14, generation: 28, segmentation: 28 })[k])
     || loaded.reservedMicrousd > approval.budgetMicrousd) throw new Error('Approval does not cover this plan, directory or budget');
   if (!local && (approval.paidCallsAllowed !== true || typeof approval.approvedBy !== 'string' || !approval.approvedBy.trim()
     || !Number.isFinite(Date.parse(approval.priceCheckedAt)) || Date.now() - Date.parse(approval.priceCheckedAt) > 86400000

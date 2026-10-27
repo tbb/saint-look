@@ -27,8 +27,8 @@ node scripts/fitting/trial.mjs --describe --plan scripts/fitting/plan.json
 | `mode` | `live` |
 | `planSha256` | Точное значение `--describe` после окончательного выбора плана |
 | `outputDirectory` | Один согласованный абсолютный путь к закрытому каталогу всей пробы |
-| `budgetMicrousd` | Явно разрешённый целый бюджет, не более 10000000 |
-| `maxCalls` | Объект с потолками `attributes`, `generation`, `segmentation`; базово `preparation:12, attributes:12, generation:24, segmentation:24` (до72 вызовов, включая бесплатные sandbox-слоты) |
+| `budgetMicrousd` | Явно разрешённый целый бюджет, не более 5000000 |
+| `maxCalls` | Объект с потолками `preparation`, `attributes`, `generation`, `segmentation`; максимум `12/14/28/28` соответственно (до82 вызовов, включая до40 Photoroom sandbox). Базово `preparation:12, attributes:12, generation:24, segmentation:24` (до72 вызовов, включая бесплатные sandbox-слоты) |
 | `sourceTermsReviewed`, `providerTermsReviewed`, `paidCallsAllowed` | Все строго boolean `true`, только после фактического согласования |
 | `approvedBy` | Кто разрешил пробу |
 | `priceCheckedAt` | ISO timestamp фактической перепроверки цен, не старше 24 часов |
@@ -44,7 +44,7 @@ node scripts/fitting/trial.mjs --live \
   --out /PRIVATE/approved-trial-output
 ```
 
-Команда не входит в workflow. Photoroom-ключ обязан начинаться с `sandbox_`; live-ключ и production fallback не принимаются. Ключи не записываются в артефакты; закрытые исходники, отчёты и ledger не коммитить. Базовый резерв текущего набора — 3633036 microUSD; proposed дополнительные слоты и $10 в `plan.json` не являются разрешением. Клиентский cap ограничивает dispatch по фиксированным ставкам, не гарантирует банковский hard cap поставщика. Для JEV сохраняются `input_tokens` и рассчитанная по ним оценка; фиксированный резерв 2753 microUSD не выдаётся за фактическую цену. Live `actualCostMicrousd` остаётся null до сверки биллинга.
+Команда не входит в workflow. Photoroom-ключ обязан начинаться с `sandbox_`; live-ключ и production fallback не принимаются. Ключи не записываются в артефакты; закрытые исходники, отчёты и ledger не коммитить. Базовый резерв текущего набора — 3633036 microUSD; proposed дополнительные слоты и $5 в `plan.json` не являются разрешением. Клиентский cap ограничивает dispatch по фиксированным ставкам, не гарантирует банковский hard cap поставщика. Для JEV сохраняются `input_tokens` и рассчитанная по ним оценка; фиксированный резерв 2753 microUSD не выдаётся за фактическую цену. Live `actualCostMicrousd` остаётся null до сверки биллинга.
 
 ## Запросы, восстановление и остановка
 

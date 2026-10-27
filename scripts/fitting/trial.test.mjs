@@ -176,10 +176,19 @@ test('lost submit response reserves the attempt and refuses replay instead of pa
   assert.equal(f.calls.filter(c => c.method === 'POST' && c.path.includes('nano')).length, 1);
 });
 
-test('nonboolean approval cannot authorize sending photos', async t => {
-  const f = await fixture(t); await f.approve({ sourceTermsReviewed: 'false' });
-  const result = await f.execute(); assert.equal(result.code, 1);
-  assert.match(result.stderr, /Approval does not cover/); assert.equal(f.calls.length, 0);
+test('invalid approval or a ceiling beyond the proposed bounded trial cannot authorize sending photos', async t => {
+  const f = await fixture(t);
+  const maxCalls = { preparation: 12, attributes: 14, generation: 28, segmentation: 28 };
+  const invalid = [{ sourceTermsReviewed: 'false' }, { budgetMicrousd: 5_000_001 },
+    { maxCalls: { attributes: 14, generation: 28, segmentation: 28 } },
+    ...Object.keys(maxCalls).map(stage => ({ maxCalls: { ...maxCalls, [stage]: maxCalls[stage] + 1 } }))];
+  for (const override of invalid) {
+    await f.approve(override);
+    const result = await f.execute(); assert.equal(result.code, 1, JSON.stringify(override));
+    assert.match(result.stderr, /Approval does not cover/); assert.equal(f.calls.length, 0);
+  }
+  await f.approve({ budgetMicrousd: 5_000_000, maxCalls });
+  const accepted = await f.execute(); assert.equal(accepted.code, 0, accepted.stderr);
 });
 
 test('blind review shows the mannequin compositions and attribution without exposing variant names', async t => {

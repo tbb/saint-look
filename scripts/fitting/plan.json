@@ -427,7 +427,7 @@
     "totalRequests": 82,
     "photoroomSandboxCalls": 40,
     "reservedEstimateMicrousd": 4238542,
-    "proposedBudgetMicrousd": 10000000
+    "proposedBudgetMicrousd": 5000000
   },
   "evaluation": {
     "version": "fitting-feasibility-v1",
