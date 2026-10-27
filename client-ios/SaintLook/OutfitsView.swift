@@ -423,7 +423,8 @@ struct OutfitEditorView: View {
             .alert("Отбросить изменения?", isPresented: $confirmingDiscard) {
                 Button("Отбросить изменения", role: .destructive) { dismiss() }
                     .accessibilityIdentifier("discard-outfit-changes")
-                Button("Продолжить редактирование", role: .cancel) { }
+                Button("Остаться", role: .cancel) { }
+                    .accessibilityLabel("Продолжить редактирование")
                     .accessibilityIdentifier("continue-outfit-editing")
             }
             .sheet(item: $choosingSlot) { slot in
