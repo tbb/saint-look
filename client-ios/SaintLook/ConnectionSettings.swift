@@ -23,8 +23,9 @@ struct ConnectionSettings {
             savedURL: savedURL, savedToken: savedToken,
             bundled: Bundle.main.infoDictionary ?? [:]
         )
-        if savedURL == nil, savedToken.isEmpty, !settings.token.isEmpty {
-            // Personal IPA defaults are imported once. Later manual changes win.
+        if savedURL == nil, !settings.token.isEmpty, (try? settings.validatedURL()) != nil {
+            // Import personal defaults, including a recovered reinstall destination.
+            // Later manual changes win; an unpaired Keychain token stays unconfigured.
             try settings.save()
         }
         return settings
@@ -33,8 +34,13 @@ struct ConnectionSettings {
     static func resolve(savedURL: String?, savedToken: String, bundled: [String: Any]) throws -> Self {
         let localURL = "http://127.0.0.1:8787"
         // Never combine a saved server address with a bundled owner's credential.
-        if savedURL != nil || !savedToken.isEmpty {
-            return Self(baseURL: savedURL ?? localURL, token: savedToken)
+        if let savedURL {
+            return Self(baseURL: savedURL, token: savedToken)
+        }
+        // Keychain can outlive uninstall while UserDefaults cannot. Recover a
+        // destination only from the bundled pair matching the surviving token.
+        if !savedToken.isEmpty, bundled["SaintLookDefaultOwnerToken"] as? String != savedToken {
+            return Self(baseURL: "", token: savedToken)
         }
         guard bundled["SaintLookDefaultBackendURL"] != nil || bundled["SaintLookDefaultOwnerToken"] != nil else {
             return Self(baseURL: localURL, token: "")
