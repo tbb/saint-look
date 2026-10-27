@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Observe local visual XCTest stalls without retrying or changing the test verdict."""
 import argparse
+import codecs
 import ctypes
 import datetime
+import io
 import json
 import os
 from pathlib import Path
 import signal
+import selectors
 import subprocess
 import sys
 import threading
@@ -119,21 +122,53 @@ def observe(command, udid, folder):
 
     for signum in (signal.SIGINT, signal.SIGTERM):
         previous_handlers[signum] = signal.signal(signum, forward)
+
+    def inspect_line(line):
+        nonlocal context
+        context = (context + [line.rstrip()])[-20:]
+        if WARNING in line and len(workers) < 2 and not stop.is_set():
+            capture = folder / f'sample-{len(workers) + 1}'
+            capture.mkdir()
+            worker = threading.Thread(target=collect, args=(capture, udid, context[:], stop))
+            worker.start()
+            workers.append(worker)
+
     try:
-        with (folder / 'xcodebuild.log').open('w') as log:
-            for line in process.stdout:
-                sys.stdout.write(line)
+        # A pending Python signal can arrive just before a blocking readline starts.
+        # Return to Python regularly, including when a child is silent or emits no newline.
+        decoder = io.IncrementalNewlineDecoder(
+            codecs.getincrementaldecoder(process.stdout.encoding)(errors=process.stdout.errors),
+            translate=True)
+        os.set_blocking(process.stdout.fileno(), False)
+        pending = ''
+        with (folder / 'xcodebuild.log').open('w') as log, selectors.DefaultSelector() as readable:
+            readable.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                if not readable.select(timeout=.1):
+                    continue
+                try:
+                    chunk = os.read(process.stdout.fileno(), 65536)
+                except BlockingIOError:
+                    continue
+                text = decoder.decode(chunk, final=not chunk)
+                sys.stdout.write(text)
                 sys.stdout.flush()
-                log.write(line)
+                log.write(text)
                 log.flush()
-                context = (context + [line.rstrip()])[-20:]
-                if WARNING in line and len(workers) < 2 and not stop.is_set():
-                    capture = folder / f'sample-{len(workers) + 1}'
-                    capture.mkdir()
-                    worker = threading.Thread(target=collect, args=(capture, udid, context[:], stop))
-                    worker.start()
-                    workers.append(worker)
-        status = process.wait()
+                lines = (pending + text).split('\n')
+                pending = lines.pop()
+                for line in lines:
+                    inspect_line(line)
+                if not chunk:
+                    if pending:
+                        inspect_line(pending)
+                    break
+        while True:
+            try:
+                status = process.wait(timeout=.1)
+                break
+            except subprocess.TimeoutExpired:
+                pass
     finally:
         stop.set()
         try:

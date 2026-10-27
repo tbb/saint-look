@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import selectors
 import subprocess
 import sys
 import tempfile
@@ -48,6 +49,47 @@ class ObserverTests(unittest.TestCase):
                 if process.poll() is None:
                     process.kill()
                     process.communicate()
+
+    def test_streams_partial_utf8_output_and_can_terminate_without_another_line(self):
+        with tempfile.TemporaryDirectory() as folder:
+            child_pid = Path(folder) / 'child.pid'
+            output = Path(folder) / 'output'
+            expected = 'неполная строка'.encode()
+            code = (f'import os,signal,time,sys; from pathlib import Path; '
+                    f'Path({str(child_pid)!r}).write_text(str(os.getpid())); '
+                    'signal.signal(signal.SIGTERM, lambda *_: sys.exit(23)); '
+                    f'os.write(1, {expected[:1]!r}); time.sleep(.05); '
+                    f'os.write(1, {expected[1:]!r}); time.sleep(30)')
+            process = subprocess.Popen(self.command(str(output), code),
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                received = b''
+                deadline = time.monotonic() + 2
+                with selectors.DefaultSelector() as readable:
+                    readable.register(process.stdout, selectors.EVENT_READ)
+                    while len(received) < len(expected) and time.monotonic() < deadline:
+                        if readable.select(timeout=.1):
+                            chunk = os.read(process.stdout.fileno(), 4096)
+                            if not chunk:
+                                break
+                            received += chunk
+                self.assertEqual(received, expected, 'Partial output must not wait for a newline or child exit')
+                process.send_signal(signal.SIGTERM)
+                remainder, errors = process.communicate(timeout=5)
+                self.assertEqual(process.returncode, 23, errors.decode())
+                self.assertEqual(received + remainder, expected)
+                root, = output.iterdir()
+                self.assertEqual((root / 'xcodebuild.log').read_bytes(), expected)
+            finally:
+                # The fixture owns this exact process group, even if the observer is still blocked.
+                if child_pid.exists():
+                    try:
+                        os.killpg(int(child_pid.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                if process.poll() is None:
+                    process.kill()
+                process.communicate(timeout=3)
 
     def test_log_failure_terminates_and_reaps_detached_child(self):
         real_popen = subprocess.Popen
