@@ -560,16 +560,12 @@ struct OutfitEditorView: View {
     }
 
     private func save() {
-        if ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1" { NSLog("[DEBUG-name-save] entered saving=\(saving) dirty=\(dirty) canSave=\(store.canSaveOutfit(draft))") }
         guard !saving else { return }
         saving = true
         do {
             try store.saveOutfit(draft)
-            if ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1" { NSLog("[DEBUG-name-save] persistence-success") }
             dismiss()
-            if ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1" { NSLog("[DEBUG-name-save] dismiss-invoked") }
         } catch {
-            if ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1" { NSLog("[DEBUG-name-save] persistence-error type=\(String(describing: type(of: error)))") }
             errorMessage = (error as? OutfitError)?.localizedDescription
                 ?? "Не удалось сохранить лук на устройстве. Ваш выбор сохранён в черновике — попробуйте ещё раз."
             saving = false
