@@ -189,13 +189,11 @@ final class VisualAcceptanceTests: XCTestCase {
             return
         }
         if populated {
-            diagnose("[DEBUG-name-selection]-focused", app: app, detail: field.debugDescription)
             // This single-line name is one paragraph: native triple tap selects its full text.
             // Long press instead repositions the insertion point through the magnifier.
             let failures = testRun?.failureCount ?? 0
             field.tap(withNumberOfTaps: 3, numberOfTouches: 1)
             try requireEqual(testRun?.failureCount ?? 0, failures, "Native paragraph selection gesture failed")
-            diagnose("[DEBUG-name-selection]-after-triple-tap", app: app, detail: field.debugDescription)
         }
         let failures = testRun?.failureCount ?? 0
         field.typeText(name)
