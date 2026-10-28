@@ -20,10 +20,10 @@ struct BackendClient {
     private func send(_ request: URLRequest, expectedStatus: Int? = nil) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
-        if response.statusCode == 410 || response.statusCode == 503 {
+        if response.statusCode == 410 || response.statusCode == 503 || response.statusCode == 409 {
             struct Failure: Decodable { let error: String }
             if let failure = try? JSONDecoder().decode(Failure.self, from: data),
-               ["result_expired", "result_delivered", "illustration_unavailable"].contains(failure.error) {
+               ["result_expired", "result_delivered", "illustration_unavailable", "processing_in_progress"].contains(failure.error) {
                 throw ClientError.resultUnavailable(failure.error)
             }
         }

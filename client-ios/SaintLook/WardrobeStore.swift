@@ -649,6 +649,7 @@ extension WardrobeStore {
                 } else { retryable = error is URLError }
                 intent.status = retryable ? .pending : .failed
                 if case ClientError.resultUnavailable(let code) = error { intent.error = code }
+                else if case ClientError.oversizedPhoto = error { intent.error = "image_too_large" }
                 else { intent.error = retryable ? "offline" : "invalid_provider_response" }
                 do { try saveIllustration(id, request: intent) }
                 catch { notice = "Не удалось сохранить состояние иллюстрации."; return }

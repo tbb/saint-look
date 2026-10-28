@@ -255,6 +255,7 @@ enum IllustrationFailure {
     static func message(for code: String) -> String {
         switch code {
         case "illustration_unavailable": return "Создание иллюстраций пока недоступно. Фото и вырезка сохранены."
+        case "processing_in_progress": return "Предыдущая подготовка ещё идёт. Повторите обновление позже."
         case "source_changed": return "Фото или признаки изменились. Создайте иллюстрацию для новой версии."
         case "processing_unknown": return "Исход генерации неизвестен. Автоматический повтор остановлен. Предыдущее изображение сохранено."
         case "offline": return "Нет связи. Отправка продолжится при подключении к интернету."
