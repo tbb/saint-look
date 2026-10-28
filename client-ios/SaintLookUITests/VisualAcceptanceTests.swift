@@ -348,6 +348,103 @@ final class VisualAcceptanceTests: XCTestCase {
         return counts
     }
 
+    /// Drawn fixtures verify native compositing and local behavior, not provider quality.
+    @MainActor
+    func testPreparedFittingLayersAndFallbackStayLocal() async throws {
+        func illustrationCounts() async throws -> [String: Int] {
+            var request = URLRequest(url: URL(string: "\(baseURL)/__control")!)
+            request.setValue("Bearer saint-look-ui-control-test-token-00000001", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            try requireEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            let state = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            return try Dictionary(uniqueKeysWithValues: ["illustrationUploads", "illustrationOperations", "illustrationAcknowledgements"].map {
+                ($0, try XCTUnwrap(state[$0] as? Int))
+            })
+        }
+        func canvas(in app: XCUIApplication) throws -> XCUIElement {
+            // The editor sheet can retain the detail canvas behind it in accessibility.
+            try XCTUnwrap(app.otherElements.matching(identifier: "fitting-canvas").allElementsBoundByIndex.last)
+        }
+        let before = try await activityCounts()
+        let illustrationsBefore = try await illustrationCounts()
+        let app = try launch("fitting-ready")
+        try selectTab("Луки", in: app)
+        let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).firstMatch
+        try require(saved.waitForExistence(timeout: 5))
+        try reveal(try canvas(in: app), in: app, towardTop: true)
+        try capture("fitting-01-prepared-collection")
+        try tap(saved, in: app)
+        try waitVisible(app.buttons["edit-outfit"], in: app)
+        try reveal(try canvas(in: app), in: app, towardTop: true)
+        try capture("fitting-02-open-jacket-over-tee-detail")
+        try nativeTap(app.buttons["edit-outfit"], in: app)
+        try waitVisible(app.buttons["cancel-outfit"], in: app)
+        try reveal(try canvas(in: app), in: app, towardTop: true)
+        try require(!(app.staticTexts["fitting-missing-illustration"].exists))
+        try capture("fitting-03-prepared-editor")
+        let layers = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'fitting-layer-'"))
+        try requireEqual(layers.count, 2)
+        try tap(layers.element(boundBy: 0), in: app)
+        try require(layers.element(boundBy: 0).isSelected)
+        try tap(layers.element(boundBy: 1), in: app)
+        try require(layers.element(boundBy: 1).isSelected)
+        let outerID = String(layers.element(boundBy: 1).identifier.dropFirst("fitting-layer-".count))
+        let pin = app.buttons["pin-slot-\(outerID)"]
+        try tap(pin, in: app)
+        try require(pin.isSelected)
+        let shoes = slot("shoes", in: app)
+        let shoeID = String(shoes.identifier.dropFirst("outfit-slot-shoes-".count))
+        try tap(app.buttons["outfit-slot-menu-\(shoeID)"], in: app)
+        try tapMenuAction("clear-slot-\(shoeID)", in: app)
+        try require(shoes.label.contains("Выбрать вещь"))
+        try tap(app.buttons["fitting-shuffle"], in: app)
+        try require(shoes.label.contains("Туфли"), "Shuffle fills the unpinned empty footwear slot")
+        try require(pin.isSelected)
+        try tap(app.buttons["fitting-undo"], in: app)
+        try require(shoes.label.contains("Выбрать вещь"), "A shuffle is undone as one composition change")
+        try tap(app.buttons["fitting-undo"], in: app)
+        try require(shoes.label.contains("Туфли"))
+        try require(pin.isSelected, "Composition undo preserves the outer layer pin")
+        try reveal(try canvas(in: app), in: app, towardTop: true)
+        try capture("fitting-04-layers-restored-after-two-undos")
+        try nativeTap(app.buttons["cancel-outfit"], in: app)
+        try require(!(app.alerts.firstMatch.exists), "Undo restored the saved composition; a pin alone does not dirty it")
+        let afterOnline = try await activityCounts()
+        let illustrationsAfter = try await illustrationCounts()
+        try requireEqual(afterOnline, before, "Prepared fitting interactions must not invoke ingestion providers")
+        try requireEqual(illustrationsAfter, illustrationsBefore, "Prepared fitting must not submit or acknowledge generation")
+        app.terminate()
+
+        try await control("offline")
+        let offline = try launch("fitting-ready", reset: false)
+        try selectTab("Луки", in: offline)
+        let offlineSaved = offline.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).firstMatch
+        try tap(offlineSaved, in: offline)
+        try reveal(try canvas(in: offline), in: offline, towardTop: true)
+        try require((try canvas(in: offline)).label.contains("иллюстрация"))
+        try capture("fitting-05-prepared-offline-restart")
+        offline.terminate()
+
+        let fallback = try launch("ready-four")
+        try selectTab("Луки", in: fallback)
+        try tap(fallback.buttons["create-first-outfit"], in: fallback)
+        try tap(slot("body", in: fallback), in: fallback)
+        try choose(0, in: fallback)
+        let explanation = fallback.staticTexts["fitting-missing-illustration"]
+        try reveal(explanation, in: fallback)
+        try capture("fitting-06-honest-photo-fallback")
+        try require((try canvas(in: fallback)).label.contains("без иллюстрации"))
+        try nativeTap(fallback.buttons["cancel-outfit"], in: fallback)
+        try nativeTap(fallback.alerts.buttons["discard-outfit-changes"], in: fallback)
+        fallback.terminate()
+        let evidence = try JSONSerialization.data(withJSONObject: ["providersBefore": before, "providersAfter": afterOnline,
+            "illustrationsBefore": illustrationsBefore, "illustrationsAfter": illustrationsAfter], options: [.sortedKeys, .prettyPrinted])
+        let attachment = XCTAttachment(data: evidence, uniformTypeIdentifier: "public.json")
+        attachment.name = "\(profile)-fitting-local-only-counters"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     @MainActor
     func testPublicPhotoJourney() async throws {
         let before = try await activityCounts()
