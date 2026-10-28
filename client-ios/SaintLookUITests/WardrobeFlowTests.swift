@@ -254,6 +254,39 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testPreparedPhotoDeliveryFailureDelaysAcknowledgementAndResumesSameOperation() async throws {
+        _ = try await providerControl(["illustrationMode": "success"])
+        try await control(mode: "block-prepared-sources")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        try openFirstItem(in: app)
+        XCTAssertTrue(app.staticTexts["illustration-status"].waitForExistence(timeout: 20))
+        var attempted = false
+        for _ in 0..<100 {
+            let state = try await transportState()
+            if (state["preparedSourceDownloads"] as? Int ?? 0) > 0 { attempted = true; break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(attempted)
+        let before = try await transportState()
+        XCTAssertEqual(before["illustrationAcknowledgements"] as? Int, 0, "The result must not be acknowledged before its prepared source is durable")
+        XCTAssertFalse(app.buttons["show-illustration"].isEnabled)
+        app.terminate()
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 1, pending: 0)
+        try openFirstItem(in: restored)
+        try await control(mode: "online")
+        XCTAssertTrue(restored.staticTexts["illustration-saved"].waitForExistence(timeout: 30))
+        let acknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 1, timeout: 30)
+        XCTAssertTrue(acknowledged)
+        let after = try await transportState()
+        XCTAssertEqual(after["illustrationUploads"] as? Int, 1, "A delivery failure resumes GET of the same operation")
+        let provider = try await providerControl()
+        XCTAssertEqual(provider["illustrationGenerationCalls"] as? Int, 1)
+    }
+
+    @MainActor
     func testPreparedPhotosSurviveAcknowledgementAndAreReusedForExplicitUpdates() async throws {
         _ = try await providerControl(["illustrationMode": "success"])
         let app = launch(reset: true, baseURL: testURL)
@@ -265,6 +298,12 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(firstAcknowledged)
         let initial = try await providerControl()
         XCTAssertEqual(initial["illustrationPreparationCalls"] as? Int, 1)
+        try tapVisibleButton("generate-illustration", in: app)
+        let refreshed = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 2, timeout: 30)
+        XCTAssertTrue(refreshed, "Explicit refresh of an unchanged ready image starts a new operation after ack")
+        let refreshProvider = try await providerControl()
+        XCTAssertEqual(refreshProvider["illustrationPreparationCalls"] as? Int, 1)
+        XCTAssertEqual(refreshProvider["illustrationGenerationCalls"] as? Int, 2)
         app.terminate()
 
         let restored = launch(reset: false, baseURL: testURL)
@@ -273,7 +312,7 @@ final class WardrobeFlowTests: XCTestCase {
         try chooseType("hoodie", in: restored)
         restored.buttons["save-item-edits"].tap()
         try tapVisibleButton("generate-illustration", in: restored)
-        let secondAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 2, timeout: 30)
+        let secondAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 3, timeout: 30)
         XCTAssertTrue(secondAcknowledged)
         let reused = try await providerControl()
         XCTAssertEqual(reused["illustrationPreparationCalls"] as? Int, 1, "Manual edits reuse the prepared source even after server ack cleanup and app restart")
@@ -282,7 +321,7 @@ final class WardrobeFlowTests: XCTestCase {
         restored.buttons["add-demo-detail-photo"].tap()
         restored.buttons["save-illustration-sources"].tap()
         try tapVisibleButton("generate-illustration", in: restored)
-        let thirdAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 3, timeout: 30)
+        let thirdAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 4, timeout: 30)
         XCTAssertTrue(thirdAcknowledged)
         let added = try await providerControl()
         XCTAssertEqual(added["illustrationPreparationCalls"] as? Int, 2, "Only the added photo needs preparation")

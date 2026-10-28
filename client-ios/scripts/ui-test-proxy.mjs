@@ -38,6 +38,7 @@ let forwardedDeletes = 0;
 let droppedDeleteResponses = 0;
 let forwardedUploads = 0;
 let illustrationUploads = 0;
+let preparedSourceDownloads = 0;
 const illustrationOperations = new Set();
 const illustrationAcknowledgements = new Set();
 let lastIllustrationPath;
@@ -80,7 +81,7 @@ const server = createServer(async (request, response) => {
       if (request.headers.authorization !== `Bearer ${controlToken}`) return reply(response, 401, { error: 'unauthorized' });
       if (request.method === 'POST') {
         const input = JSON.parse((await readBody(request, 1024)).toString());
-        if (!['online', 'offline', 'drop-next-upload-response', 'drop-next-delete-response', 'block-acks', 'drop-next-ack-response', 'accept-upload-then-offline', 'hold-next-result', 'hold-next-illustration-result', 'foreign-illustration', 'legacy-attributes'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
+        if (!['online', 'offline', 'drop-next-upload-response', 'drop-next-delete-response', 'block-acks', 'drop-next-ack-response', 'accept-upload-then-offline', 'hold-next-result', 'hold-next-illustration-result', 'foreign-illustration', 'block-prepared-sources', 'legacy-attributes'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
         let nextOffset;
         if (input.advanceTimeMs !== undefined) {
           if (!clockFile || !Number.isSafeInteger(input.advanceTimeMs) || input.advanceTimeMs < 0) {
@@ -94,12 +95,15 @@ const server = createServer(async (request, response) => {
         if (nextOffset !== undefined) updateClock(nextOffset);
         mode = input.mode;
         if (!['hold-next-result', 'hold-next-illustration-result'].includes(mode) || input.reset) releaseResults();
-        if (input.reset) { illustrationUploads = 0; illustrationOperations.clear(); illustrationAcknowledgements.clear(); lastIllustrationPath = undefined; acceptedOperations.clear(); forwardedUploads = 0; droppedUploadResponses = 0; deletedItems.clear(); forwardedDeletes = 0; droppedDeleteResponses = 0; acknowledgedOperations.clear(); forwardedAcknowledgements = 0; droppedAcknowledgementResponses = 0; lastOperationPath = undefined; }
+        if (input.reset) { preparedSourceDownloads = 0; illustrationUploads = 0; illustrationOperations.clear(); illustrationAcknowledgements.clear(); lastIllustrationPath = undefined; acceptedOperations.clear(); forwardedUploads = 0; droppedUploadResponses = 0; deletedItems.clear(); forwardedDeletes = 0; droppedDeleteResponses = 0; acknowledgedOperations.clear(); forwardedAcknowledgements = 0; droppedAcknowledgementResponses = 0; lastOperationPath = undefined; }
       } else if (request.method !== 'GET') return reply(response, 405, { error: 'method_not_allowed' });
-      return reply(response, 200, { mode, illustrationUploads, illustrationOperations: illustrationOperations.size, illustrationAcknowledgements: illustrationAcknowledgements.size, lastIllustrationPath, acceptedOperations: acceptedOperations.size, forwardedUploads, droppedUploadResponses, heldResultResponses: heldResults.size, deletedItems: deletedItems.size, forwardedDeletes, droppedDeleteResponses, acknowledgedOperations: acknowledgedOperations.size, forwardedAcknowledgements, droppedAcknowledgementResponses, lastOperationPath, clockOffsetMs: clockFile ? readClockOffset() : undefined });
+      return reply(response, 200, { mode, preparedSourceDownloads, illustrationUploads, illustrationOperations: illustrationOperations.size, illustrationAcknowledgements: illustrationAcknowledgements.size, lastIllustrationPath, acceptedOperations: acceptedOperations.size, forwardedUploads, droppedUploadResponses, heldResultResponses: heldResults.size, deletedItems: deletedItems.size, forwardedDeletes, droppedDeleteResponses, acknowledgedOperations: acknowledgedOperations.size, forwardedAcknowledgements, droppedAcknowledgementResponses, lastOperationPath, clockOffsetMs: clockFile ? readClockOffset() : undefined });
     }
     if (request.url !== '/health' && !request.url?.startsWith('/v1/items')) return reply(response, 404, { error: 'not_found' });
     if (mode === 'offline') { request.socket.destroy(); return; }
+    const isPreparedSource = request.method === 'GET' && /^\/v1\/items\/[^/]+\/illustrations\/[^/]+\/sources\/[^/]+\/prepared$/.test(request.url);
+    if (isPreparedSource) preparedSourceDownloads++;
+    if (isPreparedSource && mode === 'block-prepared-sources') return reply(response, 502, { error: 'fixture_delivery_unavailable' });
     const body = await readBody(request, 16 * 1024 * 1024);
     const isUpload = request.method === 'POST' && (request.url === '/v1/items' || /^\/v1\/items\/[^/]+\/attempts$/.test(request.url));
     const isIllustrationUpload = request.method === 'POST' && /^\/v1\/items\/[^/]+\/illustrations$/.test(request.url);

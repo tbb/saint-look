@@ -536,7 +536,7 @@ extension WardrobeStore {
               items[index].status == .ready, items[index].illustration?.status != .pending else { return }
         var updated = items
         let item = updated[index]
-        if var delivery = item.illustration, delivery.readyForDelivery == true,
+        if var delivery = item.illustration, delivery.status == .failed, delivery.readyForDelivery == true,
            illustrationIsCurrent(item, request: delivery) {
             // Retry downloading the already generated operation, never pay to regenerate
             // because a cache download or local file write failed.
@@ -654,6 +654,7 @@ extension WardrobeStore {
                     let previous = items.first(where: { $0.id == id })
                     let previousFilename = previous?.illustrationResult?.filename
                     intent.status = .ready
+                    intent.readyForDelivery = false
                     try saveIllustration(id, request: intent, result: IllustrationResult(filename: filename, response: response), preparedPhotos: prepared, acknowledge: true)
                     for cached in previous?.preparedPhotos ?? [] where !prepared.contains(where: { $0.filename == cached.filename }) {
                         try? FileManager.default.removeItem(at: directory.appendingPathComponent(item.directoryName).appendingPathComponent(cached.filename))

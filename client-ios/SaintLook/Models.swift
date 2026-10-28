@@ -262,6 +262,7 @@ enum IllustrationFailure {
     static func message(for code: String) -> String {
         switch code {
         case "illustration_unavailable": return "Создание иллюстраций пока недоступно. Фото и вырезка сохранены."
+        case "illustration_payload_too_large": return "Фото вместе с сохранёнными вырезками слишком большие для отправки. Уберите дополнительный ракурс или замените снимок меньшим."
         case "prepared_source_missing": return "Не удалось прочитать сохранённую вырезку исходного фото. Замените этот снимок и повторите обновление."
         case "processing_in_progress": return "Предыдущая подготовка ещё идёт. Повторите обновление позже."
         case "source_changed": return "Фото или признаки изменились. Создайте иллюстрацию для новой версии."
