@@ -4,6 +4,9 @@ import Foundation
 /// A small render journey. Network ingestion regressions remain in Wardrobe/OutfitFlowTests.
 final class VisualAcceptanceTests: XCTestCase {
     private let baseURL = "http://127.0.0.1:8788"
+    // Hosted Simulator AX reads can consume 9–14 seconds within one evaluation.
+    // This is one readiness budget, not a hard deadline for a blocked AX call.
+    private let nativeReadinessTimeout: TimeInterval = 30
     private var profile = ""
     private let itemIDs = (1...4).map { String(format: "36000000-0000-0000-0000-%012d", $0) }
 
@@ -73,7 +76,7 @@ final class VisualAcceptanceTests: XCTestCase {
             let frame = element.frame
             return !frame.isEmpty && app.frame.intersects(frame)
         }, object: element)
-        guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
+        guard XCTWaiter.wait(for: [ready], timeout: nativeReadinessTimeout) == .completed else {
             diagnose("unavailable-native-control", app: app, detail: element.debugDescription)
             try require(false, "The intended native control is not visible and hittable")
             return
@@ -187,7 +190,7 @@ final class VisualAcceptanceTests: XCTestCase {
             let frame = keyboard.frame
             return !frame.isEmpty && app.frame.intersects(frame)
         }, object: app)
-        guard XCTWaiter.wait(for: [keyboardReady], timeout: 15) == .completed else {
+        guard XCTWaiter.wait(for: [keyboardReady], timeout: nativeReadinessTimeout) == .completed else {
             diagnose("keyboard-focus-unavailable", app: app)
             try require(false, "No visible, hittable Simulator keyboard; stop before typing")
             return
