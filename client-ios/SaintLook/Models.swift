@@ -29,6 +29,7 @@ struct WardrobeItem: Codable, Identifiable {
     var illustration: IllustrationRequest?
     var illustrationResult: IllustrationResult?
     var automaticallyIllustrate = false
+    var additionalPhotos: [IllustrationSourcePhoto] = []
 
     init(id: UUID, operationID: UUID, photoVersionID: UUID) {
         self.id = id
@@ -40,7 +41,7 @@ struct WardrobeItem: Codable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, operationID, photoVersionID, status, uploadStarted, type, colors, errorMessage, mode, manualType, manualColors
         case revision, action, originalFilename, uploadFilename, resultFilename, resultMode, errorCode
-        case sourceSetVersionID, illustration, illustrationResult, automaticallyIllustrate
+        case sourceSetVersionID, illustration, illustrationResult, automaticallyIllustrate, additionalPhotos
     }
 
     init(from decoder: Decoder) throws {
@@ -49,6 +50,7 @@ struct WardrobeItem: Codable, Identifiable {
         operationID = try values.decode(UUID.self, forKey: .operationID)
         photoVersionID = try values.decode(UUID.self, forKey: .photoVersionID)
         sourceSetVersionID = try values.decodeIfPresent(UUID.self, forKey: .sourceSetVersionID) ?? photoVersionID
+        additionalPhotos = try values.decodeIfPresent([IllustrationSourcePhoto].self, forKey: .additionalPhotos) ?? []
         illustration = try values.decodeIfPresent(IllustrationRequest.self, forKey: .illustration)
         illustrationResult = try values.decodeIfPresent(IllustrationResult.self, forKey: .illustrationResult)
         automaticallyIllustrate = try values.decodeIfPresent(Bool.self, forKey: .automaticallyIllustrate) ?? false
@@ -158,6 +160,27 @@ struct IllustrationFeatures: Codable {
     let type: String
     let colors: [String]
     let traits: [String: String]
+
+    var isValid: Bool {
+        guard version == "fitting-observable-v2-photoroom-sandbox",
+              WardrobeTaxonomy.shared.contains(type: type),
+              colors.isEmpty || WardrobeTaxonomy.shared.contains(colors: colors) else { return false }
+        let options: [String: Set<String>] = [
+            "silhouette": ["fitted", "straight", "relaxed", "unknown", "not_applicable"],
+            "body_length": ["cropped", "regular", "long", "unknown", "not_applicable"],
+            "sleeves": ["sleeveless", "short", "long", "unknown", "not_applicable"],
+            "pattern": ["plain", "stripes", "checks", "graphic", "mixed", "unknown"],
+            "pattern_location": ["center", "left_chest", "right_chest", "sleeves", "all_over", "none", "unknown"],
+            "pattern_size": ["small", "medium", "large", "none", "unknown"],
+            "neckline": ["round", "v_neck", "collar", "high", "hood", "unknown", "not_applicable"],
+            "fastening": ["none", "buttons", "zip", "mixed", "unknown", "not_applicable"],
+            "surface": ["smooth", "knitted", "fuzzy", "glossy", "mixed", "unknown"],
+            "hood": ["yes", "no", "unknown"], "kangaroo_pocket": ["yes", "no", "unknown"],
+            "patch_pockets": ["yes", "no", "unknown"], "dropped_shoulders": ["yes", "no", "unknown"],
+            "contrast_cuffs": ["yes", "no", "unknown"], "lettering": ["yes", "no", "unknown"]
+        ]
+        return Set(traits.keys) == Set(options.keys) && traits.allSatisfy { options[$0.key]?.contains($0.value) == true }
+    }
 }
 
 struct IllustrationRequest: Codable {
@@ -201,12 +224,12 @@ struct IllustrationResponse: Codable {
         guard itemId == item.id, operationId == request.operationID,
               photoVersionId == request.photoVersionID, sourceSetVersionId == request.sourceSetVersionID,
               revision == request.revision, manualType == request.manualType, manualColors == request.manualColors,
-              ["live", "test"].contains(mode), !modelVersion.isEmpty,
+              ["live", "test"].contains(mode), modelVersion == "fal-ai/nano-banana-pro/edit",
               templateVersion == "front-360x560-proposed-v1", geometryVersion == "fitting-square-1024-v1" else {
             throw ClientError.invalidResponse
         }
         if status == .ready {
-            guard let features = effectiveFeatures, observedFeatures != nil,
+            guard let features = effectiveFeatures, let observed = observedFeatures, features.isValid, observed.isValid,
                   request.manualType == nil || features.type == request.manualType,
                   request.manualColors == nil || features.colors == request.manualColors else { throw ClientError.invalidResponse }
         }
@@ -238,4 +261,19 @@ enum IllustrationFailure {
         default: return ProcessingFailure.message(for: code)
         }
     }
+}
+
+
+struct IllustrationSourcePhoto: Codable, Identifiable {
+    let id: UUID
+    var role: String
+    let originalFilename: String
+    let uploadFilename: String
+}
+
+struct IllustrationPhotoDraft: Identifiable {
+    let id: UUID
+    var role: String
+    let original: Data?
+    let saved: IllustrationSourcePhoto?
 }

@@ -394,6 +394,7 @@ final class WardrobeStore: ObservableObject {
         updated[index].illustrationResult = items[index].illustrationResult
         updated[index].sourceSetVersionID = items[index].sourceSetVersionID
         updated[index].automaticallyIllustrate = items[index].automaticallyIllustrate
+        updated[index].additionalPhotos = items[index].additionalPhotos
         var acknowledgements = pendingAcknowledgements
         if let acknowledgement { acknowledgements.insert(acknowledgement) }
         try persist(updated, pendingAcknowledgements: acknowledgements)
@@ -626,7 +627,11 @@ extension WardrobeStore {
                     guard illustrationIsCurrent(item, request: intent) else { return }
                     let filename = "illustration-\(operationID.uuidString.lowercased()).png"
                     try data.write(to: directory.appendingPathComponent(item.directoryName).appendingPathComponent(filename), options: .atomic)
+                    let previousFilename = items.first(where: { $0.id == id })?.illustrationResult?.filename
                     try saveIllustration(id, request: intent, result: IllustrationResult(filename: filename, response: response), acknowledge: true)
+                    if let previousFilename, previousFilename != filename {
+                        try? FileManager.default.removeItem(at: directory.appendingPathComponent(item.directoryName).appendingPathComponent(previousFilename))
+                    }
                     return
                 }
                 try saveIllustration(id, request: intent)
@@ -659,7 +664,61 @@ extension WardrobeStore {
         try Task.checkCancellation()
         guard illustrationIsCurrent(item, request: intent) else { throw CancellationError() }
         let data = try Data(contentsOf: directory.appendingPathComponent(item.directoryName).appendingPathComponent(item.uploadFilename))
-        return try await client.submitIllustration(item, request: intent,
-            photos: [["id": item.photoVersionID.uuidString.lowercased(), "role": "front", "imageBase64": data.base64EncodedString()]])
+        var photos = [["id": item.photoVersionID.uuidString.lowercased(), "role": "front", "imageBase64": data.base64EncodedString()]]
+        var totalSize = data.count
+        for photo in item.additionalPhotos {
+            let bytes = try Data(contentsOf: directory.appendingPathComponent(item.directoryName).appendingPathComponent(photo.uploadFilename))
+            totalSize += bytes.count
+            photos.append(["id": photo.id.uuidString.lowercased(), "role": photo.role, "imageBase64": bytes.base64EncodedString()])
+        }
+        guard totalSize <= 11 * 1024 * 1024 else { throw ClientError.oversizedPhoto }
+        return try await client.submitIllustration(item, request: intent, photos: photos)
     }
+    func additionalPhotoImage(_ photo: IllustrationPhotoDraft, for item: WardrobeItem) -> UIImage? {
+        if let original = photo.original { return UIImage(data: original) }
+        guard let directory, let saved = photo.saved else { return nil }
+        return UIImage(contentsOfFile: directory.appendingPathComponent(item.directoryName).appendingPathComponent(saved.uploadFilename).path)
+    }
+
+    func saveAdditionalPhotos(_ drafts: [IllustrationPhotoDraft], for id: UUID, primaryVersion: UUID) throws {
+        guard let directory, storageAvailable, let index = items.firstIndex(where: { $0.id == id }),
+              items[index].photoVersionID == primaryVersion else { throw ClientError.invalidPhoto }
+        guard drafts.count <= 2, Set(drafts.map(\.id)).count == drafts.count,
+              drafts.allSatisfy({ ["back", "detail"].contains($0.role) }) else { throw ClientError.invalidPhoto }
+        let previous = items[index].additionalPhotos
+        if drafts.count == previous.count, zip(drafts, previous).allSatisfy({ $0.id == $1.id && $0.role == $1.role }) { return }
+        let folder = directory.appendingPathComponent(items[index].directoryName)
+        var photos: [IllustrationSourcePhoto] = []
+        for draft in drafts {
+            if let original = draft.original {
+                let upload = try PhotoData.uploadCopy(of: original)
+                let name = draft.id.uuidString.lowercased()
+                let source = IllustrationSourcePhoto(id: draft.id, role: draft.role,
+                    originalFilename: "detail-\(name).original", uploadFilename: "detail-\(name).png")
+                try original.write(to: folder.appendingPathComponent(source.originalFilename), options: .atomic)
+                try upload.write(to: folder.appendingPathComponent(source.uploadFilename), options: .atomic)
+                photos.append(source)
+            } else if var saved = draft.saved, previous.contains(where: { $0.id == saved.id }) {
+                saved.role = draft.role
+                photos.append(saved)
+            } else { throw ClientError.invalidPhoto }
+        }
+        var updated = items
+        updated[index].additionalPhotos = photos
+        updated[index].sourceSetVersionID = UUID()
+        updated[index].automaticallyIllustrate = false
+        if updated[index].illustration?.status == .pending {
+            updated[index].illustration?.status = .failed
+            updated[index].illustration?.error = "source_changed"
+        }
+        try persist(updated)
+        items = updated
+        illustrationTasks[id]?.task.cancel()
+        illustrationTasks[id] = nil
+        for photo in previous where !photos.contains(where: { $0.id == photo.id }) {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(photo.originalFilename))
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(photo.uploadFilename))
+        }
+    }
+
 }

@@ -37,6 +37,10 @@ let lastOperationPath;
 let forwardedDeletes = 0;
 let droppedDeleteResponses = 0;
 let forwardedUploads = 0;
+let illustrationUploads = 0;
+const illustrationOperations = new Set();
+const illustrationAcknowledgements = new Set();
+let lastIllustrationPath;
 let droppedUploadResponses = 0;
 const heldResults = new Map();
 function releaseResults() {
@@ -76,7 +80,7 @@ const server = createServer(async (request, response) => {
       if (request.headers.authorization !== `Bearer ${controlToken}`) return reply(response, 401, { error: 'unauthorized' });
       if (request.method === 'POST') {
         const input = JSON.parse((await readBody(request, 1024)).toString());
-        if (!['online', 'offline', 'drop-next-upload-response', 'drop-next-delete-response', 'block-acks', 'drop-next-ack-response', 'accept-upload-then-offline', 'hold-next-result', 'legacy-attributes'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
+        if (!['online', 'offline', 'drop-next-upload-response', 'drop-next-delete-response', 'block-acks', 'drop-next-ack-response', 'accept-upload-then-offline', 'hold-next-result', 'hold-next-illustration-result', 'foreign-illustration', 'legacy-attributes'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
         let nextOffset;
         if (input.advanceTimeMs !== undefined) {
           if (!clockFile || !Number.isSafeInteger(input.advanceTimeMs) || input.advanceTimeMs < 0) {
@@ -89,16 +93,19 @@ const server = createServer(async (request, response) => {
         }
         if (nextOffset !== undefined) updateClock(nextOffset);
         mode = input.mode;
-        if (mode !== 'hold-next-result' || input.reset) releaseResults();
-        if (input.reset) { acceptedOperations.clear(); forwardedUploads = 0; droppedUploadResponses = 0; deletedItems.clear(); forwardedDeletes = 0; droppedDeleteResponses = 0; acknowledgedOperations.clear(); forwardedAcknowledgements = 0; droppedAcknowledgementResponses = 0; lastOperationPath = undefined; }
+        if (!['hold-next-result', 'hold-next-illustration-result'].includes(mode) || input.reset) releaseResults();
+        if (input.reset) { illustrationUploads = 0; illustrationOperations.clear(); illustrationAcknowledgements.clear(); lastIllustrationPath = undefined; acceptedOperations.clear(); forwardedUploads = 0; droppedUploadResponses = 0; deletedItems.clear(); forwardedDeletes = 0; droppedDeleteResponses = 0; acknowledgedOperations.clear(); forwardedAcknowledgements = 0; droppedAcknowledgementResponses = 0; lastOperationPath = undefined; }
       } else if (request.method !== 'GET') return reply(response, 405, { error: 'method_not_allowed' });
-      return reply(response, 200, { mode, acceptedOperations: acceptedOperations.size, forwardedUploads, droppedUploadResponses, heldResultResponses: heldResults.size, deletedItems: deletedItems.size, forwardedDeletes, droppedDeleteResponses, acknowledgedOperations: acknowledgedOperations.size, forwardedAcknowledgements, droppedAcknowledgementResponses, lastOperationPath, clockOffsetMs: clockFile ? readClockOffset() : undefined });
+      return reply(response, 200, { mode, illustrationUploads, illustrationOperations: illustrationOperations.size, illustrationAcknowledgements: illustrationAcknowledgements.size, lastIllustrationPath, acceptedOperations: acceptedOperations.size, forwardedUploads, droppedUploadResponses, heldResultResponses: heldResults.size, deletedItems: deletedItems.size, forwardedDeletes, droppedDeleteResponses, acknowledgedOperations: acknowledgedOperations.size, forwardedAcknowledgements, droppedAcknowledgementResponses, lastOperationPath, clockOffsetMs: clockFile ? readClockOffset() : undefined });
     }
     if (request.url !== '/health' && !request.url?.startsWith('/v1/items')) return reply(response, 404, { error: 'not_found' });
     if (mode === 'offline') { request.socket.destroy(); return; }
-    const body = await readBody(request, 8 * 1024 * 1024);
+    const body = await readBody(request, 16 * 1024 * 1024);
     const isUpload = request.method === 'POST' && (request.url === '/v1/items' || /^\/v1\/items\/[^/]+\/attempts$/.test(request.url));
-    const isAcknowledgement = request.method === 'POST' && /^\/v1\/items\/[^/]+\/operations\/[^/]+\/ack$/.test(request.url);
+    const isIllustrationUpload = request.method === 'POST' && /^\/v1\/items\/[^/]+\/illustrations$/.test(request.url);
+    if (isIllustrationUpload) illustrationUploads++;
+    const isIllustrationAcknowledgement = request.method === 'POST' && /^\/v1\/items\/[^/]+\/illustrations\/[^/]+\/ack$/.test(request.url);
+    const isAcknowledgement = isIllustrationAcknowledgement || (request.method === 'POST' && /^\/v1\/items\/[^/]+\/operations\/[^/]+\/ack$/.test(request.url));
     if (isAcknowledgement && mode === 'block-acks') { request.socket.destroy(); return; }
     if (isAcknowledgement) forwardedAcknowledgements++;
     const shouldDropAcknowledgement = isAcknowledgement && mode === 'drop-next-ack-response';
@@ -107,7 +114,8 @@ const server = createServer(async (request, response) => {
     const shouldDropDelete = isDelete && mode === 'drop-next-delete-response';
     const shouldDisconnectAfterUpload = isUpload && mode === 'accept-upload-then-offline';
     const shouldDrop = isUpload && mode === 'drop-next-upload-response';
-    const shouldHold = request.method === 'GET' && /^\/v1\/items\/[^/]+(?:\/operations\/[^/]+)?\/result$/.test(request.url) && mode === 'hold-next-result';
+    const shouldHold = request.method === 'GET' && ((/^\/v1\/items\/[^/]+(?:\/operations\/[^/]+)?\/result$/.test(request.url) && mode === 'hold-next-result')
+      || (/^\/v1\/items\/[^/]+\/illustrations\/[^/]+\/result$/.test(request.url) && mode === 'hold-next-illustration-result'));
     if (shouldDrop || shouldDropDelete || shouldDropAcknowledgement || shouldHold) mode = 'online';
     if (isUpload) forwardedUploads++;
     const result = await fetch(new URL(request.url, upstream), {
@@ -117,6 +125,11 @@ const server = createServer(async (request, response) => {
       redirect: 'error', signal: AbortSignal.timeout(15000),
     });
     let data = Buffer.from(await result.arrayBuffer());
+    if (mode === 'foreign-illustration' && result.ok && request.url.includes('/illustrations') && result.headers.get('content-type')?.includes('application/json')) {
+      const payload = JSON.parse(data);
+      payload.sourceSetVersionId = '00000000-0000-4000-8000-000000000099';
+      data = Buffer.from(JSON.stringify(payload));
+    }
     if (mode === 'legacy-attributes' && result.ok
       && result.headers.get('content-type')?.includes('application/json')) {
       const payload = JSON.parse(data);
@@ -127,6 +140,12 @@ const server = createServer(async (request, response) => {
         data = Buffer.from(JSON.stringify(payload));
       }
     }
+    if (isIllustrationUpload && result.ok) {
+      const accepted = JSON.parse(data);
+      illustrationOperations.add(accepted.operationId);
+      lastIllustrationPath = `/v1/items/${accepted.itemId}/illustrations/${accepted.operationId}`;
+    }
+    if (isIllustrationAcknowledgement && result.status === 204) illustrationAcknowledgements.add(request.url);
     if (isDelete && result.status === 204) deletedItems.add(request.url);
     if (isUpload && result.ok) {
       const accepted = JSON.parse(data);

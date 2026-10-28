@@ -215,6 +215,7 @@ private struct ItemDetailView: View {
     @State private var importing = false
 
     @State private var imageRole = "cutout"
+    @State private var editingSources: WardrobeItem?
 
     private var item: WardrobeItem? { store.items.first { $0.id == itemID } }
 
@@ -275,6 +276,7 @@ private struct ItemDetailView: View {
             }
         }
         .sheet(item: $editingItem) { ItemEditView(store: store, item: $0) }
+        .sheet(item: $editingSources) { IllustrationSourcesView(store: store, item: $0) }
         .photoSourcePicker(isPresented: $showingPhotoSource, importing: $importing,
                            onPhoto: { store.replacePhoto(itemID, with: $0) },
                            onError: { store.notice = $0 })
@@ -303,6 +305,10 @@ private struct ItemDetailView: View {
     private func illustrationControls(_ item: WardrobeItem) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Для примерочной").font(.headline)
+            Button { editingSources = item } label: {
+                Label(item.additionalPhotos.isEmpty ? "Добавить ракурсы" : "Ракурсы: \(item.additionalPhotos.count + 1) из 3", systemImage: "photo.on.rectangle")
+            }
+            .accessibilityIdentifier("illustration-sources")
             if store.illustrationAvailable == false {
                 Text("Создание иллюстраций пока недоступно. Фото и вырезка сохранены.")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -663,5 +669,95 @@ private struct ConnectionSettingsView: View {
             }
         }
         .onAppear { baseURL = store.settings.baseURL; token = store.settings.token }
+    }
+}
+
+
+@MainActor
+private struct IllustrationSourcesView: View {
+    @ObservedObject var store: WardrobeStore
+    let item: WardrobeItem
+    @Environment(\.dismiss) private var dismiss
+    @State private var photos: [IllustrationPhotoDraft]
+    @State private var showingPhotoSource = false
+    @State private var importing = false
+    @State private var error: String?
+
+    init(store: WardrobeStore, item: WardrobeItem) {
+        self.store = store
+        self.item = item
+        _photos = State(initialValue: item.additionalPhotos.map {
+            IllustrationPhotoDraft(id: $0.id, role: $0.role, original: nil, saved: $0)
+        })
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    GarmentPhoto(image: store.originalImage(for: item))
+                        .frame(height: 140)
+                    Text("Основной ракурс · спереди")
+                        .font(.subheadline)
+                } footer: {
+                    Text("Все фото должны показывать одну и ту же вещь, не на человеке. Можно добавить вид сзади и крупный план детали.")
+                }
+                ForEach($photos) { $photo in
+                    Section {
+                        GarmentPhoto(image: store.additionalPhotoImage(photo, for: item))
+                            .frame(height: 140)
+                        Picker("Ракурс", selection: $photo.role) {
+                            Text("Сзади").tag("back")
+                            Text("Деталь").tag("detail")
+                        }
+                        Button("Удалить фото", role: .destructive) { photos.removeAll { $0.id == photo.id } }
+                            .accessibilityIdentifier("remove-detail-photo")
+                    }
+                }
+                if photos.count < 2 {
+                    Section {
+                        Button("Добавить фото", systemImage: "plus") { showingPhotoSource = true }
+                            .accessibilityIdentifier("add-detail-photo")
+                        #if DEBUG
+                        if ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1",
+                           ProcessInfo.processInfo.environment["SAINT_LOOK_VISUAL_SCENARIO"] == nil {
+                            Button("Добавить тестовый ракурс") { add(PhotoData.demoPhoto()) }
+                                .accessibilityIdentifier("add-demo-detail-photo")
+                        }
+                        #endif
+                    } footer: {
+                        Text("До трёх фото вместе с основным. Сохранение ракурсов не запускает генерацию: обновите иллюстрацию отдельной кнопкой.")
+                    }
+                }
+                if importing { ProgressView("Сохраняем фото…") }
+                if let error { Text(error).foregroundStyle(.red) }
+            }
+            .navigationTitle("Ракурсы вещи")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("Отмена")
+                        .accessibilityIdentifier("cancel-illustration-sources")
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Сохранить") {
+                        do {
+                            try store.saveAdditionalPhotos(photos, for: item.id, primaryVersion: item.photoVersionID)
+                            dismiss()
+                        } catch { self.error = error.localizedDescription }
+                    }
+                    .disabled(importing)
+                    .accessibilityIdentifier("save-illustration-sources")
+                }
+            }
+            .photoSourcePicker(isPresented: $showingPhotoSource, importing: $importing,
+                               onPhoto: add, onError: { error = $0 })
+        }
+    }
+
+    private func add(_ original: Data) {
+        guard photos.count < 2 else { return }
+        photos.append(IllustrationPhotoDraft(id: UUID(), role: "detail", original: original, saved: nil))
     }
 }
