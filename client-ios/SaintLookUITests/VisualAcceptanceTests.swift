@@ -183,7 +183,9 @@ final class VisualAcceptanceTests: XCTestCase {
         try nativeTap(field, in: app)
         let keyboardReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             let keyboard = app.keyboards.firstMatch
-            return keyboard.exists && keyboard.isHittable && !keyboard.frame.isEmpty && app.frame.intersects(keyboard.frame)
+            guard keyboard.exists && keyboard.isHittable else { return false }
+            let frame = keyboard.frame
+            return !frame.isEmpty && app.frame.intersects(frame)
         }, object: app)
         guard XCTWaiter.wait(for: [keyboardReady], timeout: 15) == .completed else {
             diagnose("keyboard-focus-unavailable", app: app)
