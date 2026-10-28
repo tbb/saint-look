@@ -25,16 +25,22 @@ struct WardrobeItem: Codable, Identifiable {
     var errorMessage: String?
     var errorCode: String?
     var mode: ProcessingMode?
+    var sourceSetVersionID: UUID
+    var illustration: IllustrationRequest?
+    var illustrationResult: IllustrationResult?
+    var automaticallyIllustrate = false
 
     init(id: UUID, operationID: UUID, photoVersionID: UUID) {
         self.id = id
         self.operationID = operationID
         self.photoVersionID = photoVersionID
+        self.sourceSetVersionID = photoVersionID
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, operationID, photoVersionID, status, uploadStarted, type, colors, errorMessage, mode, manualType, manualColors
         case revision, action, originalFilename, uploadFilename, resultFilename, resultMode, errorCode
+        case sourceSetVersionID, illustration, illustrationResult, automaticallyIllustrate
     }
 
     init(from decoder: Decoder) throws {
@@ -42,6 +48,10 @@ struct WardrobeItem: Codable, Identifiable {
         id = try values.decode(UUID.self, forKey: .id)
         operationID = try values.decode(UUID.self, forKey: .operationID)
         photoVersionID = try values.decode(UUID.self, forKey: .photoVersionID)
+        sourceSetVersionID = try values.decodeIfPresent(UUID.self, forKey: .sourceSetVersionID) ?? photoVersionID
+        illustration = try values.decodeIfPresent(IllustrationRequest.self, forKey: .illustration)
+        illustrationResult = try values.decodeIfPresent(IllustrationResult.self, forKey: .illustrationResult)
+        automaticallyIllustrate = try values.decodeIfPresent(Bool.self, forKey: .automaticallyIllustrate) ?? false
         status = try values.decode(Status.self, forKey: .status)
         revision = try values.decodeIfPresent(Int.self, forKey: .revision) ?? 0
         action = try values.decodeIfPresent(AttemptAction.self, forKey: .action) ?? .create
@@ -71,6 +81,8 @@ struct WardrobeItem: Codable, Identifiable {
 struct ResultAcknowledgement: Codable, Hashable {
     let itemID: UUID
     let operationID: UUID
+    // Optional preserves legacy acknowledgements without migrating old items.
+    var illustration: Bool? = nil
 }
 
 struct ItemResponse: Decodable {
@@ -137,6 +149,93 @@ enum ProcessingFailure {
         case "invalid_provider_response": return "Обработчик вернул неполный результат. Исходное фото сохранено."
         case "provider_configuration_changed": return "Настройки обработки изменились. Исходное фото сохранено."
         default: return "Обработка не удалась. Исходное фото сохранено."
+        }
+    }
+}
+
+struct IllustrationFeatures: Codable {
+    let version: String
+    let type: String
+    let colors: [String]
+    let traits: [String: String]
+}
+
+struct IllustrationRequest: Codable {
+    let operationID: UUID
+    let photoVersionID: UUID
+    let sourceSetVersionID: UUID
+    let revision: Int
+    let manualType: String?
+    let manualColors: [String]?
+    var status: WardrobeItem.Status = .pending
+    var submitted = false
+    var error: String?
+    var processing: [String: String] = [:]
+}
+
+struct IllustrationResult: Codable {
+    let filename: String
+    let response: IllustrationResponse
+}
+
+struct IllustrationResponse: Codable {
+    let itemId: UUID
+    let operationId: UUID
+    let photoVersionId: UUID
+    let sourceSetVersionId: UUID
+    let revision: Int
+    let status: WardrobeItem.Status
+    let mode: String
+    let processing: [String: String]
+    let observedFeatures: IllustrationFeatures?
+    let effectiveFeatures: IllustrationFeatures?
+    let manualType: String?
+    let manualColors: [String]?
+    let modelVersion: String
+    let templateVersion: String
+    let geometryVersion: String
+    let resultPath: String?
+    let error: String?
+
+    func validate(for item: WardrobeItem, request: IllustrationRequest) throws {
+        guard itemId == item.id, operationId == request.operationID,
+              photoVersionId == request.photoVersionID, sourceSetVersionId == request.sourceSetVersionID,
+              revision == request.revision, manualType == request.manualType, manualColors == request.manualColors,
+              ["live", "test"].contains(mode), !modelVersion.isEmpty,
+              templateVersion == "front-360x560-proposed-v1", geometryVersion == "fitting-square-1024-v1" else {
+            throw ClientError.invalidResponse
+        }
+        if status == .ready {
+            guard let features = effectiveFeatures, observedFeatures != nil,
+                  request.manualType == nil || features.type == request.manualType,
+                  request.manualColors == nil || features.colors == request.manualColors else { throw ClientError.invalidResponse }
+        }
+    }
+}
+
+extension WardrobeItem {
+    var illustrationIsStale: Bool {
+        guard let result = illustrationResult else { return false }
+        return result.response.photoVersionId != photoVersionID || result.response.sourceSetVersionId != sourceSetVersionID
+            || result.response.manualType != manualType || result.response.manualColors != manualColors
+    }
+
+    var illustrationStatusMessage: String? {
+        if illustration?.status == .pending { return "Иллюстрация готовится. Можно продолжать пользоваться гардеробом." }
+        if let error = illustration?.error { return IllustrationFailure.message(for: error) }
+        if illustrationIsStale { return "Фото или признаки изменились. Иллюстрацию можно обновить отдельно." }
+        return illustrationResult == nil ? "Иллюстрация ещё не создана." : nil
+    }
+}
+
+enum IllustrationFailure {
+    static func message(for code: String) -> String {
+        switch code {
+        case "illustration_unavailable": return "Создание иллюстраций пока недоступно. Фото и вырезка сохранены."
+        case "source_changed": return "Фото или признаки изменились. Создайте иллюстрацию для новой версии."
+        case "processing_unknown": return "Исход генерации неизвестен. Автоматический повтор остановлен. Предыдущее изображение сохранено."
+        case "offline": return "Нет связи. Отправка продолжится при подключении к интернету."
+        default: return ProcessingFailure.message(for: code)
         }
     }
 }

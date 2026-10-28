@@ -214,6 +214,8 @@ private struct ItemDetailView: View {
     @State private var showingPhotoSource = false
     @State private var importing = false
 
+    @State private var imageRole = "cutout"
+
     private var item: WardrobeItem? { store.items.first { $0.id == itemID } }
 
     var body: some View {
@@ -221,8 +223,12 @@ private struct ItemDetailView: View {
             if let item {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        GarmentPhoto(image: store.displayImage(for: item))
+                        GarmentPhoto(image: detailImage(item))
                             .aspectRatio(1, contentMode: .fit)
+                        ViewThatFits(in: .horizontal) {
+                            HStack { imageChoices(item) }
+                            VStack(alignment: .leading) { imageChoices(item) }
+                        }
                         if !item.displayedColors.isEmpty {
                             HStack(spacing: 6) {
                                 ForEach(item.displayedColors, id: \.self) { WardrobeColorSwatch(label: $0, size: 16) }
@@ -239,6 +245,7 @@ private struct ItemDetailView: View {
                         .accessibilityIdentifier("edit-item")
                         .disabled(!store.storageAvailable)
                         ItemProcessingStatus(item: item)
+                        illustrationControls(item)
                         if item.status == .failed || showingRecovery { recovery(for: item) }
                         if importing { ProgressView("Сохраняем фото…") }
                     }
@@ -271,6 +278,57 @@ private struct ItemDetailView: View {
         .photoSourcePicker(isPresented: $showingPhotoSource, importing: $importing,
                            onPhoto: { store.replacePhoto(itemID, with: $0) },
                            onError: { store.notice = $0 })
+    }
+
+    private func detailImage(_ item: WardrobeItem) -> UIImage? {
+        if imageRole == "original" { return store.originalImage(for: item) }
+        if imageRole == "illustration", let url = store.illustrationURL(for: item) { return UIImage(contentsOfFile: url.path) }
+        return store.displayImage(for: item)
+    }
+
+    @ViewBuilder private func imageChoices(_ item: WardrobeItem) -> some View {
+        ForEach([("original", "Оригинал"), ("cutout", "Вырезка"), ("illustration", "Иллюстрация")], id: \.0) { role, title in
+            Button { imageRole = role } label: {
+                Text(title).font(.subheadline).frame(minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .tint(imageRole == role ? .accentColor : .secondary)
+            .accessibilityIdentifier("show-\(role)")
+            .accessibilityAddTraits(imageRole == role ? .isSelected : [])
+            .disabled(role == "illustration" && store.illustrationURL(for: item) == nil
+                      || role == "cutout" && item.resultFilename == nil)
+        }
+    }
+
+    private func illustrationControls(_ item: WardrobeItem) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Для примерочной").font(.headline)
+            if store.illustrationAvailable == false {
+                Text("Создание иллюстраций пока недоступно. Фото и вырезка сохранены.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("illustration-unavailable")
+            }
+            if let message = item.illustrationStatusMessage {
+                Text(message).font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("illustration-status")
+            }
+            if item.illustration?.status == .pending {
+                ProgressView("Готовим иллюстрацию…")
+                    .accessibilityIdentifier("illustration-pending")
+            } else {
+                Button(item.illustrationResult == nil ? "Создать иллюстрацию" : "Обновить иллюстрацию") {
+                    store.requestIllustration(itemID)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("generate-illustration")
+                .disabled(item.status != .ready || store.illustrationAvailable == false || !store.storageAvailable)
+            }
+            if item.illustrationResult != nil {
+                Text(item.illustrationIsStale ? "Показана предыдущая версия иллюстрации." : "Иллюстрация сохранена на устройстве.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("illustration-saved")
+            }
+        }
     }
 
     private func actions(for item: WardrobeItem) -> some View {

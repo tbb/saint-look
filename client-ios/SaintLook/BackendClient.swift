@@ -20,10 +20,10 @@ struct BackendClient {
     private func send(_ request: URLRequest, expectedStatus: Int? = nil) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
-        if response.statusCode == 410 {
+        if response.statusCode == 410 || response.statusCode == 503 {
             struct Failure: Decodable { let error: String }
             if let failure = try? JSONDecoder().decode(Failure.self, from: data),
-               ["result_expired", "result_delivered"].contains(failure.error) {
+               ["result_expired", "result_delivered", "illustration_unavailable"].contains(failure.error) {
                 throw ClientError.resultUnavailable(failure.error)
             }
         }
@@ -33,7 +33,8 @@ struct BackendClient {
     }
 
     func acknowledge(_ acknowledgement: ResultAcknowledgement) async throws {
-        let path = "v1/items/\(acknowledgement.itemID.uuidString.lowercased())/operations/\(acknowledgement.operationID.uuidString.lowercased())/ack"
+        let resource = acknowledgement.illustration == true ? "illustrations" : "operations"
+        let path = "v1/items/\(acknowledgement.itemID.uuidString.lowercased())/\(resource)/\(acknowledgement.operationID.uuidString.lowercased())/ack"
         _ = try await send(request(path: path, method: "POST"), expectedStatus: 204)
     }
 
@@ -84,4 +85,43 @@ struct BackendClient {
         }
         return try await send(request(path: path))
     }
+    struct Health: Decodable {
+        let mode: ProcessingMode
+        let illustrationAvailable: Bool?
+    }
+
+    func health() async throws -> Health {
+        try JSONDecoder().decode(Health.self, from: await send(request(path: "health")))
+    }
+
+    func submitIllustration(_ item: WardrobeItem, request intent: IllustrationRequest, photos: [[String: String]]) async throws -> IllustrationResponse {
+        var payload: [String: Any] = [
+            "operationId": intent.operationID.uuidString.lowercased(),
+            "photoVersionId": intent.photoVersionID.uuidString.lowercased(),
+            "sourceSetVersionId": intent.sourceSetVersionID.uuidString.lowercased(),
+            "revision": intent.revision, "photos": photos
+        ]
+        if let type = intent.manualType { payload["manualType"] = type }
+        if let colors = intent.manualColors { payload["manualColors"] = colors }
+        let data = try await send(request(path: "v1/items/\(item.directoryName)/illustrations", method: "POST",
+                                          body: JSONSerialization.data(withJSONObject: payload)))
+        let response = try JSONDecoder().decode(IllustrationResponse.self, from: data)
+        try response.validate(for: item, request: intent)
+        return response
+    }
+
+    func illustrationStatus(_ item: WardrobeItem, request intent: IllustrationRequest) async throws -> IllustrationResponse {
+        let data = try await send(request(path: "v1/items/\(item.directoryName)/illustrations/\(intent.operationID.uuidString.lowercased())"))
+        let response = try JSONDecoder().decode(IllustrationResponse.self, from: data)
+        try response.validate(for: item, request: intent)
+        return response
+    }
+
+    func illustrationResult(_ item: WardrobeItem, request intent: IllustrationRequest, response: IllustrationResponse) async throws -> Data {
+        try response.validate(for: item, request: intent)
+        let path = "v1/items/\(item.directoryName)/illustrations/\(intent.operationID.uuidString.lowercased())/result"
+        guard response.status == .ready, response.resultPath == "/" + path else { throw ClientError.invalidResponse }
+        return try await send(request(path: path))
+    }
+
 }

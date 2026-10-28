@@ -223,6 +223,25 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testIllustrationUnavailablePreservesOriginalAndCutout() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        app.images["item-photo"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["show-original"].waitForExistence(timeout: 5))
+        app.buttons["show-original"].tap()
+        XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
+        app.buttons["show-cutout"].tap()
+        for _ in 0..<4 where !app.staticTexts["illustration-unavailable"].isHittable { app.swipeUp() }
+        XCTAssertTrue(app.staticTexts["illustration-unavailable"].exists)
+        XCTAssertFalse(app.buttons["generate-illustration"].isEnabled)
+        app.terminate()
+        let offline = launch(reset: false, baseURL: "http://127.0.0.1:1")
+        await waitForSummary(offline, ready: 1, pending: 0)
+        XCTAssertTrue(offline.images["item-photo"].firstMatch.exists)
+    }
+
+    @MainActor
     func testPhotoBecomesReadyThroughBackendAndSurvivesOfflineRelaunch() async throws {
         let app = launch(reset: true, baseURL: testURL, trialIndex: 1)
         XCTAssertTrue(app.staticTexts["demo-notice"].waitForExistence(timeout: 5))
