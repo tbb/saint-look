@@ -7,9 +7,10 @@ import { fixtureOrigin, exchange, jsonResponse, receipt, downloadImage } from '.
 import { featureRequest, featureAnswer } from './trial-jev.mjs';
 import { cutout } from './trial-photoroom.mjs';
 import { saveReport } from './trial-report.mjs';
+import { manualContext, verifyManualAdmission } from './trial-admission.mjs';
 
 const flagNames = new Set(['--live', '--describe', '--recover-lock']);
-const valueNames = new Set(['--plan', '--out', '--approval', '--fixture-origin', '--timeout-ms', '--poll-ms', '--max-polls']);
+const valueNames = new Set(['--plan', '--out', '--approval', '--manual-admission', '--fixture-origin', '--timeout-ms', '--poll-ms', '--max-polls']);
 const args = {};
 for (let i = 2; i < process.argv.length; i++) {
   const key = process.argv[i];
@@ -21,7 +22,10 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const dataUri = bytes => `data:image/png;base64,${bytes.toString('base64')}`;
 
 async function main() {
-  if (args['--live'] && (process.env.CI || process.env.GITHUB_ACTIONS)) throw new Error('Live execution is forbidden in CI');
+  if (args['--manual-admission']) {
+    if (!args['--live']) throw new Error('Manual admission requires explicit live mode');
+    manualContext('experiment');
+  } else if (args['--live'] && (process.env.CI || process.env.GITHUB_ACTIONS)) throw new Error('Live execution is forbidden in CI');
   if (!args['--plan']) throw new Error('Plan required');
   const loaded = await loadPlan(args['--plan']);
   if (args['--describe']) {
@@ -42,6 +46,7 @@ async function main() {
   if (!local && (approval.paidCallsAllowed !== true || typeof approval.approvedBy !== 'string' || !approval.approvedBy.trim()
     || !Number.isFinite(Date.parse(approval.priceCheckedAt)) || Date.now() - Date.parse(approval.priceCheckedAt) > 86400000
     || Date.parse(approval.priceCheckedAt) > Date.now() || loaded.plan.items.length < 8)) throw new Error('Explicit current live approval required');
+  if (args['--manual-admission']) await verifyManualAdmission(args['--manual-admission'], approvalBytes, loaded.planSha256, out);
   const timeoutMs = Number(args['--timeout-ms'] || 30000), pollMs = Number(args['--poll-ms'] || 1000), maxPolls = Number(args['--max-polls'] || 120);
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60000 || !Number.isSafeInteger(pollMs)
     || pollMs < 1 || pollMs > 10000 || !Number.isSafeInteger(maxPolls) || maxPolls < 1 || maxPolls > 300) throw new Error('Invalid bounded polling configuration');
