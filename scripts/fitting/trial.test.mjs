@@ -262,6 +262,12 @@ test('missing JEV usage stops before generation and never invent actual cost', a
   const report = JSON.parse(await readFile(join(f.out, 'report.json')));
   assert.equal(report.reservedMicrousd, 2753);
   assert.equal(report.operations[0].usageCostEstimateMicrousd, undefined);
+  const attributes = report.operations.find(op => op.stage === 'attributes');
+  const snapshot = JSON.parse(await readFile(join(f.out, attributes.responseArtifact)));
+  assert.equal(snapshot.httpStatus, 200);
+  assert.equal(snapshot.shape.inputTokens.present, false);
+  assert.match(attributes.semanticRequestSha256, /^[a-f0-9]{64}$/);
+  assert.equal(digest(await readFile(join(f.out, attributes.responseArtifact))), attributes.snapshotSha256);
 });
 
 test('opaque segmentation is not accepted as a prepared layer and generation stays charged in the ledger', async t => {

@@ -1,5 +1,14 @@
 import { sha256 } from './trial-plan.mjs';
 
+// UUID asset references vary between equivalent requests; roles and image bytes do not.
+export function semanticRequest(request) {
+  const images = Object.fromEntries(Object.entries(request.state).sort(([a], [b]) => a.localeCompare(b)).map(([role, ref]) => {
+    const asset = request.assets[ref];
+    return [role, { type: asset.type, format: asset.format, sha256: sha256(Buffer.from(asset.data_base64, 'base64')) }];
+  }));
+  return { model: request.model, images, questions: request.questions };
+}
+
 const kind = value => value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const own = (value, key) => object(value) && Object.hasOwn(value, key);

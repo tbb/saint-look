@@ -8,6 +8,7 @@ import { featureRequest, featureAnswer } from './trial-jev.mjs';
 import { cutout } from './trial-photoroom.mjs';
 import { saveReport } from './trial-report.mjs';
 import { manualContext, verifyManualAdmission } from './trial-admission.mjs';
+import { diagnosticResponse, semanticRequest } from './jev-diagnostic-response.mjs';
 
 const flagNames = new Set(['--live', '--describe', '--recover-lock']);
 const valueNames = new Set(['--plan', '--out', '--approval', '--manual-admission', '--fixture-origin', '--timeout-ms', '--poll-ms', '--max-polls']);
@@ -71,7 +72,12 @@ async function main() {
       const request = await featureRequest(input.photos, input.roles);
       const op = await ledger.reserve(key, 'attributes', approval);
       try {
-        const raw = jsonResponse(await exchange(jevUrl, { method: 'POST', headers: { Authorization: `Bearer ${jevKey}`, 'TypeSafe-Danger-Zone-Images': 'true' }, body: request, timeoutMs }));
+        const response = await exchange(jevUrl, { method: 'POST', headers: { Authorization: `Bearer ${jevKey}`, 'TypeSafe-Danger-Zone-Images': 'true' }, body: request, timeoutMs });
+        const { snapshot } = diagnosticResponse(response, request), snapshotBytes = JSON.stringify(snapshot);
+        op.responseArtifact = `${sha256(key).slice(0, 20)}-response.json`;
+        op.snapshotSha256 = sha256(snapshotBytes); op.semanticRequestSha256 = sha256(JSON.stringify(semanticRequest(request)));
+        await durableWrite(join(out, op.responseArtifact), snapshotBytes); await ledger.save();
+        const raw = jsonResponse(response);
         const result = featureAnswer(raw, request);
         Object.assign(op, { status: 'completed', result, inputTokens: result.inputTokens, usageCostEstimateMicrousd: result.usageCostEstimateMicrousd,
           completedAt: new Date().toISOString() }); await ledger.save(); return result;

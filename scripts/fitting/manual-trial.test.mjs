@@ -1,15 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, writeFile, readFile, rm, access } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm, access, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn, execFileSync } from 'node:child_process';
+import { featureRequest } from './trial-jev.mjs';
+import { diagnosticResponse, semanticRequest } from './jev-diagnostic-response.mjs';
 import { sharp, sha256, loadPlan } from './trial-plan.mjs';
 
 const command = new URL('./manual-trial.mjs', import.meta.url).pathname;
 const marker = 'refs/tags/fitting-trial-45-reserved';
-async function fixture(t) {
+const continuationMarker = 'refs/tags/fitting-trial-45-continuation-1';
+async function fixture(t, continuation = false) {
   const dir = await mkdtemp(join(tmpdir(), 'fitting-manual-policy-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -23,10 +26,12 @@ async function fixture(t) {
   plan.template = 'template.svg'; plan.combinations = [];
   plan.items = Array.from({ length: 8 }, (_, i) => ({ id: `shirt-${i}`, category: 'top', photos: ['image.png'], photoRoles: ['front'],
     sources: [{ path: 'image.png', sha256: sha256(image), source: 'Local fixture', author: 'Test', license: 'Test fixture' }] }));
+  if (continuation) plan.items[0].id = 'white-tee';
   const planPath = join(dir, 'plan.json'); await writeFile(planPath, JSON.stringify(plan));
   const fingerprint = (await loadPlan(planPath)).planSha256;
+  const historical = continuation ? await evidence(dir, image, planPath) : null;
   const inputs = { revision, plan_sha256: fingerprint, budget_usd: '5', price_checked_at: new Date().toISOString(),
-    approval_reference: 'https://github.com/tbb/saint-look/issues/45#issuecomment-123', approve_paid_calls: 'true', reviewed_terms: 'true' };
+    approval_reference: 'https://github.com/tbb/saint-look/issues/45#issuecomment-123', approve_paid_calls: 'true', reviewed_terms: 'true', ...(historical ? { continuation_sha256: historical.sha256 } : {}) };
   const eventPath = join(dir, 'event.json');
   const requests = [], state = { claimed: false, checked: true };
   const api = createServer(async (request, response) => {
@@ -36,6 +41,14 @@ async function fixture(t) {
     assert.equal(request.headers.authorization, 'Bearer fixture-github-token');
     response.setHeader('Content-Type', 'application/json');
     const answer = (code, value) => { response.writeHead(code); response.end(JSON.stringify(value)); };
+    if (historical && request.url.endsWith('/git/ref/tags/fitting-trial-45-reserved')) return answer(200, { ref: marker, object: { sha: 'a'.repeat(40) } });
+    if (historical && request.url.endsWith('/git/ref/tags/fitting-trial-45-jev-diagnostic-1')) return answer(200, { ref: 'refs/tags/fitting-trial-45-jev-diagnostic-1', object: { sha: 'b'.repeat(40) } });
+    if (historical && /\/actions\/runs\/(40677633168|40683876977)$/.test(request.url)) {
+      const diagnostic = request.url.endsWith('40683876977');
+      return answer(200, { id: diagnostic ? 40683876977 : 40677633168, head_sha: (diagnostic ? 'b' : 'a').repeat(40),
+        head_branch: 'main', event: 'workflow_dispatch', path: `.github/workflows/${diagnostic ? 'fitting-jev-diagnostic' : 'fitting-live-trial'}.yml`,
+        status: 'completed', conclusion: 'failure', run_attempt: 1, head_repository: { full_name: 'tbb/saint-look' }, actor: { login: 'tbb' }, triggering_actor: { login: 'tbb' } });
+    }
     if (request.url.endsWith('/git/ref/heads/main')) return answer(200, { object: { sha: revision } });
     if (request.url.includes('/fitting-experiment.yml/runs?')) return answer(200, { workflow_runs: state.checked ? [{ id: 123, head_sha: revision, head_branch: 'main', event: state.checkEvent || 'push', path: '.github/workflows/fitting-experiment.yml', status: 'completed', conclusion: 'success', head_repository: { full_name: 'tbb/saint-look' } }] : [] });
     if (request.url.endsWith('/123/jobs?filter=latest&per_page=100')) return answer(200, { jobs: [{ name: 'fitting-local', status: 'completed', conclusion: 'success' }] });
@@ -43,7 +56,7 @@ async function fixture(t) {
       if (state.claimed) return answer(422, { message: 'Reference already exists' });
       state.claimed = true;
       if (state.loseClaimResponse) return answer(500, { message: 'Uncertain result' });
-      return answer(state.claimStatus || 201, { ref: marker, object: { sha: revision } });
+      return answer(state.claimStatus || 201, { ref: continuation ? continuationMarker : marker, object: { sha: revision } });
     }
     answer(404, {});
   });
@@ -51,18 +64,18 @@ async function fixture(t) {
   t.after(() => { api.closeAllConnections(); api.close(); });
   const env = { ...process.env, NODE_ENV: 'test', CI: 'true', GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch',
     GITHUB_REF: 'refs/heads/main', GITHUB_REPOSITORY: 'tbb/saint-look', GITHUB_ACTOR: 'tbb', GITHUB_RUN_ID: '456', GITHUB_RUN_ATTEMPT: '1',
-    GITHUB_SHA: revision, GITHUB_WORKFLOW_SHA: revision, GITHUB_WORKFLOW_REF: 'tbb/saint-look/.github/workflows/fitting-live-trial.yml@refs/heads/main',
+    GITHUB_SHA: revision, GITHUB_WORKFLOW_SHA: revision, GITHUB_WORKFLOW_REF: `tbb/saint-look/.github/workflows/${continuation ? 'fitting-continuation' : 'fitting-live-trial'}.yml@refs/heads/main`,
     GITHUB_JOB: 'reserve', GITHUB_EVENT_PATH: eventPath, GH_TOKEN: 'fixture-github-token', SAINT_LOOK_FITTING_TEST_API: `http://127.0.0.1:${api.address().port}` };
   async function run({ overrides = {}, inputOverrides = {}, output = join(dir, 'attempt') } = {}) {
     await writeFile(eventPath, JSON.stringify({ ref: 'refs/heads/main', repository: { full_name: 'tbb/saint-look' }, sender: { login: 'tbb' }, inputs: { ...inputs, ...inputOverrides } }));
     return new Promise(resolve => {
-      const child = spawn(process.execPath, [command, planPath, output], { cwd: dir, env: { ...env, ...overrides }, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(process.execPath, [command, planPath, output, ...(historical ? [historical.path, historical.dir] : [])], { cwd: dir, env: { ...env, ...overrides }, stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '', stderr = '';
       child.stdout.on('data', b => stdout += b); child.stderr.on('data', b => stderr += b);
       child.on('close', code => resolve({ code, stdout, stderr, output }));
     });
   }
-  return { dir, revision, fingerprint, inputs, env, planPath, run, requests, state, git };
+  return { dir, revision, fingerprint, inputs, env, planPath, run, requests, state, git, historical };
 }
 
 function trial(f, output, overrides = {}, extra = []) {
@@ -211,4 +224,58 @@ test('manual workflow separates reservation permissions and provider credentials
   const local = await readFile(new URL('../../.github/workflows/fitting-experiment.yml', import.meta.url), 'utf8');
   assert.doesNotMatch(local, /secrets\.|--live/);
   assert.match(local, /node --test scripts\/fitting\/\*\.test\.mjs/);
+});
+
+async function evidence(dir, image, planPath) {
+  const folder = join(dir, 'evidence'); await mkdir(folder);
+  const oldPlan = '1'.repeat(64), originalRevision = 'a'.repeat(40), diagnosticRevision = 'b'.repeat(40);
+  const prepKey = `source-${sha256(image)}/preparation`, key = 'white-tee/single/attributes';
+  const approval = { mode: 'live', planSha256: oldPlan, budgetMicrousd: 5000000,
+    maxCalls: { preparation: 12, attributes: 14, generation: 28, segmentation: 28 } };
+  const approvalBytes = JSON.stringify(approval);
+  const priorAdmission = { version: 1, repository: 'tbb/saint-look', actor: 'tbb', runId: '40677633168', revision: originalRevision,
+    reservationRef: marker, planSha256: oldPlan, approvalSha256: sha256(approvalBytes) };
+  const prior = { version: 1, mode: 'live', planSha256: oldPlan, approvalSha256: sha256(approvalBytes), operations: {
+    [prepKey]: { key: prepKey, stage: 'preparation', status: 'completed', reservedMicrousd: 0, sandbox: true,
+      artifact: 'prepared.png', sha256: sha256(image), sourceSha256: sha256(image), width: 8, height: 8 },
+    [key]: { key, stage: 'attributes', status: 'unknown', reservedMicrousd: 2753, error: 'Invalid JEV feature response' }
+  } };
+  const priorBytes = JSON.stringify(prior), request = await featureRequest([image, image], ['prepared_front', 'original_front']);
+  const answers = Object.fromEntries(Object.entries(request.questions).map(([name, q]) => {
+    if (q.type === 'noul') return [name, { type: 'noul', noul: .8 }];
+    const choice = name === 'suitability' ? 'suitable' : Object.keys(q.criteria)[0];
+    return [name, { type: 'choice', choice, confidence: 1, probabilities: Object.fromEntries(Object.keys(q.criteria).map(k => [k, k === choice ? 1 : 0])) }];
+  }));
+  const response = diagnosticResponse({ status: 200, type: 'application/json', bytes: Buffer.from(JSON.stringify({ model: request.model, answers, usage: { input_tokens: 1000 } })) }, request).snapshot;
+  const responseBytes = JSON.stringify(response);
+  const diagnosticAdmission = { version: 1, repository: 'tbb/saint-look', actor: 'tbb', runId: '40683876977', revision: diagnosticRevision,
+    originalRunId: '40677633168', originalLedgerSha256: sha256(priorBytes), reservationRef: 'refs/tags/fitting-trial-45-jev-diagnostic-1' };
+  const receipt = { version: 1, operation: 'white-tee/single/attributes-diagnostic-1', runId: '40683876977', revision: diagnosticRevision,
+    originalRunId: '40677633168', originalLedgerSha256: sha256(priorBytes), httpStatus: 200, status: 'unknown',
+    admissionSha256: sha256(JSON.stringify(diagnosticAdmission)), snapshotSha256: sha256(responseBytes),
+    semanticRequestSha256: sha256(JSON.stringify(semanticRequest(request))), budget: { aggregateReservedMicrousd: 200000,
+      countsAfter: { preparation: 1, attributes: 2, generation: 0, segmentation: 0 } } };
+  const files = { 'prior-ledger.json': priorBytes, 'prior-approval.json': approvalBytes,
+    'prior-admission.json': JSON.stringify(priorAdmission), 'admission.json': JSON.stringify(diagnosticAdmission),
+    'receipt.json': JSON.stringify(receipt), 'response.json': responseBytes, 'prepared.png': image };
+  for (const [name, bytes] of Object.entries(files)) await writeFile(join(folder, name), bytes);
+  const manifest = { version: 1, originalRunId: '40677633168', originalRevision, diagnosticRunId: '40683876977', diagnosticRevision,
+    planDataSha256: sha256(await readFile(planPath)), sourceSha256: sha256(image), normalizedSourceSha256: sha256(image),
+    files: Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, sha256(bytes)])) };
+  const path = join(dir, 'continuation-plan.json'), bytes = JSON.stringify(manifest); await writeFile(path, bytes);
+  return { path, sha256: sha256(bytes), dir: folder, manifest };
+}
+
+test('continuation imports prior attempts once and reconciles the saved response without provider credentials', async t => {
+  const f = await fixture(t, true), first = await f.run();
+  assert.equal(first.code, 0, first.stderr);
+  const ledger = JSON.parse(await readFile(join(first.output, 'output/ledger.json')));
+  const ops = Object.values(ledger.operations);
+  assert.equal(ops.length, 3); assert.equal(ops.reduce((n, op) => n + op.reservedMicrousd, 0), 200000);
+  assert.equal(ops.filter(op => op.stage === 'attributes').length, 2);
+  assert.equal(ledger.operations['white-tee/single/attributes'].status, 'unknown');
+  assert.equal(ledger.operations['white-tee/single/attributes-diagnostic-1'].result.inputTokens, 1000);
+  assert.equal(f.requests.filter(r => r.method === 'POST')[0].body.ref, continuationMarker);
+  const second = await f.run({ output: join(f.dir, 'duplicate') });
+  assert.equal(second.code, 1); assert.match(second.stderr, /reservation failed or already exists/);
 });
