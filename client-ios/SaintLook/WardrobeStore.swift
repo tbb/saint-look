@@ -653,9 +653,10 @@ extension WardrobeStore {
                     try data.write(to: directory.appendingPathComponent(item.directoryName).appendingPathComponent(filename), options: .atomic)
                     let previous = items.first(where: { $0.id == id })
                     let previousFilename = previous?.illustrationResult?.filename
-                    intent.status = .ready
-                    intent.readyForDelivery = false
-                    try saveIllustration(id, request: intent, result: IllustrationResult(filename: filename, response: response), preparedPhotos: prepared, acknowledge: true)
+                    var completed = intent
+                    completed.status = .ready
+                    completed.readyForDelivery = false
+                    try saveIllustration(id, request: completed, result: IllustrationResult(filename: filename, response: response), preparedPhotos: prepared, acknowledge: true)
                     for cached in previous?.preparedPhotos ?? [] where !prepared.contains(where: { $0.filename == cached.filename }) {
                         try? FileManager.default.removeItem(at: directory.appendingPathComponent(item.directoryName).appendingPathComponent(cached.filename))
                     }
