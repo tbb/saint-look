@@ -41,7 +41,8 @@ final class OutfitFlowTests: XCTestCase {
         }
         var lastFrame = CGRect.zero
         var lastViewport = CGRect.zero
-        for _ in 0..<7 {
+        // Seven scroll gestures, with a visibility check after the final gesture too.
+        for attempt in 0...7 {
             let bars = app.navigationBars.allElementsBoundByIndex
             let foregroundBar = bars.reversed().first { $0.isHittable } ?? bars.last
             let top = foregroundBar?.frame.maxY ?? app.frame.minY
@@ -61,6 +62,7 @@ final class OutfitFlowTests: XCTestCase {
             if present, frame.midY > viewport.minY, frame.midY < viewport.maxY, element.isHittable {
                 return true
             }
+            guard attempt < 7 else { break }
             let distance = present ? viewport.midY - frame.midY : (towardTop ? 180 : -180)
             let movement = (distance < 0 ? -1.0 : 1.0) * min(180, max(100, abs(distance)))
             let start = app.coordinate(withNormalizedOffset: .zero)
@@ -321,7 +323,7 @@ final class OutfitFlowTests: XCTestCase {
         tap(app.buttons["fitting-zone-body"], in: app)
         XCTAssertTrue(layers.element(boundBy: 1).isSelected, "Returning to body restores its active layer")
         app.buttons["cancel-outfit"].tap()
-        app.alerts.buttons["discard-outfit-changes"].tap()
+        app.alerts.buttons.matching(identifier: "discard-outfit-changes").firstMatch.tap()
         XCTAssertTrue(app.buttons["create-first-outfit"].waitForExistence(timeout: 5))
         app.terminate()
     }
@@ -360,7 +362,7 @@ final class OutfitFlowTests: XCTestCase {
         let after = try await activityCounts()
         XCTAssertEqual(after, before, "Pinning, manual choice, shuffle and undo must stay local")
         app.buttons["cancel-outfit"].tap()
-        app.alerts.buttons["discard-outfit-changes"].tap()
+        app.alerts.buttons.matching(identifier: "discard-outfit-changes").firstMatch.tap()
         app.terminate()
     }
 
@@ -692,6 +694,9 @@ final class OutfitFlowTests: XCTestCase {
         head.swipeLeft()
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "Horizontal drag must never open the picker")
         guard !app.buttons["cancel-outfit-picker"].exists else { return }
+        // Selecting the head zone via swipe collapses body-layer controls above this row.
+        // Re-reveal after that layout change before measuring or starting a vertical gesture.
+        guard reveal(head, in: app, towardTop: true) else { return }
         let body = button(prefix: "outfit-slot-body-", in: app)
         let originalBodyY = body.frame.minY
         let dragStart = head.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
@@ -731,6 +736,7 @@ final class OutfitFlowTests: XCTestCase {
         chooseCandidate(button(prefix: "outfit-candidate-", in: app), in: app)
         let firstID = first.identifier
         let selectedLabel = first.label
+        guard reveal(first, in: app) else { return }
         first.swipeLeft()
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "A one-candidate swipe must stay in the editor")
         XCTAssertEqual(first.label, selectedLabel, "One candidate must never clear a selection")
@@ -740,6 +746,7 @@ final class OutfitFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Все подходящие вещи уже выбраны"].waitForExistence(timeout: 5))
         app.buttons["cancel-outfit-picker"].tap()
         let secondID = second.identifier.replacingOccurrences(of: "outfit-slot-body-", with: "")
+        guard reveal(second, in: app) else { return }
         second.swipeRight()
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "An empty-pool swipe must stay in the editor")
         XCTAssertTrue(second.label.contains("Выбрать вещь"))

@@ -393,6 +393,14 @@ struct OutfitEditorView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if let message = errorMessage ?? saveExplanation {
+                        Text(message)
+                            .font(.footnote)
+                            .foregroundStyle(errorMessage == nil ? Color.secondary : Color.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier(errorMessage == nil ? "outfit-save-explanation" : "outfit-save-error")
+                    }
                     fittingPreview
                     TextField("Название — необязательно", text: $draft.name)
                         .focused($naming)
@@ -433,19 +441,6 @@ struct OutfitEditorView: View {
                 .frame(maxWidth: .infinity)
             }
             .background(SaintLookStyle.canvas)
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if let message = errorMessage ?? saveExplanation {
-                    Text(message)
-                        .font(.footnote)
-                        .foregroundStyle(errorMessage == nil ? Color.secondary : Color.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(.bar)
-                        .accessibilityIdentifier(errorMessage == nil ? "outfit-save-explanation" : "outfit-save-error")
-                }
-            }
             .navigationTitle(editingExisting ? "Изменить лук" : "Собрать лук")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { editorToolbar }
