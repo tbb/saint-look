@@ -300,6 +300,9 @@ private struct OutfitComposition: View {
                         if !compact {
                             Text(item.displayedType ?? "Вещь")
                                 .font(.headline)
+                            if let message = item.illustrationStatusMessage {
+                                Text(message).font(.footnote).foregroundStyle(.secondary)
+                            }
                             if !item.displayedColors.isEmpty {
                                 Text(item.displayedColors.joined(separator: ", "))
                                     .font(.subheadline)
@@ -353,6 +356,7 @@ struct OutfitEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var choosingSlot: OutfitSlot?
     @State private var activeSlotID: UUID?
+    @State private var activeBodySlotID: UUID?
     @State private var errorMessage: String?
     @State private var saving = false
     @State private var initial: Outfit
@@ -399,8 +403,7 @@ struct OutfitEditorView: View {
                             slotSelection(slot)
                             if slot.id == draft.slots.last(where: { $0.zone == .body })?.id {
                                 Button("Добавить слой", systemImage: "plus") {
-                                    draft.addBodyLayer()
-                                    errorMessage = nil
+                                    addBodyLayer()
                                 }
                                 .frame(minHeight: 44)
                                 .accessibilityIdentifier("add-body-layer")
@@ -470,7 +473,12 @@ struct OutfitEditorView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 8) {
                 ForEach(OutfitZone.allCases, id: \.rawValue) { zone in
                     Button {
-                        activeSlotID = draft.slots.first { $0.zone == zone }?.id
+                        if zone == .body, let remembered = activeBodySlotID,
+                           draft.slots.contains(where: { $0.id == remembered }) {
+                            activeSlotID = remembered
+                        } else {
+                            activeSlotID = draft.slots.first { $0.zone == zone }?.id
+                        }
                     } label: {
                         HStack {
                             Text(zone.title)
@@ -484,6 +492,26 @@ struct OutfitEditorView: View {
                     .accessibilityAddTraits(activeSlot?.zone == zone ? .isSelected : [])
                     .accessibilityIdentifier("fitting-zone-\(zone.rawValue)")
                 }
+            }
+            if activeSlot?.zone == .body {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 8) {
+                    ForEach(draft.slots.filter { $0.zone == .body }) { layer in
+                        Button { activate(layer) } label: {
+                            HStack {
+                                Text(outfitSlotTitle(layer, in: draft))
+                                if activeSlot?.id == layer.id { Image(systemName: "checkmark") }
+                            }.frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityAddTraits(activeSlot?.id == layer.id ? .isSelected : [])
+                        .accessibilityIdentifier("fitting-layer-\(layer.id)")
+                    }
+                    Button("Добавить слой", systemImage: "plus", action: addBodyLayer)
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("fitting-add-layer")
+                }
+                Text("Слои идут изнутри наружу. Свайп меняет только выбранный слой.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             if let slot = activeSlot {
                 HStack {
@@ -525,17 +553,29 @@ struct OutfitEditorView: View {
         }
     }
 
+    private func activate(_ slot: OutfitSlot) {
+        activeSlotID = slot.id
+        if slot.zone == .body { activeBodySlotID = slot.id }
+    }
+
+    private func addBodyLayer() {
+        let id = draft.addBodyLayer()
+        activeSlotID = id
+        activeBodySlotID = id
+        errorMessage = nil
+    }
+
     private func slotSelection(_ slot: OutfitSlot) -> some View {
         OutfitSlotContent(store: store, slot: slot)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
             // A Button in a List can activate on release after a simultaneous drag.
             // TapGesture fails when the finger moves; the drag still coexists with scrolling.
-            .onTapGesture { activeSlotID = slot.id; choosingSlot = slot }
+            .onTapGesture { activate(slot); choosingSlot = slot }
             .simultaneousGesture(slotDrag(slot.id))
             .accessibilityElement(children: .ignore)
             .accessibilityAddTraits(.isButton)
-            .accessibilityAction { activeSlotID = slot.id; choosingSlot = slot }
+            .accessibilityAction { activate(slot); choosingSlot = slot }
             .accessibilityIdentifier("outfit-slot-\(slot.zone.rawValue)-\(slot.id)")
             .accessibilityLabel("\(outfitSlotTitle(slot, in: draft)). \(itemLabel(slot))")
             .accessibilityValue(itemLabel(slot))
@@ -569,6 +609,10 @@ struct OutfitEditorView: View {
             if slot.zone == .body {
                 Button("Убрать слой", systemImage: "minus") {
                     draft.removeBodyLayer(slot.id)
+                    if !draft.slots.contains(where: { $0.id == activeSlotID }) {
+                        activeSlotID = draft.slots.first { $0.zone == .body }?.id
+                        activeBodySlotID = activeSlotID
+                    }
                     errorMessage = nil
                 }
                 .accessibilityLabel("Убрать: \(outfitSlotTitle(slot, in: draft))")
@@ -636,7 +680,7 @@ struct OutfitEditorView: View {
 
     private func cycle(_ slotID: UUID, forward: Bool) {
         guard let slot = draft.slots.first(where: { $0.id == slotID }) else { return }
-        activeSlotID = slotID
+        activate(slot)
         draft.cycleItem(for: slotID, among: candidates(for: slot).map(\.id), forward: forward)
         if draft.slots.first(where: { $0.id == slotID })?.itemID != slot.itemID { swipeDiscovered = true }
         errorMessage = nil

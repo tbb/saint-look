@@ -306,6 +306,27 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testMannequinActiveBodyLayerSurvivesIndependentZoneSwitches() {
+        let app = launch(reset: true)
+        app.tabBars.buttons["Луки"].tap()
+        app.buttons["create-first-outfit"].tap()
+        tap(app.buttons["fitting-add-layer"], in: app)
+        let layers = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'fitting-layer-'"))
+        XCTAssertEqual(layers.count, 2)
+        XCTAssertTrue(layers.element(boundBy: 1).isSelected)
+        tap(layers.element(boundBy: 0), in: app)
+        XCTAssertTrue(layers.element(boundBy: 0).isSelected)
+        tap(layers.element(boundBy: 1), in: app)
+        tap(app.buttons["fitting-zone-bottom"], in: app)
+        tap(app.buttons["fitting-zone-body"], in: app)
+        XCTAssertTrue(layers.element(boundBy: 1).isSelected, "Returning to body restores its active layer")
+        app.buttons["cancel-outfit"].tap()
+        app.alerts.buttons["discard-outfit-changes"].tap()
+        XCTAssertTrue(app.buttons["create-first-outfit"].waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
+    @MainActor
     func testEmptyLooksOfferWardrobeAndPendingChoicesExplainReadiness() async throws {
         let app = launch(reset: true)
         app.tabBars.buttons["Луки"].tap()
