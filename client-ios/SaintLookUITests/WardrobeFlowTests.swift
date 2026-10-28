@@ -1190,7 +1190,7 @@ final class WardrobeFlowTests: XCTestCase {
                     XCTFail("The item menu must offer a stable, hittable \(identifier)")
                     throw InteractionError.buttonNotVisible(identifier)
                 }
-                action.tap()
+                action.press(forDuration: 0.1)
                 return
             }
         }
