@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "originalRunId": "40677633168",
+  "originalRevision": "617062d6170dcf879ff54843c5e62c22f118aa9f",
+  "diagnosticRunId": "40683876977",
+  "diagnosticRevision": "dd5cfa9fd5079e367e1b133bf788742db40b9ff2",
+  "planDataSha256": "ee9c0aec283f016de2bb796c15bee46c86f38efcac532364743b40816911dd9a",
+  "sourceSha256": "fbc6e902898915c554187d961515c7db2505954c4e46d4a090528de4348cdb50",
+  "normalizedSourceSha256": "28bc1cd19057d3a41f7b16175cc6121e900b05220034fa678a991030031d06bc",
+  "files": {
+    "prior-ledger.json": "47b0a4803ad201ebed576e39d4cea18f9c1e220320de075cbb8d48182088ef8d",
+    "prior-approval.json": "f86bf76dbc5e0470aee0acf330531c8ab7ba3263f0e9048dc53eb2e8cc7be839",
+    "prior-admission.json": "02f99dde08c38531418c8cee28840f2c9a6fe01a92c8ee97eb1e5d8c7dbdbc5a",
+    "admission.json": "7979dcc7126487d052c2f414d92bbda9a3a17ccd38ce09e411ddf06204fc6946",
+    "receipt.json": "afaa4b4250c590c2931ccb9bf0f27836cdf21bf4e463dd1d30b69697378670fe",
+    "response.json": "eddf234c18f000d087c2dc237f46a56c1661036b8f01f9d9be4bae1ea78f4726",
+    "prepared.png": "7c4939ed1e7e2275e0d7713e4e25edc6a6a24bf0d95f73e3dcd16d6d7330f828"
+  }
+}

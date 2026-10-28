@@ -1,0 +1,133 @@
+name: Continue the reconciled fitting trial once
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: 'Exact current main SHA with successful Fitting experiment local checks'
+        required: true
+        type: string
+      plan_sha256:
+        description: 'Fingerprint from trial.mjs --describe at that exact revision'
+        required: true
+        type: string
+      continuation_sha256:
+        description: 'SHA256 of the reviewed continuation-plan.json importing the two measured attempts'
+        required: true
+        type: string
+      budget_usd:
+        description: 'First batch cap within the approved overall budget (not the account balance)'
+        required: true
+        type: choice
+        options: ['5']
+      price_checked_at:
+        description: 'Actual UTC price/terms review timestamp, less than 24 hours old'
+        required: true
+        type: string
+      approval_reference:
+        description: 'Issue #45 plan comment; authorization comes from explicit manual dispatch inputs'
+        required: true
+        type: string
+      reviewed_terms:
+        description: 'Public source licenses and provider image-use/retention terms were reviewed'
+        required: true
+        default: false
+        type: boolean
+      approve_paid_calls:
+        description: 'Continue the remaining trial within the original aggregate $5 cap; never rerun after failure'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fitting-trial-45
+  cancel-in-progress: false
+
+jobs:
+  reserve:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: npm --prefix backend ci --ignore-scripts
+      - name: Retrieve the measured public-photo diagnostic evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download 40683876977 --repo "$GITHUB_REPOSITORY" --name fitting-45-jev-diagnostic-evidence --dir "$RUNNER_TEMP/fitting-45-prior"
+      - name: Verify and import the two historical attempts before reserving continuation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/fitting/manual-trial.mjs scripts/fitting/plan.json
+          "$RUNNER_TEMP/fitting-trial-45-continuation"
+          scripts/fitting/continuation-plan.json "$RUNNER_TEMP/fitting-45-prior"
+      - name: Preserve the admitted run identity without provider credentials
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fitting-45-continuation-admission
+          path: |
+            ${{ runner.temp }}/fitting-trial-45-continuation/admission.json
+            ${{ runner.temp }}/fitting-trial-45-continuation/approval.json
+            ${{ runner.temp }}/fitting-trial-45-continuation/output/*.json
+            ${{ runner.temp }}/fitting-trial-45-continuation/output/*.png
+          if-no-files-found: error
+          retention-days: 7
+
+  experiment:
+    needs: reserve
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: npm --prefix backend ci --ignore-scripts
+      - name: Retrieve this run's admission
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name fitting-45-continuation-admission --dir "$RUNNER_TEMP/fitting-trial-45-continuation"
+      - name: Run the admitted public-photo experiment once
+        env:
+          FAL_KEY: ${{ secrets.FAL_KEY }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          PHOTOROOM_SANDBOX_API_KEY: ${{ secrets.PHOTOROOM_SANDBOX_API_KEY }}
+        run: |
+          node scripts/fitting/trial.mjs --live --plan scripts/fitting/plan.json \
+            --approval "$RUNNER_TEMP/fitting-trial-45-continuation/approval.json" \
+            --manual-admission "$RUNNER_TEMP/fitting-trial-45-continuation/admission.json" \
+            --out "$RUNNER_TEMP/fitting-trial-45-continuation/output"
+      - name: Preserve ledger and public-photo evidence even after failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fitting-45-continuation-evidence
+          path: |
+            ${{ runner.temp }}/fitting-trial-45-continuation/admission.json
+            ${{ runner.temp }}/fitting-trial-45-continuation/approval.json
+            ${{ runner.temp }}/fitting-trial-45-continuation/output/*.json
+            ${{ runner.temp }}/fitting-trial-45-continuation/output/*.png
+            ${{ runner.temp }}/fitting-trial-45-continuation/output/*.html
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 0

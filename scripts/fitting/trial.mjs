@@ -68,6 +68,13 @@ async function main() {
     async function attributes(input) {
       const key = `${input.item.id}/${input.input}/attributes`, existing = ledger.data.operations[key];
       if (existing?.status === 'completed') return existing.result;
+      if (existing?.status === 'unknown' && existing.reconciledBy === `${key}-diagnostic-1`) {
+        const reconciled = ledger.data.operations[existing.reconciledBy];
+        const request = await featureRequest(input.photos, input.roles);
+        if (reconciled?.stage !== 'attributes' || reconciled.status !== 'completed' || !reconciled.result
+          || reconciled.semanticRequestSha256 !== sha256(JSON.stringify(semanticRequest(request)))) throw new Error('Reconciled JEV result does not match this input');
+        return reconciled.result;
+      }
       if (existing) throw new Error('Existing JEV attempt requires reconciliation; no automatic retry');
       const request = await featureRequest(input.photos, input.roles);
       const op = await ledger.reserve(key, 'attributes', approval);

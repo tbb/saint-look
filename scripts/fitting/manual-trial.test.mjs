@@ -279,3 +279,48 @@ test('continuation imports prior attempts once and reconciles the saved response
   const second = await f.run({ output: join(f.dir, 'duplicate') });
   assert.equal(second.code, 1); assert.match(second.stderr, /reservation failed or already exists/);
 });
+
+test('continuation rejects altered evidence, request semantics and reruns before any reservation', async t => {
+  const f = await fixture(t, true);
+  for (const name of ['prepared.png', 'response.json', 'prior-ledger.json']) {
+    const path = join(f.historical.dir, name), bytes = await readFile(path);
+    await writeFile(path, Buffer.concat([bytes, Buffer.from('x')]));
+    const result = await f.run(); assert.equal(result.code, 1); assert.match(result.stderr, /evidence hash mismatch/);
+    await writeFile(path, bytes);
+  }
+  const rerun = await f.run({ overrides: { GITHUB_RUN_ATTEMPT: '2' } });
+  assert.equal(rerun.code, 1); assert.match(rerun.stderr, /Live execution is forbidden/);
+  const receiptPath = join(f.historical.dir, 'receipt.json');
+  const receipt = JSON.parse(await readFile(receiptPath)); receipt.semanticRequestSha256 = 'f'.repeat(64);
+  const receiptBytes = JSON.stringify(receipt); await writeFile(receiptPath, receiptBytes);
+  f.historical.manifest.files['receipt.json'] = sha256(receiptBytes);
+  const manifestBytes = JSON.stringify(f.historical.manifest); await writeFile(f.historical.path, manifestBytes);
+  const result = await f.run({ inputOverrides: { continuation_sha256: sha256(manifestBytes) } });
+  assert.equal(result.code, 1); assert.match(result.stderr, /request semantics changed/);
+  assert.equal(f.requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('continuation admission rejects a changed imported ledger before reading provider credentials', async t => {
+  const f = await fixture(t, true), first = await f.run(); assert.equal(first.code, 0, first.stderr);
+  const path = join(first.output, 'output/ledger.json'), ledger = JSON.parse(await readFile(path));
+  ledger.operations['white-tee/single/attributes'].reservedMicrousd = 0;
+  await writeFile(path, JSON.stringify(ledger));
+  const result = await trial(f, first.output);
+  assert.equal(result.code, 1); assert.match(result.stderr, /Continuation seed ledger changed/);
+});
+
+test('continuation workflow keeps imported evidence and provider secrets in separate jobs', async () => {
+  const workflow = await readFile(new URL('../../.github/workflows/fitting-continuation.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /^on:\n  workflow_dispatch:/m);
+  assert.doesNotMatch(workflow, /^  (push|pull_request|pull_request_target|schedule|workflow_run):/m);
+  assert.match(workflow, /group: fitting-trial-45\n  cancel-in-progress: false/);
+  const [reserve, experiment] = workflow.split('\n  experiment:\n');
+  assert.doesNotMatch(reserve, /secrets\./); assert.match(reserve, /contents: write/);
+  assert.match(reserve, /gh run download 40683876977/);
+  assert.match(reserve, /scripts\/fitting\/continuation-plan.json/);
+  assert.match(reserve, /output\/\*\.json/); assert.match(reserve, /output\/\*\.png/);
+  assert.match(experiment, /needs: reserve/); assert.doesNotMatch(experiment, /contents: write/);
+  assert.deepEqual([...experiment.matchAll(/secrets\.([A-Z_]+)/g)].map(match => match[1]).sort(),
+    ['FAL_KEY', 'PHOTOROOM_SANDBOX_API_KEY', 'TYPESAFE_API_KEY']);
+  assert.match(experiment, /if: always\(\)/);
+});
