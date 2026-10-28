@@ -1,0 +1,33 @@
+name: Read-only fal access diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostic:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Read only the failed request window; no inference or retries
+        env:
+          FAL_KEY: ${{ secrets.FAL_KEY }}
+        run: node scripts/fitting/fal-access.mjs
+      - name: Preserve only the safe diagnostic summary
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fitting-fal-access
+          path: fal-access-report.json
+          if-no-files-found: warn
+          retention-days: 7
