@@ -386,8 +386,10 @@ final class VisualAcceptanceTests: XCTestCase {
             })
         }
         func canvas(in app: XCUIApplication) throws -> XCUIElement {
-            // The editor sheet can retain the detail canvas behind it in accessibility.
-            try XCTUnwrap(app.otherElements.matching(identifier: "fitting-canvas").allElementsBoundByIndex.last)
+            // A sheet retains the detail canvas in accessibility, and global query order
+            // does not identify the foreground. Use the same content surface as reveal.
+            let surface = try scrollSurface(in: app, bar: navigationBar(app))
+            return try XCTUnwrap(surface.otherElements.matching(identifier: "fitting-canvas").allElementsBoundByIndex.first)
         }
         let before = try await activityCounts()
         let illustrationsBefore = try await illustrationCounts()
