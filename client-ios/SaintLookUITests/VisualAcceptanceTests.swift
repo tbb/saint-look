@@ -409,6 +409,9 @@ final class VisualAcceptanceTests: XCTestCase {
         try require(!(app.staticTexts["fitting-missing-illustration"].exists))
         try capture("fitting-03-prepared-editor")
         let layers = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'fitting-layer-'"))
+        // The iPad sheet can show only the canvas: its lazy layer grid enters
+        // accessibility when scrolled into view, so reveal it before counting.
+        try reveal(layers.firstMatch, in: app)
         try requireEqual(layers.count, 2)
         try tap(layers.element(boundBy: 0), in: app)
         try require(layers.element(boundBy: 0).isSelected)
