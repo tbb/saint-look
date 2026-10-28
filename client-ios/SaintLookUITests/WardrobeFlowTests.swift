@@ -1204,12 +1204,22 @@ final class WardrobeFlowTests: XCTestCase {
     @MainActor
     private func openFirstItem(in app: XCUIApplication) throws {
         if app.buttons["item-actions"].exists { return }
-        let photo = app.images["item-photo"].firstMatch
-        guard photo.waitForExistence(timeout: 5) else { throw InteractionError.buttonNotVisible("item-photo") }
-        for _ in 0..<4 where !photo.isHittable { app.swipeDown() }
-        XCTAssertTrue(photo.isHittable)
-        photo.tap()
-        XCTAssertTrue(app.buttons["item-actions"].waitForExistence(timeout: 5))
+        // The photo is content inside the NavigationLink, not the action itself.
+        // Address the native button exposed by the identified wardrobe card.
+        // Photo-hit behavior remains covered by its dedicated navigation test.
+        let card = app.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@", "wardrobe-item-")).firstMatch
+        let link = card.buttons.firstMatch
+        guard link.waitForExistence(timeout: 5) else { throw InteractionError.buttonNotVisible("wardrobe-item-link") }
+        for _ in 0..<4 where !link.isHittable { app.swipeDown() }
+        guard link.isHittable else {
+            XCTFail("The wardrobe item's native navigation button must be hittable")
+            throw InteractionError.buttonNotVisible("wardrobe-item-link")
+        }
+        link.tap()
+        guard app.buttons["item-actions"].waitForExistence(timeout: 5) else {
+            XCTFail("The wardrobe item must open before its detail is inspected")
+            throw InteractionError.buttonNotVisible("item-actions")
+        }
     }
 
     @MainActor
