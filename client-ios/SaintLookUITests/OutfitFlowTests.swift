@@ -327,6 +327,44 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testPinnedSlotAllowsManualReplacementAndUndoWithoutAI() async throws {
+        let app = launch(reset: true)
+        for count in 1...3 {
+            tap(app.buttons["add-demo-photo"], in: app)
+            await summary(app, ready: count, pending: 0)
+        }
+        let before = try await activityCounts()
+        app.tabBars.buttons["Луки"].tap()
+        tap(app.buttons["create-first-outfit"], in: app)
+        let row = button(prefix: "outfit-slot-body-", in: app)
+        tap(row, in: app)
+        chooseCandidate(button(prefix: "outfit-candidate-", in: app), in: app)
+        let slotID = String(row.identifier.dropFirst("outfit-slot-body-".count))
+        let pin = app.buttons["pin-slot-\(slotID)"]
+        tap(pin, in: app)
+        XCTAssertTrue(pin.isSelected)
+        tap(row, in: app)
+        let old = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-' AND selected == true")).firstMatch.identifier
+        let alternative = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-' AND selected == false")).firstMatch
+        let new = alternative.identifier
+        chooseCandidate(alternative, in: app)
+        XCTAssertTrue(pin.isSelected, "Manual choice must not remove the slot pin")
+        tap(app.buttons["fitting-undo"], in: app)
+        tap(row, in: app)
+        XCTAssertTrue(app.buttons[old].isSelected)
+        XCTAssertFalse(app.buttons[new].isSelected)
+        app.buttons["cancel-outfit-picker"].tap()
+        XCTAssertTrue(pin.isSelected, "Undo changes composition, not pins")
+        tap(app.buttons["fitting-shuffle"], in: app)
+        XCTAssertTrue(app.staticTexts["fitting-action-message"].exists)
+        let after = try await activityCounts()
+        XCTAssertEqual(after, before, "Pinning, manual choice, shuffle and undo must stay local")
+        app.buttons["cancel-outfit"].tap()
+        app.alerts.buttons["discard-outfit-changes"].tap()
+        app.terminate()
+    }
+
+    @MainActor
     func testEmptyLooksOfferWardrobeAndPendingChoicesExplainReadiness() async throws {
         let app = launch(reset: true)
         app.tabBars.buttons["Луки"].tap()

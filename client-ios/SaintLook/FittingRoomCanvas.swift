@@ -12,6 +12,17 @@ struct FittingRoomCanvas: View {
         return order.flatMap { zone in outfit.slots.filter { $0.zone == zone } }
     }
 
+    private var compositionDescription: String {
+        let selected = renderedSlots.compactMap { slot -> String? in
+            guard let item = store.items.first(where: { $0.id == slot.itemID }) else {
+                return slot.needsReplacement ? "\(slot.zone.title): нужна замена" : nil
+            }
+            let state = store.illustrationURL(for: item) == nil ? "без иллюстрации, фото ниже" : "иллюстрация"
+            return "\(slot.zone.title): \(item.displayedType ?? "вещь"), \(state)"
+        }
+        return selected.isEmpty ? "Пустой манекен. Вещи не выбраны" : "Манекен. " + selected.joined(separator: ". ")
+    }
+
     var body: some View {
         ZStack {
             SaintLookStyle.photoSurface
@@ -31,7 +42,7 @@ struct FittingRoomCanvas: View {
         .aspectRatio(1, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: SaintLookStyle.cornerRadius))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Манекен. Подготовленные иллюстрации выбранных вещей")
+        .accessibilityLabel(compositionDescription)
         .accessibilityIdentifier("fitting-canvas")
     }
 }

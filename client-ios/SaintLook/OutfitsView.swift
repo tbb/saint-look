@@ -357,6 +357,9 @@ struct OutfitEditorView: View {
     @State private var choosingSlot: OutfitSlot?
     @State private var activeSlotID: UUID?
     @State private var activeBodySlotID: UUID?
+    @State private var pinnedSlotIDs: Set<UUID> = []
+    @State private var compositionHistory = OutfitCompositionHistory()
+    @State private var actionMessage: String?
     @State private var errorMessage: String?
     @State private var saving = false
     @State private var initial: Outfit
@@ -398,6 +401,7 @@ struct OutfitEditorView: View {
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                                 Spacer(minLength: 0)
+                                pinButton(slot)
                                 slotMenu(slot)
                             }
                             slotSelection(slot)
@@ -458,8 +462,28 @@ struct OutfitEditorView: View {
         }
     }
 
+    @ViewBuilder
+    private var compositionActions: some View {
+        Button("Перемешать", systemImage: "shuffle", action: shuffle)
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("fitting-shuffle")
+        Button("Отменить", systemImage: "arrow.uturn.backward", action: undoComposition)
+            .frame(minHeight: 44)
+            .disabled(!compositionHistory.canUndo)
+            .accessibilityLabel("Отменить изменение состава")
+            .accessibilityIdentifier("fitting-undo")
+    }
+
     private var fittingPreview: some View {
         VStack(alignment: .leading, spacing: 12) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) { compositionActions }
+                VStack(alignment: .leading, spacing: 8) { compositionActions }
+            }
+            if let actionMessage {
+                Text(actionMessage).font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("fitting-action-message")
+            }
             FittingRoomCanvas(store: store, outfit: draft)
                 .frame(maxWidth: 460)
                 .frame(maxWidth: .infinity)
@@ -514,12 +538,16 @@ struct OutfitEditorView: View {
                     .font(.footnote).foregroundStyle(.secondary)
             }
             if let slot = activeSlot {
+                if pinnedSlotIDs.contains(slot.id) {
+                    Label("Слот закреплён при перемешивании", systemImage: "pin.fill")
+                        .font(.footnote).foregroundStyle(SaintLookStyle.accent)
+                }
                 HStack {
                     Button { cycle(slot.id, forward: false) } label: {
                         Image(systemName: "chevron.left").frame(minWidth: 44, minHeight: 44)
                     }
                     .accessibilityLabel("Предыдущая вещь: \(outfitSlotTitle(slot, in: draft))")
-                    .disabled(candidates(for: slot).count < 2)
+                    .disabled(!canCycle(slot))
                     Button { choosingSlot = slot } label: {
                         VStack(spacing: 4) {
                             Text(outfitSlotTitle(slot, in: draft)).font(.subheadline)
@@ -531,7 +559,7 @@ struct OutfitEditorView: View {
                         Image(systemName: "chevron.right").frame(minWidth: 44, minHeight: 44)
                     }
                     .accessibilityLabel("Следующая вещь: \(outfitSlotTitle(slot, in: draft))")
-                    .disabled(candidates(for: slot).count < 2)
+                    .disabled(!canCycle(slot))
                 }
                 if candidates(for: slot).count < 2 {
                     Text(candidates(for: slot).isEmpty ? "Нет доступных вещей для этой зоны." : "В этой зоне один вариант. Его можно выбрать нажатием.")
@@ -553,13 +581,54 @@ struct OutfitEditorView: View {
         }
     }
 
+    private func pinButton(_ slot: OutfitSlot) -> some View {
+        let pinned = pinnedSlotIDs.contains(slot.id)
+        return Button {
+            if pinned { pinnedSlotIDs.remove(slot.id) } else { pinnedSlotIDs.insert(slot.id) }
+            actionMessage = nil
+        } label: {
+            Image(systemName: pinned ? "pin.fill" : "pin")
+                .frame(minWidth: 44, minHeight: 44)
+        }
+        .accessibilityLabel("\(pinned ? "Открепить" : "Закрепить"): \(outfitSlotTitle(slot, in: draft))")
+        .accessibilityAddTraits(pinned ? .isSelected : [])
+        .accessibilityIdentifier("pin-slot-\(slot.id)")
+    }
+
+    private func shuffle() {
+        guard draft.slots.contains(where: { !pinnedSlotIDs.contains($0.id) }) else {
+            actionMessage = "Все зоны закреплены. Открепите одну, чтобы перемешать."
+            return
+        }
+        let previous = draft
+        let pools = Dictionary(uniqueKeysWithValues: OutfitZone.allCases.map {
+            ($0, store.outfitCandidates(for: $0, excluding: []).map(\.id))
+        })
+        draft.shuffle(pinnedSlotIDs: pinnedSlotIDs, candidates: pools)
+        compositionHistory.recordChange(from: previous, to: draft)
+        actionMessage = previous.slots == draft.slots ? "Для незакреплённых зон нет других доступных вариантов." : nil
+        errorMessage = nil
+    }
+
+    private func undoComposition() {
+        compositionHistory.undo(in: &draft, availableItemIDs: Set(store.items.map(\.id)))
+        if !draft.slots.contains(where: { $0.id == activeSlotID }) {
+            activeSlotID = draft.slots.first { $0.zone == .body }?.id
+            activeBodySlotID = activeSlotID
+        }
+        actionMessage = nil
+        errorMessage = nil
+    }
+
     private func activate(_ slot: OutfitSlot) {
         activeSlotID = slot.id
         if slot.zone == .body { activeBodySlotID = slot.id }
     }
 
     private func addBodyLayer() {
+        let previous = draft
         let id = draft.addBodyLayer()
+        compositionHistory.recordChange(from: previous, to: draft)
         activeSlotID = id
         activeBodySlotID = id
         errorMessage = nil
@@ -596,10 +665,10 @@ struct OutfitEditorView: View {
         Menu {
             Button("Выбрать вещь", systemImage: "square.grid.2x2") { choosingSlot = slot }
             Button("Следующая вещь", systemImage: "chevron.right") { cycle(slot.id, forward: true) }
-                .disabled(candidates(for: slot).count < 2)
+                .disabled(!canCycle(slot))
                 .accessibilityIdentifier("next-slot-\(slot.id)")
             Button("Предыдущая вещь", systemImage: "chevron.left") { cycle(slot.id, forward: false) }
-                .disabled(candidates(for: slot).count < 2)
+                .disabled(!canCycle(slot))
                 .accessibilityIdentifier("previous-slot-\(slot.id)")
             if slot.itemID != nil || slot.needsReplacement {
                 Button("Очистить", systemImage: "xmark") { select(nil, for: slot.id) }
@@ -608,7 +677,9 @@ struct OutfitEditorView: View {
             }
             if slot.zone == .body {
                 Button("Убрать слой", systemImage: "minus") {
+                    let previous = draft
                     draft.removeBodyLayer(slot.id)
+                    compositionHistory.recordChange(from: previous, to: draft)
                     if !draft.slots.contains(where: { $0.id == activeSlotID }) {
                         activeSlotID = draft.slots.first { $0.zone == .body }?.id
                         activeBodySlotID = activeSlotID
@@ -669,8 +740,16 @@ struct OutfitEditorView: View {
     private func select(_ itemID: UUID?, for slotID: UUID) {
         guard let slot = draft.slots.first(where: { $0.id == slotID }) else { return }
         if let itemID, !candidates(for: slot).contains(where: { $0.id == itemID }) { return }
+        let previous = draft
         draft.selectItem(itemID, for: slotID)
+        compositionHistory.recordChange(from: previous, to: draft)
+        actionMessage = nil
         errorMessage = nil
+    }
+
+    private func canCycle(_ slot: OutfitSlot) -> Bool {
+        let available = candidates(for: slot)
+        return available.contains { $0.id != slot.itemID }
     }
 
     private func candidates(for slot: OutfitSlot) -> [WardrobeItem] {
@@ -681,7 +760,10 @@ struct OutfitEditorView: View {
     private func cycle(_ slotID: UUID, forward: Bool) {
         guard let slot = draft.slots.first(where: { $0.id == slotID }) else { return }
         activate(slot)
+        let previous = draft
         draft.cycleItem(for: slotID, among: candidates(for: slot).map(\.id), forward: forward)
+        compositionHistory.recordChange(from: previous, to: draft)
+        actionMessage = nil
         if draft.slots.first(where: { $0.id == slotID })?.itemID != slot.itemID { swipeDiscovered = true }
         errorMessage = nil
     }
