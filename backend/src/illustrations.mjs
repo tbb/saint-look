@@ -61,7 +61,8 @@ export function createIllustrations(database, env, retention) {
     source_set_version_id TEXT NOT NULL, revision INTEGER NOT NULL, fingerprint TEXT NOT NULL,
     photos TEXT NOT NULL, manual_type TEXT, manual_colors TEXT, status TEXT NOT NULL DEFAULT 'pending',
     mode TEXT NOT NULL, processing TEXT NOT NULL, observed TEXT, effective TEXT, generated BLOB, result BLOB,
-    provider_receipt TEXT, error TEXT, retention_state TEXT NOT NULL DEFAULT 'active', expires_at INTEGER NOT NULL,
+    provider_receipt TEXT, generated_alpha INTEGER NOT NULL DEFAULT 0, versions TEXT NOT NULL,
+    error TEXT, retention_state TEXT NOT NULL DEFAULT 'active', expires_at INTEGER NOT NULL,
     UNIQUE(item_id, revision));
     CREATE TABLE IF NOT EXISTS illustration_sources (
       item_id TEXT NOT NULL, photo_id TEXT NOT NULL, digest TEXT NOT NULL, source BLOB, prepared BLOB,
@@ -73,6 +74,17 @@ export function createIllustrations(database, env, retention) {
   const current = id => database.prepare('SELECT * FROM illustrations WHERE item_id=? ORDER BY revision DESC LIMIT 1').get(id);
   function sweep() {
     const now = retention.deadline() - 7 * 24 * 60 * 60 * 1000;
+    // Ordinary photo replacement is authoritative even when the illustration
+    // worker is awaiting a provider. The old operation must not lock the item.
+    database.prepare(`UPDATE illustrations SET status='failed',error='operation_superseded',retention_state='superseded',
+      generated=NULL,result=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL
+      WHERE retention_state='active' AND EXISTS (SELECT 1 FROM items
+        WHERE items.item_id=illustrations.item_id AND items.photo_version_id<>illustrations.photo_version_id)`).run();
+    for (const source of database.prepare('SELECT item_id,photo_id FROM illustration_sources WHERE source IS NOT NULL').all()) {
+      const referenced = database.prepare("SELECT photos FROM illustrations WHERE item_id=? AND retention_state='active'").all(source.item_id)
+        .some(row => parse(row.photos).some(photo => photo.id === source.photo_id));
+      if (!referenced) database.prepare(`UPDATE illustration_sources SET ${cleared},state=CASE WHEN state='in_flight' THEN 'unknown' ELSE state END WHERE item_id=? AND photo_id=?`).run(source.item_id, source.photo_id);
+    }
     database.prepare(`UPDATE illustrations SET status='failed',error='result_expired',retention_state='expired',
       generated=NULL,result=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL,processing=?
       WHERE retention_state='active' AND expires_at<=?`).run(json(Object.fromEntries(stages.map(stage => [stage, 'cleared']))), now);
@@ -91,7 +103,7 @@ export function createIllustrations(database, env, retention) {
     return { itemId: row.item_id, operationId: row.operation_id, photoVersionId: row.photo_version_id,
       sourceSetVersionId: row.source_set_version_id, revision: row.revision, status: row.status, mode: row.mode,
       processing: parse(row.processing), observedFeatures: parse(row.observed), effectiveFeatures: parse(row.effective),
-      manualType: row.manual_type, manualColors: parse(row.manual_colors), ...illustrationVersions,
+      manualType: row.manual_type, manualColors: parse(row.manual_colors), ...parse(row.versions),
       resultPath: row.status === 'ready' ? `/v1/items/${row.item_id}/illustrations/${row.operation_id}/result` : null, error: row.error };
   }
   function live(operationId) {
@@ -114,7 +126,8 @@ export function createIllustrations(database, env, retention) {
     let row = live(operationId); if (!row) return;
     let stage = 'preparation';
     try {
-      if (row.mode !== provider.mode || !await provider.available()) throw new ProviderError('illustration_unavailable');
+      if (row.mode !== provider.mode || row.versions !== json(illustrationVersions)) throw new ProviderError('provider_configuration_changed');
+      if (!await provider.available()) throw new ProviderError('illustration_unavailable');
       const inputs = parse(row.photos);
       const photos = [];
       for (const input of inputs) {
@@ -143,14 +156,14 @@ export function createIllustrations(database, env, retention) {
         setStage(operationId, stage, 'done');
       }
       stage = 'generation'; row = live(operationId); if (!row) return;
-      let generated = row.generated && { png: Buffer.from(row.generated), usableAlpha: parse(row.processing).finalization === 'skipped' };
+      let generated = row.generated && { png: Buffer.from(row.generated), usableAlpha: Boolean(row.generated_alpha) };
       if (!generated) {
         setStage(operationId, stage, 'in_flight');
         generated = await provider.generate(photos, effective, abort.signal, receipt => {
           if (live(operationId)) database.prepare('UPDATE illustrations SET provider_receipt=? WHERE operation_id=?').run(receipt, operationId);
         }, row.provider_receipt);
         if (!live(operationId)) return;
-        database.prepare('UPDATE illustrations SET generated=? WHERE operation_id=?').run(generated.png, operationId);
+        database.prepare('UPDATE illustrations SET generated=?,generated_alpha=? WHERE operation_id=?').run(generated.png, Number(generated.usableAlpha), operationId);
         setStage(operationId, stage, 'done');
       }
       stage = 'finalization';
@@ -209,10 +222,10 @@ export function createIllustrations(database, env, retention) {
       database.exec('BEGIN IMMEDIATE');
       try {
         database.prepare(`INSERT INTO illustrations(operation_id,item_id,photo_version_id,source_set_version_id,revision,fingerprint,
-          photos,manual_type,manual_colors,mode,processing,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+          photos,manual_type,manual_colors,mode,processing,expires_at,versions) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
           .run(input.operationId, input.itemId, input.photoVersionId, input.sourceSetVersionId, input.revision, input.fingerprint,
             json(input.photos.map(({ id, role, digest }) => ({ id, role, digest }))), input.manualType, json(input.manualColors), provider.mode,
-            json(Object.fromEntries(stages.map(stage => [stage, 'pending']))), deadline);
+            json(Object.fromEntries(stages.map(stage => [stage, 'pending']))), deadline, json(illustrationVersions));
         for (const photo of input.photos) {
           const known = database.prepare('SELECT * FROM illustration_sources WHERE item_id=? AND photo_id=?').get(input.itemId, photo.id);
           if (known && known.digest !== photo.digest) throw new RequestError(409, 'identity_conflict');

@@ -16,7 +16,7 @@ test('startup refuses a newer data format instead of pretending rollback succeed
   const env = await environment(t);
   // Historical/future database is input to the public process boundary, not an assertion side channel.
   const future = new DatabaseSync(join(env.directory, 'wardrobe.sqlite'));
-  future.exec('PRAGMA user_version=2; CREATE TABLE future_only (value TEXT);');
+  future.exec('PRAGMA user_version=3; CREATE TABLE future_only (value TEXT);');
   future.close();
   await assert.rejects(env.launch(), /Unsupported data version/);
 });
@@ -77,7 +77,7 @@ test('controlled release changes deployment identity while retaining its revisio
   const health = await (await server.request('/health')).json();
   assert.equal(health.revision, release.revision);
   assert.equal(health.deploymentId, 'b10826ef-458b-4caa-9ee1-9402e94071cb');
-  assert.equal(health.dataVersion, 1);
+  assert.equal(health.dataVersion, 2);
   assert.equal(health.mode, 'demo');
   assert.equal((await server.request('/__control')).status, 404);
   const item = await photoRequest();
