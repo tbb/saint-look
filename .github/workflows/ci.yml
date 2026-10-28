@@ -21,7 +21,7 @@ on:
         description: Local Simulator suite
         type: choice
         default: all
-        options: [all, wardrobe, outfits, visual, camera]
+        options: [all, wardrobe, outfits, visual, camera, wardrobe-recovery]
       visual_profiles:
         description: Visual evidence profiles (only used by the visual suite)
         type: choice
@@ -92,7 +92,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(inputs.ios_suite == 'camera' && '["camera"]' || inputs.ios_suite == 'outfits' && '["outfits"]' || inputs.ios_suite == 'wardrobe' && '["wardrobe"]' || inputs.ios_suite == 'visual' && '["visual"]' || '["wardrobe","outfits","visual"]') }}
+        suite: ${{ fromJSON(inputs.ios_suite == 'wardrobe-recovery' && '["wardrobe-recovery"]' || inputs.ios_suite == 'camera' && '["camera"]' || inputs.ios_suite == 'outfits' && '["outfits"]' || inputs.ios_suite == 'wardrobe' && '["wardrobe"]' || inputs.ios_suite == 'visual' && '["visual"]' || '["wardrobe","outfits","visual"]') }}
     runs-on: macos-26
     # Wardrobe now has 33 public scenarios plus cold Simulator startup and manifest smoke.
     # Keep full wardrobe/outfits bounded at 60 min; the focused camera suite retains 40 min.
@@ -194,6 +194,11 @@ jobs:
             export SAINT_LOOK_UI_TEST_ONLY="SaintLookUITests/WardrobeFlowTests/testSourceCancellationAndUnavailableCameraDoNotCreateAnItem
           SaintLookUITests/WardrobeFlowTests/testDeniedCameraOffersSettingsAndGalleryWithoutCreatingAnItem
           SaintLookUITests/WardrobeFlowTests/testReplacementSourceCancellationAndRestrictedCameraKeepTheItem"
+          fi
+          if [[ "$TEST_SUITE" == "wardrobe-recovery" ]]; then
+            export SAINT_LOOK_UI_TEST_ONLY="SaintLookUITests/WardrobeFlowTests/testCancelDeletionKeepsPhotoAndDoesNotSendDelete
+          SaintLookUITests/WardrobeFlowTests/testOfflineReplacementRetainsPreviousCutoutAndEditsUntilNewResultAfterRelaunch
+          SaintLookUITests/WardrobeFlowTests/testOpeningPhotoKeepsItemContextThroughEditingAndBackToCollection"
           fi
           bash client-ios/scripts/test-simulator.sh
           if [[ "$TEST_SUITE" == "wardrobe" ]]; then
