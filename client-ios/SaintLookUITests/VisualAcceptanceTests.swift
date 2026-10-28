@@ -199,7 +199,7 @@ final class VisualAcceptanceTests: XCTestCase {
         try reveal(field, in: app, towardTop: true)
         let current = (field.value as? String) ?? ""
         let populated = !current.isEmpty && current != "Название — необязательно"
-        // Focus once, then perform the distinct selection gesture on the focused field.
+        // Focus first, then choose the native editing command on the insertion point.
         try nativeTap(field, in: app)
         let keyboardReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             let keyboard = app.keyboards.firstMatch
@@ -211,11 +211,7 @@ final class VisualAcceptanceTests: XCTestCase {
             return
         }
         if populated {
-            // This single-line name is one paragraph: native triple tap selects its full text.
-            // Long press instead repositions the insertion point through the magnifier.
-            let failures = testRun?.failureCount ?? 0
-            field.tap(withNumberOfTaps: 3, numberOfTouches: 1)
-            try requireEqual(testRun?.failureCount ?? 0, failures, "Native paragraph selection gesture failed")
+            try selectEntireName(field, in: app)
         }
         let failures = testRun?.failureCount ?? 0
         field.typeText(name)
@@ -224,6 +220,32 @@ final class VisualAcceptanceTests: XCTestCase {
         field.typeText("\n")
         try requireEqual(testRun?.failureCount ?? 0, failures, "Native Done action failed")
         try expectGone(app.keyboards.firstMatch, "Done must dismiss the keyboard", timeout: 15)
+    }
+
+    @MainActor
+    private func selectEntireName(_ field: XCUIElement, in app: XCUIApplication) throws {
+        try require(field.isEnabled, "The focused name field must allow native editing")
+        // Tapping the insertion point opens the native edit menu without selecting a word.
+        try nativeTap(field, in: app)
+        let labels = NSPredicate(format: "label IN %@", ["Select All", "Выбрать всё", "Выбрать все"])
+        let commands = [app.menuItems.matching(labels).firstMatch, app.buttons.matching(labels).firstMatch]
+        let nextPage = app.buttons.matching(NSPredicate(format: "label IN %@", ["Forward", "Вперёд", "Вперед"])).firstMatch
+        // Large Dynamic Type can paginate the native menu. Traverse pages, never retry editing.
+        for page in 0..<3 {
+            let available = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                commands.contains { $0.exists && $0.isHittable } || (nextPage.exists && nextPage.isHittable)
+            }, object: app)
+            guard XCTWaiter.wait(for: [available], timeout: 5) == .completed else { break }
+            if let command = commands.first(where: { $0.exists && $0.isHittable }) {
+                try require(command.isEnabled, "Native Select All must be enabled")
+                try nativeTap(command, in: app)
+                return
+            }
+            guard page < 2, nextPage.exists, nextPage.isHittable, nextPage.isEnabled else { break }
+            try nativeTap(nextPage, in: app)
+        }
+        diagnose("native-select-all-unavailable", app: app)
+        try require(false, "Native edit menu must expose an enabled Select All before replacement")
     }
 
     private func control(_ mode: String, reset: Bool = false) async throws {
