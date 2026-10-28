@@ -271,17 +271,28 @@ private struct OutfitComposition: View {
     }
 
     var body: some View {
+        // A collection card shows each item once. A file that cannot be decoded still
+        // needs its photo fallback, just like a missing illustration.
+        let illustratedSlotIDs = Set(visibleSlots.filter { slot in
+            guard let item = store.items.first(where: { $0.id == slot.itemID }),
+                  let url = store.illustrationURL(for: item) else { return false }
+            return UIImage(contentsOfFile: url.path) != nil
+        }.map(\.id))
+        let showsCanvas = !compact || !illustratedSlotIDs.isEmpty
+        let photoSlots = compact ? visibleSlots.filter { !illustratedSlotIDs.contains($0.id) } : visibleSlots
         VStack(spacing: compact ? 12 : 24) {
-            FittingRoomCanvas(store: store, outfit: outfit)
-                .frame(maxWidth: compact ? 300 : 460)
-            if visibleSlots.contains(where: { slot in
+            if showsCanvas {
+                FittingRoomCanvas(store: store, outfit: outfit)
+                    .frame(maxWidth: compact ? 300 : 460)
+            }
+            if showsCanvas && photoSlots.contains(where: { slot in
                 guard let item = store.items.first(where: { $0.id == slot.itemID }) else { return false }
-                return store.illustrationURL(for: item) == nil
+                return compact || store.illustrationURL(for: item) == nil
             }) {
                 Text("Фото вещей без иллюстраций — ниже")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            ForEach(visibleSlots) { slot in
+            ForEach(photoSlots) { slot in
                 VStack(spacing: 8) {
                     if let item = store.items.first(where: { $0.id == slot.itemID }) {
                         if let image = store.displayImage(for: item) {
