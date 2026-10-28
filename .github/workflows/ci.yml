@@ -122,6 +122,35 @@ jobs:
       - name: Check bounded visual diagnostic observer
         if: matrix.suite == 'visual'
         run: PYTHONDONTWRITEBYTECODE=1 python3 client-ios/scripts/tests/test-visual-stall-observer.py
+      # Temporary validation branch only: retain the merged app and all test assertions.
+      - name: Select an available small iPhone Simulator
+        if: matrix.suite == 'visual' && matrix.profile == 'iphone-light'
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          def simctl(*args):
+              return subprocess.check_output(['xcrun', 'simctl', *args], text=True)
+          types = json.loads(simctl('list', 'devicetypes', '--json'))['devicetypes']
+          runtimes = json.loads(simctl('list', 'runtimes', '--json'))['runtimes']
+          print(json.dumps({'deviceTypes': types, 'runtimes': runtimes}, indent=2), flush=True)
+          ios = sorted((r for r in runtimes if r.get('isAvailable') and '.iOS-' in r['identifier']),
+                       key=lambda r: tuple(map(int, r['version'].split('.'))), reverse=True)
+          for model in ('iPhone 13 mini', 'iPhone SE (3rd generation)'):
+              matching = [d for d in types if d['name'] == model]
+              for device in matching:
+                  for runtime in ios:
+                      result = subprocess.run(['xcrun', 'simctl', 'create', model, device['identifier'], runtime['identifier']],
+                                              text=True, capture_output=True)
+                      if result.returncode:
+                          print(result.stderr, flush=True)
+                          continue
+                      udid = result.stdout.strip()
+                      print(f'Small-phone evidence: {model}, {runtime["identifier"]}, {udid}', flush=True)
+                      with open(os.environ['GITHUB_ENV'], 'a') as output:
+                          output.write(f'SAINT_LOOK_SIMULATOR_UDID={udid}\n')
+                      raise SystemExit(0)
+          raise SystemExit('No supported small iPhone/runtime pair; do not silently use a larger phone.')
+          PY
       - name: Real Simulator and local backend (controlled providers)
         env:
           TEST_SUITE: ${{ matrix.suite }}
@@ -181,7 +210,18 @@ jobs:
           proxy_pid=$!
           wait_for_health http://127.0.0.1:8788/health
           if [[ "$TEST_SUITE" == "visual" ]]; then
-            bash client-ios/scripts/test-visual-acceptance.sh
+            if [[ "$SAINT_LOOK_VISUAL_PROFILES" == "iphone-light" ]]; then
+              # Match the existing light-profile setup without its deliberate UDID reset.
+              export SAINT_LOOK_VISUAL_PROFILE=iphone-light
+              export SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/VisualAcceptanceTests
+              export SAINT_LOOK_SIMULATOR_FAMILY=iPhone
+              export SAINT_LOOK_UI_APPEARANCE=light
+              export SAINT_LOOK_UI_CONTENT_SIZE=large
+              export SAINT_LOOK_OBSERVE_VISUAL_STALLS=1
+              bash client-ios/scripts/test-simulator.sh
+            else
+              bash client-ios/scripts/test-visual-acceptance.sh
+            fi
             exit $?
           fi
           if [[ "$TEST_SUITE" == "outfits" ]]; then
