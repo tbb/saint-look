@@ -1176,8 +1176,18 @@ final class WardrobeFlowTests: XCTestCase {
             let visibleAction = app.buttons[identifier].firstMatch
             if identifier != "edit-item", !visibleAction.exists || !visibleAction.isHittable {
                 app.buttons["item-actions"].tap()
-                guard let action = app.buttons.matching(identifier: identifier).allElementsBoundByIndex.first(where: { $0.isHittable }) else {
-                    XCTFail("The item menu must offer \(identifier)")
+                let action = app.collectionViews.buttons.matching(identifier: identifier).firstMatch
+                var previousFrame: CGRect?
+                let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    guard action.exists, action.isHittable else { previousFrame = nil; return false }
+                    let frame = action.frame
+                    defer { previousFrame = frame }
+                    return !frame.isEmpty && previousFrame == frame
+                }, object: nil)
+                // Native menu entries can exist before presentation finishes. Wait
+                // for that one command rather than repeating an action with side effects.
+                guard XCTWaiter.wait(for: [ready], timeout: 5) == .completed else {
+                    XCTFail("The item menu must offer a stable, hittable \(identifier)")
                     throw InteractionError.buttonNotVisible(identifier)
                 }
                 action.tap()
