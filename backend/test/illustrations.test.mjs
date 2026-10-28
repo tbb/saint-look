@@ -66,6 +66,8 @@ test('single photo produces a separate transparent illustration with observed tr
   assert.equal((await (await server.request(`/v1/items/${photo.itemId}`)).json()).status, 'ready');
   assert.equal((await server.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}/ack`, { method: 'POST' })).status, 204);
   assert.equal((await server.request(ready.resultPath)).status, 410);
+  assert.equal((await server.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}`)).status, 410);
+  assert.equal((await requestIllustration(server, photo.itemId, input)).status, 410);
   assert.equal((await server.request(`/v1/items/${photo.itemId}/result`)).status, 200);
 });
 
@@ -220,20 +222,34 @@ test('ready illustration survives restart, expires after seven days, and old ack
   const config = { ...ordinary.env, ...fixture.env, TYPESAFE_API_KEY: ordinary.env.TYPESAFE_API_KEY, SAINT_LOOK_TEST_CLOCK_FILE: clock };
   const server = await env.launch(config);
   const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
-  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  const input = illustration(photo, { manualType: 'Худи', manualColors: ['Чёрный'] }); await requestIllustration(server, photo.itemId, input);
   const ready = await waitForIllustration(server, photo.itemId, input.operationId);
   await server.stop(); const restarted = await env.launch(config);
   assert.deepEqual(Buffer.from(await (await restarted.request(ready.resultPath)).arrayBuffer()), fixture.result);
   await writeFile(clock, JSON.stringify({ offsetMs: 8 * 24 * 60 * 60 * 1000 }));
   assert.equal((await restarted.request(ready.resultPath)).status, 410);
-  const expired = await (await restarted.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}`)).json();
-  assert.equal(expired.error, 'result_expired'); assert.equal(expired.effectiveFeatures, null);
+  const expired = await restarted.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}`);
+  assert.equal(expired.status, 410); assert.deepEqual(await expired.json(), { error: 'result_expired' });
+  assert.equal((await requestIllustration(restarted, photo.itemId, input)).status, 410);
   const refresh = { ...input, operationId: randomUUID(), revision: 2 };
   assert.equal((await requestIllustration(restarted, photo.itemId, refresh)).status, 202);
   const refreshed = await waitForIllustration(restarted, photo.itemId, refresh.operationId);
   assert.equal((await restarted.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}/ack`, { method: 'POST' })).status, 204);
   assert.equal((await restarted.request(refreshed.resultPath)).status, 200);
   assert.equal(fixture.calls.preparation.length, 2);
+});
+
+test('multicolor JEV observations use the five most confident canonical colors before generation', async t => {
+  const fixture = await illustrationFixture(t, { colors: { red: 0.80, black: 0.91, white: 0.99, blue: 0.75, green: 0.89, orange: 0.95 } });
+  const env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  const ready = await waitForIllustration(server, photo.itemId, input.operationId);
+  assert.deepEqual(ready.observedFeatures.colors, ['Белый', 'Оранжевый', 'Чёрный', 'Зелёный', 'Красный']);
+  assert.deepEqual(ready.effectiveFeatures.colors, ready.observedFeatures.colors);
+  const prompt = JSON.parse(fixture.calls.generation[0].body).prompt;
+  const effective = JSON.parse(prompt.slice(prompt.indexOf('{')));
+  assert.deepEqual(effective.colors, ['Белый', 'Оранжевый', 'Чёрный', 'Зелёный', 'Красный']);
 });
 
 test('fal retrieval refusal after acceptance is unknown and never permits a second generation submission', async t => {

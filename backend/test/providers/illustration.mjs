@@ -31,7 +31,8 @@ export async function illustrationFixture(t, handlers = {}) {
       if (stage === 'attributes') {
         const payload = JSON.parse(body);
         const answers = Object.fromEntries(Object.entries(payload.questions).map(([name, q]) => {
-          if (q.type === 'noul') return [name, { type: 'noul', noul: name === 'color_red' ? 0.99 : 0.01 }];
+          if (q.type === 'noul') return [name, { type: 'noul', noul: handlers.colors
+            ? (handlers.colors[name.slice(6)] ?? 0.01) : name === 'color_red' ? 0.99 : 0.01 }];
           const selected = name === 'suitability' ? 'suitable' : name === 'item_type' ? 't_shirt' : 'unknown';
           return [name, { type: 'choice', choice: selected, confidence: 1,
             probabilities: Object.fromEntries(Object.keys(q.criteria).map(key => [key, key === selected ? 1 : 0])) }];

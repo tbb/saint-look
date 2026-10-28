@@ -109,6 +109,7 @@ export function createIllustrations(database, env, retention) {
     if (!row || row.item_id !== itemId) throw new RequestError(404, 'not_found');
     const item = database.prepare('SELECT photo_version_id FROM items WHERE item_id=?').get(itemId);
     if (item?.photo_version_id !== row.photo_version_id || current(itemId)?.operation_id !== operationId) throw new RequestError(409, 'operation_superseded');
+    if (row.retention_state !== 'active') throw new RequestError(410, row.error);
     return row;
   }
   function response(row) {

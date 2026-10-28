@@ -81,7 +81,8 @@ export function createIllustrationProvider(env) {
       try {
         const parsed = featureAnswer(answer, request), { item_type, colors = [], ...traits } = parsed.features;
         return { version: parsed.version, type: illustrationTaxonomy.types.find(type => type.id === item_type)?.label || 'Не определён',
-          colors: colors.map(id => illustrationTaxonomy.colors.find(color => color.id === id).label), traits };
+          colors: colors.sort((a, b) => parsed.evidence[`color_${b}`].probability - parsed.evidence[`color_${a}`].probability)
+            .slice(0, 5).map(id => illustrationTaxonomy.colors.find(color => color.id === id).label), traits };
       } catch (error) { throw new ProviderError(error.message === 'JEV item suitability not confirmed' ? 'photo_unclear' : 'invalid_provider_response'); }
     },
     async generate(photos, features, signal, recordReceipt, savedReceipt) {
