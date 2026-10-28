@@ -10,6 +10,7 @@ on:
       - 'client-ios/**'
       - 'docs/api/**'
       - '.github/workflows/**'
+      - '!.github/workflows/fitting-experiment.yml'
       - 'scripts/deploy/**'
       - 'docs/deployment.md'
       - 'fly.toml'
@@ -59,7 +60,7 @@ jobs:
           import os, subprocess
           base, head = os.environ['BASE_SHA'], os.environ['HEAD_SHA']
           paths = subprocess.check_output(['git', 'diff', '--name-only', base, head], text=True).splitlines() if base and head else []
-          common = not base or any(p.startswith(('shared/', 'docs/api/', '.github/workflows/')) for p in paths)
+          common = not base or any(p != '.github/workflows/fitting-experiment.yml' and p.startswith(('shared/', 'docs/api/', '.github/workflows/')) for p in paths)
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               for name, prefix in [('backend', 'backend/'), ('ios', 'client-ios/')]:
                   needed = common or any(p.startswith(prefix) for p in paths)
