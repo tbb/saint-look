@@ -224,7 +224,7 @@ final class VisualAcceptanceTests: XCTestCase {
         case "Собрать лук", "Изменить лук": query = app.scrollViews.containing(.textField, identifier: "outfit-name")
         case "Голова", "Тело", "Низ", "Обувь": query = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-'"))
         case "Луки": query = app.scrollViews.containing(NSPredicate(format: "identifier == 'create-first-outfit' OR identifier BEGINSWITH 'outfit-card-'"))
-        case "Лук": query = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH 'repair-slot-'"))
+        case "Лук": query = app.scrollViews.containing(NSPredicate(format: "identifier == 'fitting-canvas' OR identifier BEGINSWITH 'repair-slot-'"))
         default: query = app.scrollViews.containing(.button, identifier: "edit-item")
         }
         // A native Form's CollectionView is a layout/scroll surface, not a tappable control.
@@ -249,7 +249,7 @@ final class VisualAcceptanceTests: XCTestCase {
         let bar = try navigationBar(app)
         let container = try scrollSurface(in: app, bar: bar)
         var last = ""
-        for _ in 0..<7 {
+        for attempt in 0...7 {
             var viewport = container.frame.intersection(app.frame)
             if bar.frame.intersects(viewport) { viewport.origin.y = max(viewport.minY, bar.frame.maxY); viewport.size.height = max(0, container.frame.intersection(app.frame).maxY - viewport.minY) }
             let blockers = app.tabBars.allElementsBoundByIndex + app.keyboards.allElementsBoundByIndex
@@ -265,6 +265,8 @@ final class VisualAcceptanceTests: XCTestCase {
             // Requiring the center also works for content taller than the safe viewport.
             let tapCenter = CGPoint(x: frame.midX, y: frame.midY)
             if element.exists && element.isHittable && viewport.contains(tapCenter) { return }
+            // Inspect the result of the final bounded drag before declaring it unreachable.
+            if attempt == 7 { break }
             let direction: CGFloat = element.exists ? (frame.midY < viewport.midY ? 1 : -1) : (towardTop ? 1 : -1)
             let distance = min(viewport.height * 0.65, element.exists ? max(40, abs(viewport.midY - frame.midY)) : viewport.height * 0.65)
             let y = direction < 0 ? viewport.maxY - 12 : viewport.minY + 12
