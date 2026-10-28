@@ -46,7 +46,7 @@ export async function loadPlan(path) {
   if (template.length > 1024 * 1024) throw new Error('Template too large');
   const templatePng = await sharp(template, { limitInputPixels: 16_000_000, failOn: 'error' })
     .resize({ width: 1024, height: 1024, fit: 'contain', background: '#ffffff' }).flatten({ background: '#ffffff' }).png().toBuffer();
-  const runtimeFiles = ['trial.mjs', 'trial-plan.mjs', 'trial-http.mjs', 'trial-ledger.mjs', 'trial-photoroom.mjs', 'trial-jev.mjs', 'trial-report.mjs', '../../backend/src/jev.mjs', '../../backend/package-lock.json', '../../shared/wardrobe-taxonomy.json'];
+  const runtimeFiles = ['trial.mjs', 'trial-plan.mjs', 'trial-http.mjs', 'trial-ledger.mjs', 'trial-photoroom.mjs', 'trial-jev.mjs', 'trial-report.mjs', 'manual-trial.mjs', 'trial-admission.mjs', '../../backend/src/jev.mjs', '../../backend/package-lock.json', '../../shared/wardrobe-taxonomy.json'];
   const runtimeSha256 = sha256(JSON.stringify(await Promise.all(runtimeFiles.map(async file => [file, sha256(await readFile(new URL(file, import.meta.url)))]))));
   const planSha256 = sha256(JSON.stringify({ runtimeSha256, rawSha256: sha256(raw), hashes, templateSha256: sha256(template), runnerVersion: 'fitting-trial-v2-photoroom-sandbox', frameVersion: 'square-letterbox-1024-v1', renderedTemplateSha256: sha256(templatePng) }));
   const forecast = { preparation: new Set(hashes.map(h => h.sha256)).size, attributes: inputs.length, generation: inputs.length * 2, segmentation: inputs.length * 2 };

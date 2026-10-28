@@ -11,6 +11,7 @@ on:
       - 'scripts/deploy/synthetic.png'
       - 'docs/research/fitting-*.md'
       - '.github/workflows/fitting-experiment.yml'
+      - '.github/workflows/fitting-live-trial.yml'
   push:
     branches: [main]
     paths:
@@ -21,6 +22,7 @@ on:
       - 'shared/wardrobe-taxonomy.json'
       - 'scripts/deploy/synthetic.png'
       - '.github/workflows/fitting-experiment.yml'
+      - '.github/workflows/fitting-live-trial.yml'
   workflow_dispatch:
 
 permissions:
