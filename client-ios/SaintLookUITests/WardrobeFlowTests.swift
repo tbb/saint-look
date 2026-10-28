@@ -254,6 +254,41 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testPreparedPhotosSurviveAcknowledgementAndAreReusedForExplicitUpdates() async throws {
+        _ = try await providerControl(["illustrationMode": "success"])
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        try openFirstItem(in: app)
+        XCTAssertTrue(app.staticTexts["illustration-saved"].waitForExistence(timeout: 30))
+        let firstAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 1, timeout: 30)
+        XCTAssertTrue(firstAcknowledged)
+        let initial = try await providerControl()
+        XCTAssertEqual(initial["illustrationPreparationCalls"] as? Int, 1)
+        app.terminate()
+
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 1, pending: 0)
+        try tapVisibleButton("edit-item", in: restored)
+        try chooseType("hoodie", in: restored)
+        restored.buttons["save-item-edits"].tap()
+        try tapVisibleButton("generate-illustration", in: restored)
+        let secondAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 2, timeout: 30)
+        XCTAssertTrue(secondAcknowledged)
+        let reused = try await providerControl()
+        XCTAssertEqual(reused["illustrationPreparationCalls"] as? Int, 1, "Manual edits reuse the prepared source even after server ack cleanup and app restart")
+
+        try tapVisibleButton("illustration-sources", in: restored)
+        restored.buttons["add-demo-detail-photo"].tap()
+        restored.buttons["save-illustration-sources"].tap()
+        try tapVisibleButton("generate-illustration", in: restored)
+        let thirdAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 3, timeout: 30)
+        XCTAssertTrue(thirdAcknowledged)
+        let added = try await providerControl()
+        XCTAssertEqual(added["illustrationPreparationCalls"] as? Int, 2, "Only the added photo needs preparation")
+    }
+
+    @MainActor
     func testIllustrationManualEditsAreExplicitAndFailedUpdateKeepsPriorImage() async throws {
         _ = try await providerControl(["illustrationMode": "success"])
         let app = launch(reset: true, baseURL: testURL)

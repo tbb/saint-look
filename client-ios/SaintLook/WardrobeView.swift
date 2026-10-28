@@ -728,7 +728,7 @@ private struct IllustrationSourcesView: View {
                         #if DEBUG
                         if ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1",
                            ProcessInfo.processInfo.environment["SAINT_LOOK_VISUAL_SCENARIO"] == nil {
-                            Button("Добавить тестовый ракурс") { add(PhotoData.demoPhoto()) }
+                            Button("Добавить тестовый ракурс") { add(PhotoData.demoPhoto(replacement: true)) }
                                 .accessibilityIdentifier("add-demo-detail-photo")
                         }
                         #endif

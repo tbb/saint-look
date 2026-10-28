@@ -30,6 +30,7 @@ struct WardrobeItem: Codable, Identifiable {
     var illustrationResult: IllustrationResult?
     var automaticallyIllustrate = false
     var additionalPhotos: [IllustrationSourcePhoto] = []
+    var preparedPhotos: [IllustrationPreparedPhoto] = []
 
     init(id: UUID, operationID: UUID, photoVersionID: UUID) {
         self.id = id
@@ -41,7 +42,7 @@ struct WardrobeItem: Codable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, operationID, photoVersionID, status, uploadStarted, type, colors, errorMessage, mode, manualType, manualColors
         case revision, action, originalFilename, uploadFilename, resultFilename, resultMode, errorCode
-        case sourceSetVersionID, illustration, illustrationResult, automaticallyIllustrate, additionalPhotos
+        case sourceSetVersionID, illustration, illustrationResult, automaticallyIllustrate, additionalPhotos, preparedPhotos
     }
 
     init(from decoder: Decoder) throws {
@@ -50,6 +51,7 @@ struct WardrobeItem: Codable, Identifiable {
         operationID = try values.decode(UUID.self, forKey: .operationID)
         photoVersionID = try values.decode(UUID.self, forKey: .photoVersionID)
         sourceSetVersionID = try values.decodeIfPresent(UUID.self, forKey: .sourceSetVersionID) ?? photoVersionID
+        preparedPhotos = try values.decodeIfPresent([IllustrationPreparedPhoto].self, forKey: .preparedPhotos) ?? []
         additionalPhotos = try values.decodeIfPresent([IllustrationSourcePhoto].self, forKey: .additionalPhotos) ?? []
         illustration = try values.decodeIfPresent(IllustrationRequest.self, forKey: .illustration)
         illustrationResult = try values.decodeIfPresent(IllustrationResult.self, forKey: .illustrationResult)
@@ -192,6 +194,7 @@ struct IllustrationRequest: Codable {
     let manualColors: [String]?
     var status: WardrobeItem.Status = .pending
     var submitted = false
+    var readyForDelivery: Bool? = nil
     var error: String?
     var processing: [String: String] = [:]
 }
@@ -219,6 +222,7 @@ struct IllustrationResponse: Codable {
     let geometryVersion: String
     let resultPath: String?
     let error: String?
+    var preparedSources: [IllustrationPreparedSource]? = nil
 
     func validate(for item: WardrobeItem, request: IllustrationRequest) throws {
         guard itemId == item.id, operationId == request.operationID,
@@ -229,7 +233,10 @@ struct IllustrationResponse: Codable {
             throw ClientError.invalidResponse
         }
         if status == .ready {
-            guard let features = effectiveFeatures, let observed = observedFeatures, features.isValid, observed.isValid,
+            let expectedSources = Set([item.photoVersionID] + item.additionalPhotos.map(\.id))
+            guard let preparedSources, preparedSources.count == expectedSources.count,
+                  Set(preparedSources.map(\.photoId)) == expectedSources,
+                  let features = effectiveFeatures, let observed = observedFeatures, features.isValid, observed.isValid,
                   request.manualType == nil || features.type == request.manualType,
                   request.manualColors == nil || features.colors == request.manualColors else { throw ClientError.invalidResponse }
         }
@@ -255,6 +262,7 @@ enum IllustrationFailure {
     static func message(for code: String) -> String {
         switch code {
         case "illustration_unavailable": return "Создание иллюстраций пока недоступно. Фото и вырезка сохранены."
+        case "prepared_source_missing": return "Не удалось прочитать сохранённую вырезку исходного фото. Замените этот снимок и повторите обновление."
         case "processing_in_progress": return "Предыдущая подготовка ещё идёт. Повторите обновление позже."
         case "source_changed": return "Фото или признаки изменились. Создайте иллюстрацию для новой версии."
         case "processing_unknown": return "Исход генерации неизвестен. Автоматический повтор остановлен. Предыдущее изображение сохранено."
@@ -277,4 +285,20 @@ struct IllustrationPhotoDraft: Identifiable {
     var role: String
     let original: Data?
     let saved: IllustrationSourcePhoto?
+}
+
+
+struct IllustrationPreparedSource: Codable {
+    let photoId: UUID
+    let preparedPath: String
+}
+
+struct IllustrationPreparedPhoto: Codable {
+    let photoID: UUID
+    let filename: String
+    let sourceDigest: String
+    let preparedDigest: String
+    let modelVersion: String
+    let templateVersion: String
+    let geometryVersion: String
 }

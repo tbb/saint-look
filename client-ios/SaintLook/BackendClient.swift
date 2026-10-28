@@ -103,8 +103,9 @@ struct BackendClient {
         ]
         if let type = intent.manualType { payload["manualType"] = type }
         if let colors = intent.manualColors { payload["manualColors"] = colors }
-        let data = try await send(request(path: "v1/items/\(item.directoryName)/illustrations", method: "POST",
-                                          body: JSONSerialization.data(withJSONObject: payload)))
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        guard body.count <= 16 * 1024 * 1024 else { throw ClientError.oversizedPhoto }
+        let data = try await send(request(path: "v1/items/\(item.directoryName)/illustrations", method: "POST", body: body))
         let response = try JSONDecoder().decode(IllustrationResponse.self, from: data)
         try response.validate(for: item, request: intent)
         return response
@@ -121,6 +122,14 @@ struct BackendClient {
         try response.validate(for: item, request: intent)
         let path = "v1/items/\(item.directoryName)/illustrations/\(intent.operationID.uuidString.lowercased())/result"
         guard response.status == .ready, response.resultPath == "/" + path else { throw ClientError.invalidResponse }
+        return try await send(request(path: path))
+    }
+
+    func preparedIllustrationSource(_ item: WardrobeItem, request intent: IllustrationRequest,
+                                    response: IllustrationResponse, source: IllustrationPreparedSource) async throws -> Data {
+        try response.validate(for: item, request: intent)
+        let path = "v1/items/\(item.directoryName)/illustrations/\(intent.operationID.uuidString.lowercased())/sources/\(source.photoId.uuidString.lowercased())/prepared"
+        guard response.status == .ready, source.preparedPath == "/" + path else { throw ClientError.invalidResponse }
         return try await send(request(path: path))
     }
 
