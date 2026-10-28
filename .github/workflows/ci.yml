@@ -45,6 +45,7 @@ jobs:
     outputs:
       backend: ${{ steps.paths.outputs.backend }}
       ios: ${{ steps.paths.outputs.ios }}
+      ios_matrix: ${{ steps.paths.outputs.ios_matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,9 +55,11 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          IOS_SUITE: ${{ inputs.ios_suite || 'all' }}
+          VISUAL_PROFILES: ${{ inputs.visual_profiles || 'all' }}
         run: |
           python3 - <<'PY'
-          import os, subprocess
+          import json, os, subprocess
           base, head = os.environ['BASE_SHA'], os.environ['HEAD_SHA']
           paths = subprocess.check_output(['git', 'diff', '--name-only', base, head], text=True).splitlines() if base and head else []
           common = not base or any(p.startswith(('shared/', 'docs/api/', '.github/workflows/')) for p in paths)
@@ -64,6 +67,19 @@ jobs:
               for name, prefix in [('backend', 'backend/'), ('ios', 'client-ios/')]:
                   needed = common or any(p.startswith(prefix) for p in paths)
                   output.write(f'{name}={str(needed).lower()}\n')
+              suite = os.environ['IOS_SUITE']
+              selected_profile = os.environ['VISUAL_PROFILES']
+              profiles = ['iphone-light', 'iphone-dark', 'iphone-max-text', 'ipad-light']
+              if suite not in ('all', 'wardrobe', 'outfits', 'visual', 'camera'):
+                  raise SystemExit('Unknown iOS suite')
+              if selected_profile not in ['all', *profiles]:
+                  raise SystemExit('Unknown visual profile')
+              suites = ['wardrobe', 'outfits', 'visual'] if suite == 'all' else [suite]
+              visual_profiles = profiles if selected_profile == 'all' else [selected_profile]
+              entries = [dict(suite=current_suite, profile=profile)
+                         for current_suite in suites
+                         for profile in (visual_profiles if current_suite == 'visual' else ['all'])]
+              output.write('ios_matrix=' + json.dumps(dict(include=entries), separators=(',', ':')) + '\n')
           PY
 
   backend:
@@ -85,17 +101,16 @@ jobs:
       - run: npm --prefix backend test
 
   ios:
-    name: ${{ matrix.suite == 'wardrobe' && 'ios' || format('ios-{0}', matrix.suite) }}
+    name: ${{ matrix.suite == 'wardrobe' && 'ios' || matrix.suite == 'visual' && format('ios-visual-{0}', matrix.profile) || format('ios-{0}', matrix.suite) }}
     if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.ios == 'true'
     needs: changes
     strategy:
       fail-fast: false
-      matrix:
-        suite: ${{ fromJSON(inputs.ios_suite == 'camera' && '["camera"]' || inputs.ios_suite == 'outfits' && '["outfits"]' || inputs.ios_suite == 'wardrobe' && '["wardrobe"]' || inputs.ios_suite == 'visual' && '["visual"]' || '["wardrobe","outfits","visual"]') }}
+      matrix: ${{ fromJSON(needs.changes.outputs.ios_matrix) }}
     runs-on: macos-26
     # Wardrobe includes cold Simulator startup (~9 min observed), 24 checks and manifest smoke.
-    # Keep a bounded 40 min for that job; outfits and four visual profiles retain their own caps.
-    timeout-minutes: ${{ matrix.suite == 'visual' && 90 || matrix.suite == 'outfits' && 60 || 40 }}
+    # Each visual profile has its own runner and a bounded 40 min, including cold startup.
+    timeout-minutes: ${{ matrix.suite == 'outfits' && 60 || 40 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -114,7 +129,7 @@ jobs:
       - name: Real Simulator and local backend (controlled providers)
         env:
           TEST_SUITE: ${{ matrix.suite }}
-          SAINT_LOOK_VISUAL_PROFILES: ${{ inputs.visual_profiles || 'all' }}
+          SAINT_LOOK_VISUAL_PROFILES: ${{ matrix.profile }}
           SAINT_LOOK_UI_TEST_ONLY: ${{ matrix.suite == 'outfits' && 'SaintLookUITests/OutfitFlowTests' || 'SaintLookUITests/WardrobeFlowTests' }}
           NODE_ENV: test
           SAINT_LOOK_TEST_CLOCK_FILE: ${{ runner.temp }}/saint-look-clock.json
@@ -205,7 +220,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-ui-video-${{ matrix.suite }}
+          name: simulator-ui-video-${{ matrix.suite }}${{ matrix.suite == 'visual' && format('-{0}', matrix.profile) || '' }}
           path: client-ios/build/videos/*.mp4
           if-no-files-found: warn
           retention-days: 7
@@ -227,7 +242,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-screenshots-${{ matrix.suite }}
+          name: simulator-screenshots-${{ matrix.suite }}${{ matrix.suite == 'visual' && format('-{0}', matrix.profile) || '' }}
           path: client-ios/build/screenshots
           if-no-files-found: warn
           retention-days: 7
@@ -235,7 +250,7 @@ jobs:
         if: always() && matrix.suite == 'visual'
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-stall-diagnostics-visual
+          name: simulator-stall-diagnostics-visual-${{ matrix.profile }}
           path: client-ios/build/visual-stall-diagnostics
           if-no-files-found: warn
           retention-days: 7
@@ -243,7 +258,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-results-${{ matrix.suite }}
+          name: simulator-results-${{ matrix.suite }}${{ matrix.suite == 'visual' && format('-{0}', matrix.profile) || '' }}
           path: client-ios/build/*.xcresult
           if-no-files-found: warn
           retention-days: 7
