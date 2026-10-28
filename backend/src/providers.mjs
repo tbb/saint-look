@@ -16,7 +16,7 @@ function checkResponse(response) {
   throw new ProviderError('provider_rejected');
 }
 
-async function exchange(url, options, signal, timeout, limit) {
+export async function exchange(url, options, signal, timeout, limit) {
   try {
     const response = await fetch(url, { ...options, redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(timeout)]) });
     checkResponse(response);
