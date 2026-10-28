@@ -61,11 +61,17 @@ jobs:
           if (u.protocol !== 'https:' || u.username || u.password || u.pathname !== '/' || u.search || u.hash) throw new Error('Configure an HTTPS dev origin.');
           JS
       - name: Verify exact main CI and prepare source
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           SELECTED_SHA: ${{ inputs.revision }}
         run: |
           node scripts/deploy/prepare-release.mjs "$SELECTED_SHA" "$RUNNER_TEMP/release" > "$RUNNER_TEMP/release-proof.json"
+          node - <<'JS'
+          const fs = require('node:fs');
+          const proof = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/release-proof.json', 'utf8'));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `data_version=${proof.dataVersion}\n`);
+          JS
       - name: Install pinned Fly CLI
         run: |
           mkdir -p "$RUNNER_TEMP/fly-bin"
@@ -97,6 +103,7 @@ jobs:
           SAINT_LOOK_DEV_OWNER_TOKEN: ${{ secrets.SAINT_LOOK_DEV_OWNER_TOKEN }}
           SAINT_LOOK_EXPECTED_REVISION: ${{ steps.upload.outputs.revision }}
           SAINT_LOOK_EXPECTED_DEPLOYMENT_ID: ${{ steps.upload.outputs.deployment_id }}
+          SAINT_LOOK_EXPECTED_DATA_VERSION: ${{ steps.release.outputs.data_version }}
         run: node scripts/deploy/probe.mjs health
       - name: Record deployment identity
         env:

@@ -22,6 +22,8 @@ try {
   const base = origin();
   const revision = env.SAINT_LOOK_EXPECTED_REVISION;
   const deploymentId = env.SAINT_LOOK_EXPECTED_DEPLOYMENT_ID;
+  const dataVersion = Number(env.SAINT_LOOK_EXPECTED_DATA_VERSION || 1);
+  if (![1, 2].includes(dataVersion)) throw new Error('Unsupported expected data version.');
   if (!/^[a-f0-9]{40}$/.test(revision || '') || !deploymentId) throw new Error('Expected release identity is incomplete.');
   const timeout = env.NODE_ENV === 'test' ? Number(env.SAINT_LOOK_PROBE_TIMEOUT_MS || 10000) : 600000;
   if (!Number.isSafeInteger(timeout) || timeout < 50 || timeout > 600000) throw new Error('Invalid probe timeout.');
@@ -31,7 +33,7 @@ try {
     try {
       const response = await fetch(base + '/health', { redirect: 'error', signal: AbortSignal.timeout(5000) });
       const health = response.ok ? await response.json() : null;
-      if (health?.status === 'ok' && health.mode === expectedMode && health.revision === revision && health.dataVersion === 1 && health.deploymentId === deploymentId) {
+      if (health?.status === 'ok' && health.mode === expectedMode && health.revision === revision && health.dataVersion === dataVersion && health.deploymentId === deploymentId) {
         ready = true; break;
       }
     } catch { /* The existing Machine may restart while the new version is deployed. */ }
