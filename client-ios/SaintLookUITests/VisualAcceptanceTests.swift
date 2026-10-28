@@ -165,6 +165,23 @@ final class VisualAcceptanceTests: XCTestCase {
     }
 
     @MainActor
+    private func createFirstOutfit(in app: XCUIApplication) throws {
+        let createFirst = app.buttons["create-first-outfit"]
+        let outfitsBar = try navigationBar(app)
+        try requireEqual(outfitsBar.identifier, "Луки")
+        let overlays = app.tabBars.allElementsBoundByIndex + app.keyboards.allElementsBoundByIndex
+        // ContentUnavailableView has no ScrollView when its contents already fit (iPad).
+        let creationIsVisible = createFirst.exists && createFirst.isHittable
+            && app.frame.contains(createFirst.frame) && createFirst.frame.minY >= outfitsBar.frame.maxY
+            && !overlays.contains { $0.exists && $0.frame.intersects(createFirst.frame) }
+        if creationIsVisible {
+            try nativeTap(createFirst, in: app)
+        } else {
+            try tap(createFirst, in: app) // Maximum text still exercises bounded native scrolling.
+        }
+    }
+
+    @MainActor
     private func slot(_ zone: String, in app: XCUIApplication) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "outfit-slot-\(zone)-")).firstMatch
     }
@@ -434,7 +451,7 @@ final class VisualAcceptanceTests: XCTestCase {
 
         let fallback = try launch("ready-four")
         try selectTab("Луки", in: fallback)
-        try tap(fallback.buttons["create-first-outfit"], in: fallback)
+        try createFirstOutfit(in: fallback)
         try tap(slot("body", in: fallback), in: fallback)
         try choose(0, in: fallback)
         let explanation = fallback.staticTexts["fitting-missing-illustration"]
@@ -482,19 +499,7 @@ final class VisualAcceptanceTests: XCTestCase {
         try nativeTap(app.buttons["cancel-item-edits"], in: app)
         try back(app)
         try selectTab("Луки", in: app)
-        let createFirst = app.buttons["create-first-outfit"]
-        let outfitsBar = try navigationBar(app)
-        try requireEqual(outfitsBar.identifier, "Луки")
-        let overlays = app.tabBars.allElementsBoundByIndex + app.keyboards.allElementsBoundByIndex
-        // ContentUnavailableView has no ScrollView when its contents already fit (iPad).
-        let creationIsVisible = createFirst.exists && createFirst.isHittable
-            && app.frame.contains(createFirst.frame) && createFirst.frame.minY >= outfitsBar.frame.maxY
-            && !overlays.contains { $0.exists && $0.frame.intersects(createFirst.frame) }
-        if creationIsVisible {
-            try nativeTap(createFirst, in: app)
-        } else {
-            try tap(createFirst, in: app) // Maximum text still exercises bounded native scrolling.
-        }
+        try createFirstOutfit(in: app)
         try waitVisible(app.buttons["cancel-outfit"], in: app)
         try tap(slot("body", in: app), in: app)
         try choose(0, in: app)
