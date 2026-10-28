@@ -393,13 +393,13 @@ struct OutfitEditorView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if let message = errorMessage ?? saveExplanation {
+                    if errorMessage == nil, let message = saveExplanation {
                         Text(message)
                             .font(.footnote)
-                            .foregroundStyle(errorMessage == nil ? Color.secondary : Color.red)
+                            .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .accessibilityIdentifier(errorMessage == nil ? "outfit-save-explanation" : "outfit-save-error")
+                            .accessibilityIdentifier("outfit-save-explanation")
                     }
                     fittingPreview
                     TextField("Название — необязательно", text: $draft.name)
@@ -441,6 +441,19 @@ struct OutfitEditorView: View {
                 .frame(maxWidth: .infinity)
             }
             .background(SaintLookStyle.canvas)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(.bar)
+                        .accessibilityIdentifier("outfit-save-error")
+                }
+            }
             .navigationTitle(editingExisting ? "Изменить лук" : "Собрать лук")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { editorToolbar }
