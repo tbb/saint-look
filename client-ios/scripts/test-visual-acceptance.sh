@@ -27,7 +27,26 @@ for profile in "${profiles[@]}"; do
     iphone-light) export SAINT_LOOK_RECORD_VIDEO=1 ;;
     iphone-dark) export SAINT_LOOK_UI_APPEARANCE=dark ;;
     iphone-max-text) export SAINT_LOOK_UI_CONTENT_SIZE=accessibility-extra-extra-extra-large ;;
-    ipad-light) export SAINT_LOOK_SIMULATOR_FAMILY=iPad ;;
+    ipad-light)
+      export SAINT_LOOK_SIMULATOR_FAMILY=iPad
+      # Temporary diagnostic: reproduce only retained booted-device load, not prior tests.
+      mkdir -p "$root/client-ios/build"
+      xcrun simctl list devices available --json > "$root/client-ios/build/ipad53-before-devices.json"
+      retained_iphone="$(python3 - "$root/client-ios/build/ipad53-before-devices.json" <<'PYTHON'
+import json, sys
+runtime = "com.apple.CoreSimulator.SimRuntime.iOS-26-4"
+devices = json.load(open(sys.argv[1]))["devices"].get(runtime, [])
+matches = [device for device in devices if device["name"] == "iPhone 17 Pro" and device.get("isAvailable")]
+assert len(matches) == 1, "Expected one available iPhone 17 Pro on iOS 26.4"
+assert matches[0]["state"] == "Shutdown", "Probe requires a previously shut-down iPhone"
+print(matches[0]["udid"])
+PYTHON
+      )"
+      echo "[DEBUG-ipad53] Retaining booted iPhone 17 Pro, iOS 26.4, $retained_iphone; no app installed or launched"
+      xcrun simctl boot "$retained_iphone"
+      xcrun simctl bootstatus "$retained_iphone" -b
+      xcrun simctl list devices available --json > "$root/client-ios/build/ipad53-retained-devices.json"
+      ;;
   esac
   current=0
   bash "$root/client-ios/scripts/test-simulator.sh" || current=$?
