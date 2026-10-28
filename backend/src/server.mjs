@@ -53,10 +53,14 @@ function send(response, status, body) {
 const server = createServer(async (request, response) => {
   try {
     const path = new URL(request.url, 'http://localhost').pathname;
-    if (request.method === 'GET' && path === '/health') return send(response, 200, { status: 'ok', mode: provider.mode, revision, dataVersion: release.dataVersion,
+    if (request.method === 'GET' && path === '/health') return send(response, 200, { status: 'ok', mode: provider.mode, revision, dataVersion: release.dataVersion, illustrationAvailable: false,
       ...(process.env.SAINT_LOOK_DEPLOYMENT_ID ? { deploymentId: process.env.SAINT_LOOK_DEPLOYMENT_ID } : {}) });
     if (!authorized(request)) return send(response, 401, { error: 'unauthorized' });
     retention.sweep();
+    if (request.method === 'POST' && /^\/v1\/items\/[^/]+\/illustrations$/.test(path)) {
+      request.resume();
+      return send(response, 503, { error: 'illustration_unavailable' });
+    }
     const acknowledgement = path.match(/^\/v1\/items\/([^/]+)\/operations\/([^/]+)\/ack$/);
     if (request.method === 'POST' && acknowledgement) {
       acknowledge(database, acknowledgement[1].toLowerCase(), acknowledgement[2].toLowerCase());
