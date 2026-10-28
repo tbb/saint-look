@@ -626,7 +626,7 @@ final class WardrobeFlowTests: XCTestCase {
         app.buttons["add-demo-photo"].tap()
         await waitForSummary(app, ready: 1, pending: 0)
         let before = try await transportState()
-        try tapVisibleButton("delete-item", in: app)
+        try presentDeletionConfirmation(in: app)
         let cancel = app.alerts.buttons.matching(identifier: "cancel-delete-item").firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 5), "Deletion must wait for explicit confirmation")
         XCTAssertTrue(app.alerts.staticTexts["Вещь исчезнет из гардероба. В сохранённых луках её места останутся пустыми."].exists)
@@ -1140,6 +1140,33 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     private enum InteractionError: Error { case buttonNotVisible(String) }
+
+    @MainActor
+    private func presentDeletionConfirmation(in app: XCUIApplication) throws {
+        try openFirstItem(in: app)
+        app.navigationBars.buttons["item-actions"].tap()
+        let command = app.collectionViews.buttons.matching(identifier: "delete-item").firstMatch
+        var previousFrame: CGRect?
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard command.exists, command.isHittable else { previousFrame = nil; return false }
+            let frame = command.frame
+            defer { previousFrame = frame }
+            return !frame.isEmpty && previousFrame == frame
+        }, object: nil)
+        guard XCTWaiter.wait(for: [ready], timeout: 5) == .completed else {
+            XCTFail("The native item menu must present a stable, tappable deletion command")
+            throw InteractionError.buttonNotVisible("delete-item")
+        }
+        command.press(forDuration: 0.1)
+        let cancel = app.alerts.buttons.matching(identifier: "cancel-delete-item").firstMatch
+        // CI captured a centered short tap that left this menu open. Repeat only
+        // its confirmation presenter, once, while the same menu is still visible.
+        // An alert (including an unexpected one) prevents any second interaction.
+        if !cancel.waitForExistence(timeout: 1), !app.alerts.firstMatch.exists,
+           command.exists, command.isHittable {
+            command.press(forDuration: 0.1)
+        }
+    }
 
     @MainActor
     private func tapVisibleButton(_ identifier: String, in app: XCUIApplication) throws {
