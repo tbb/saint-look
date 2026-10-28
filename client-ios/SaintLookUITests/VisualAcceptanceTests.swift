@@ -69,7 +69,9 @@ final class VisualAcceptanceTests: XCTestCase {
     @MainActor
     private func waitVisible(_ element: XCUIElement, in app: XCUIApplication) throws {
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            element.exists && element.isHittable && !element.frame.isEmpty && app.frame.intersects(element.frame)
+            guard element.exists && element.isHittable else { return false }
+            let frame = element.frame
+            return !frame.isEmpty && app.frame.intersects(frame)
         }, object: element)
         guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
             diagnose("unavailable-native-control", app: app, detail: element.debugDescription)
