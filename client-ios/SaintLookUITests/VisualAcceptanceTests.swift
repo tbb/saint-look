@@ -194,6 +194,13 @@ final class VisualAcceptanceTests: XCTestCase {
         let failures = testRun?.failureCount ?? 0
         field.typeText(name)
         try requireEqual(testRun?.failureCount ?? 0, failures, "Native text entry failed")
+        // Native typing can return while characters are still arriving. Wait without typing again.
+        let inputReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", name), object: field)
+        guard XCTWaiter.wait(for: [inputReady], timeout: 15) == .completed else {
+            diagnose("native-name-input-incomplete", app: app, detail: "Expected: \(name); actual: \(field.value ?? "nil")")
+            try require(false, "Native text entry must reach the exact expected name before Done")
+            return
+        }
         try requireEqual(field.value as? String, name, "Native replacement must produce the exact name before Done")
         field.typeText("\n")
         try requireEqual(testRun?.failureCount ?? 0, failures, "Native Done action failed")
