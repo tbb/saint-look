@@ -682,6 +682,13 @@ private struct IllustrationSourcesView: View {
     @State private var showingPhotoSource = false
     @State private var importing = false
     @State private var error: String?
+    @State private var confirmingDiscard = false
+
+    private var dirty: Bool {
+        photos.count != item.additionalPhotos.count || zip(photos, item.additionalPhotos).contains {
+            $0.id != $1.id || $0.role != $1.role || $0.original != nil
+        }
+    }
 
     init(store: WardrobeStore, item: WardrobeItem) {
         self.store = store
@@ -736,8 +743,11 @@ private struct IllustrationSourcesView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                    Button {
+                        if dirty { confirmingDiscard = true } else { dismiss() }
+                    } label: { Image(systemName: "xmark") }
                         .accessibilityLabel("Отмена")
+                        .disabled(importing)
                         .accessibilityIdentifier("cancel-illustration-sources")
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -753,6 +763,13 @@ private struct IllustrationSourcesView: View {
             }
             .photoSourcePicker(isPresented: $showingPhotoSource, importing: $importing,
                                onPhoto: add, onError: { error = $0 })
+            .interactiveDismissDisabled(dirty || importing)
+            .alert("Отбросить изменения?", isPresented: $confirmingDiscard) {
+                Button("Отбросить изменения", role: .destructive) { dismiss() }
+                    .accessibilityIdentifier("discard-illustration-sources")
+                Button("Остаться", role: .cancel) { }
+                    .accessibilityIdentifier("continue-illustration-sources")
+            }
         }
     }
 
