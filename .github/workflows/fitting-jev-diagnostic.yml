@@ -1,0 +1,123 @@
+name: One admitted JEV response diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: 'Exact current main SHA with successful local fitting checks'
+        required: true
+        type: string
+      diagnostic_plan_sha256:
+        description: 'SHA256 of the committed jev-diagnostic-plan.json'
+        required: true
+        type: string
+      price_checked_at:
+        description: 'Actual UTC price/terms review, less than 24 hours old'
+        required: true
+        type: string
+      plan_reference:
+        description: 'Issue #45 plan comment; authorization is the explicit single-probe consent'
+        required: true
+        type: string
+      reviewed_terms:
+        description: 'Public input licenses and provider processing/retention terms reviewed'
+        required: true
+        default: false
+        type: boolean
+      approve_single_probe:
+        description: 'One additional JEV POST, conservative $0.10 reserve; preserve the prior unknown attempt'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fitting-trial-45
+  cancel-in-progress: false
+
+jobs:
+  reserve:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: npm --prefix backend ci --ignore-scripts
+      - name: Download the immutable original trial evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download 40677633168 --repo "$GITHUB_REPOSITORY" --name fitting-45-evidence --dir "$RUNNER_TEMP/fitting-45-original"
+      - name: Verify the baseline and reserve exactly one diagnostic
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/fitting/jev-diagnostic.mjs reserve scripts/fitting/jev-diagnostic-plan.json \
+            "$RUNNER_TEMP/fitting-45-original" "$RUNNER_TEMP/fitting-45-jev-diagnostic"
+      - name: Preserve the bound admission and prior evidence without provider credentials
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fitting-45-jev-diagnostic-admission
+          path: |
+            ${{ runner.temp }}/fitting-45-jev-diagnostic/admission.json
+            ${{ runner.temp }}/fitting-45-jev-diagnostic/prior-ledger.json
+            ${{ runner.temp }}/fitting-45-jev-diagnostic/prior-admission.json
+            ${{ runner.temp }}/fitting-45-jev-diagnostic/prior-approval.json
+            ${{ runner.temp }}/fitting-45-jev-diagnostic/prepared.png
+          if-no-files-found: error
+          retention-days: 7
+
+  probe:
+    needs: reserve
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: npm --prefix backend ci --ignore-scripts
+      - name: Retrieve this run's diagnostic admission
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name fitting-45-jev-diagnostic-admission --dir "$RUNNER_TEMP/fitting-45-jev-diagnostic"
+      - name: Send exactly one JEV request and capture only whitelisted evidence
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        run: node scripts/fitting/jev-diagnostic.mjs probe scripts/fitting/jev-diagnostic-plan.json "$RUNNER_TEMP/fitting-45-jev-diagnostic"
+      - name: Preserve the consumed receipt and diagnostic evidence even after failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fitting-45-jev-diagnostic-evidence
+          path: |
+            ${{ runner.temp }}/fitting-45-jev-diagnostic/admission.json
+            ${{ runner.temp }}/fitting-45-jev-diagnostic/prior-ledger.json
+            ${{ runner.temp }}/fitting-45-jev-diagnostic/prior-admission.json
+            ${{ runner.temp }}/fitting-45-jev-diagnostic/prior-approval.json
+            ${{ runner.temp }}/fitting-45-jev-diagnostic/prepared.png
+            ${{ runner.temp }}/fitting-45-jev-diagnostic/receipt.json
+            ${{ runner.temp }}/fitting-45-jev-diagnostic/response.json
+            ${{ runner.temp }}/fitting-45-jev-diagnostic/features.json
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 0

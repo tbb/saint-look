@@ -12,6 +12,7 @@ on:
       - 'docs/research/fitting-*.md'
       - '.github/workflows/fitting-experiment.yml'
       - '.github/workflows/fitting-live-trial.yml'
+      - '.github/workflows/fitting-jev-diagnostic.yml'
   push:
     branches: [main]
     paths:
@@ -23,6 +24,7 @@ on:
       - 'scripts/deploy/synthetic.png'
       - '.github/workflows/fitting-experiment.yml'
       - '.github/workflows/fitting-live-trial.yml'
+      - '.github/workflows/fitting-jev-diagnostic.yml'
   workflow_dispatch:
 
 permissions:

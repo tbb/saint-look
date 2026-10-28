@@ -69,6 +69,8 @@ node scripts/fitting/trial.mjs --live \
 
 ## Запросы, восстановление и остановка
 
+Для единственного измерительного JEV-запроса после остановки первой реальной пробы есть отдельный [диагностический допуск](JEV-DIAGNOSTIC.md). Он сохраняет прежний unknown/ledger, не продолжает этот runner и не снимает его reservation.
+
 Закреплены JEV1.14.0, Nano Banana Pro edit1K/1image и Photoroom sandbox без prompt. На каждом fal submit выставляются `X-Fal-No-Retry:1`, `x-app-fal-disable-fallback:true`, Store-IO0, expiry3600, start-timeout120. SDK, retries submit и fallback отсутствуют. Store-IO0 не означает отсутствие CDN или всех логов поставщика. Результаты скачиваются немедленно: queue/CDN retention ограничен.
 
 Для Photoroom используется закреплённый `https://sdk.photoroom.com/v1/segment`, multipart `image_file`, `format=png`, `despill=false`, `channels=rgba`, `size=full`, `crop=false`, без `bg_color`, и `x-api-key` только с sandbox-ключом. Preparation и финальная сегментация — отдельные учитываемые слоты по $0. Лимиты аккаунта (включая sandbox100/day и60/min) остаются внешними; quota/429 останавливает цепочку, не переключает её на live/другого поставщика.

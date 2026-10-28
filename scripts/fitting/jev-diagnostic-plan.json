@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "originalRunId": "40677633168",
+  "originalRevision": "617062d6170dcf879ff54843c5e62c22f118aa9f",
+  "originalPlanSha256": "f5f5148d73ce858716246da2dc903f6d8bdb3695bff3cbef915b8eaaf43f2de3",
+  "originalApprovalSha256": "f86bf76dbc5e0470aee0acf330531c8ab7ba3263f0e9048dc53eb2e8cc7be839",
+  "originalLedgerSha256": "47b0a4803ad201ebed576e39d4cea18f9c1e220320de075cbb8d48182088ef8d",
+  "originalAdmissionSha256": "02f99dde08c38531418c8cee28840f2c9a6fe01a92c8ee97eb1e5d8c7dbdbc5a",
+  "preparedFile": "afd8cb372a870998ee7a.png",
+  "preparedSha256": "7c4939ed1e7e2275e0d7713e4e25edc6a6a24bf0d95f73e3dcd16d6d7330f828",
+  "sourcePath": "scripts/fitting/fixtures/white-tee.png",
+  "sourceSha256": "fbc6e902898915c554187d961515c7db2505954c4e46d4a090528de4348cdb50",
+  "normalizedSourceSha256": "28bc1cd19057d3a41f7b16175cc6121e900b05220034fa678a991030031d06bc"
+}
