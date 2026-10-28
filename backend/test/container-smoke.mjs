@@ -4,6 +4,9 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+
+const manifest = JSON.parse(readFileSync(new URL('../release.json', import.meta.url)));
 
 const [image, revision] = process.argv.slice(2);
 if (!image || image.startsWith('-') || !/^[0-9a-f]{40}$/.test(revision || '')) throw new Error('Usage: container-smoke.mjs IMAGE FULL_SHA');
@@ -32,7 +35,7 @@ async function launch() {
         const health = await response.json();
         assert.equal(health.revision, revision);
         assert.equal(health.mode, 'demo');
-        assert.equal(health.dataVersion, 1);
+        assert.equal(health.dataVersion, manifest.dataVersion);
         return { name, url };
       }
     } catch (error) { if (error instanceof assert.AssertionError) throw error; }

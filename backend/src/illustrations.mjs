@@ -32,15 +32,24 @@ async function readInput(request, itemId) {
     if (!photo || typeof photo.id !== 'string' || !uuid.test(photo.id) || !['front', 'back', 'detail'].includes(photo.role)
       || typeof photo.imageBase64 !== 'string' || !photo.imageBase64.length
       || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(photo.imageBase64)) throw new RequestError(400, 'invalid_image');
-    const source = Buffer.from(photo.imageBase64, 'base64');
-    if (source.length > 5 * 1024 * 1024) throw new RequestError(413, 'image_too_large');
+    const raw = Buffer.from(photo.imageBase64, 'base64');
+    if (raw.length > 5 * 1024 * 1024) throw new RequestError(413, 'image_too_large');
+    let source;
     try {
-      const image = sharp(source, { limitInputPixels: 16_000_000, failOn: 'warning' });
+      const image = sharp(raw, { limitInputPixels: 16_000_000, failOn: 'warning' });
       const metadata = await image.metadata();
       if (metadata.format !== 'png' || (metadata.pages || 1) !== 1) throw new Error();
-      await image.stats();
+      source = await image.rotate().png().toBuffer();
     } catch { throw new RequestError(400, 'invalid_image'); }
-    photos.push({ id: photo.id.toLowerCase(), role: photo.role, digest: digest(source), source });
+    if (source.length > 5 * 1024 * 1024) throw new RequestError(413, 'image_too_large');
+    let prepared = null;
+    if (photo.preparedBase64 != null) {
+      if (typeof photo.preparedBase64 !== 'string' || !photo.preparedBase64.length
+        || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(photo.preparedBase64)) throw new RequestError(400, 'invalid_image');
+      prepared = Buffer.from(photo.preparedBase64, 'base64');
+      if (prepared.length > 10 * 1024 * 1024) throw new RequestError(413, 'image_too_large');
+    }
+    photos.push({ id: photo.id.toLowerCase(), role: photo.role, digest: digest(raw), source, normalizedDigest: digest(source), prepared });
   }
   if (new Set(photos.map(photo => photo.id)).size !== photos.length || photos[0].id !== input.photoVersionId.toLowerCase()) throw new RequestError(400, 'invalid_photos');
   const manualType = input.manualType ?? null, manualColors = input.manualColors ?? null;
@@ -66,8 +75,11 @@ export function createIllustrations(database, env, retention) {
     UNIQUE(item_id, revision));
     CREATE TABLE IF NOT EXISTS illustration_sources (
       item_id TEXT NOT NULL, photo_id TEXT NOT NULL, digest TEXT NOT NULL, source BLOB, prepared BLOB,
-      state TEXT NOT NULL DEFAULT 'pending', expires_at INTEGER NOT NULL, PRIMARY KEY(item_id,photo_id));
+      state TEXT NOT NULL DEFAULT 'pending', prepared_digest TEXT, prepared_versions TEXT,
+      expires_at INTEGER NOT NULL, PRIMARY KEY(item_id,photo_id));
     CREATE INDEX IF NOT EXISTS illustration_expiry ON illustrations(retention_state,expires_at);`);
+  const sourceColumns = new Set(database.prepare('PRAGMA table_info(illustration_sources)').all().map(column => column.name));
+  for (const column of ['prepared_digest', 'prepared_versions']) if (!sourceColumns.has(column)) database.exec(`ALTER TABLE illustration_sources ADD COLUMN ${column} TEXT`);
   const provider = createIllustrationProvider(env), timers = new Map(), abort = new AbortController();
   let closing = false;
   const get = id => database.prepare('SELECT * FROM illustrations WHERE operation_id=?').get(id);
@@ -104,6 +116,8 @@ export function createIllustrations(database, env, retention) {
       sourceSetVersionId: row.source_set_version_id, revision: row.revision, status: row.status, mode: row.mode,
       processing: parse(row.processing), observedFeatures: parse(row.observed), effectiveFeatures: parse(row.effective),
       manualType: row.manual_type, manualColors: parse(row.manual_colors), ...parse(row.versions),
+      preparedSources: row.status === 'ready' ? parse(row.photos).map(photo => ({ photoId: photo.id,
+        preparedPath: `/v1/items/${row.item_id}/illustrations/${row.operation_id}/sources/${photo.id}/prepared` })) : [],
       resultPath: row.status === 'ready' ? `/v1/items/${row.item_id}/illustrations/${row.operation_id}/result` : null, error: row.error };
   }
   function live(operationId) {
@@ -139,7 +153,8 @@ export function createIllustrations(database, env, retention) {
           database.prepare("UPDATE illustration_sources SET state='in_flight' WHERE item_id=? AND photo_id=?").run(row.item_id, input.id);
           const prepared = await provider.prepare(Buffer.from(source.source), abort.signal);
           if (!live(operationId)) return;
-          database.prepare("UPDATE illustration_sources SET prepared=?,state='done' WHERE item_id=? AND photo_id=?").run(prepared, row.item_id, input.id);
+          database.prepare("UPDATE illustration_sources SET prepared=?,prepared_digest=?,prepared_versions=?,state='done' WHERE item_id=? AND photo_id=?")
+            .run(prepared, digest(prepared), json(illustrationVersions), row.item_id, input.id);
           source = { ...source, prepared };
         }
         photos.push({ ...input, source: Buffer.from(source.source), prepared: Buffer.from(source.prepared) });
@@ -206,6 +221,8 @@ export function createIllustrations(database, env, retention) {
       const item = database.prepare('SELECT * FROM items WHERE item_id=?').get(input.itemId);
       if (!item) throw new RequestError(404, 'not_found');
       if (item.photo_version_id !== input.photoVersionId) throw new RequestError(409, 'operation_superseded');
+      const original = database.prepare('SELECT source_digest FROM operation_receipts WHERE item_id=? AND photo_version_id=? LIMIT 1').get(input.itemId, input.photoVersionId);
+      if (original && original.source_digest !== input.photos[0].normalizedDigest) throw new RequestError(409, 'identity_conflict');
       const known = get(input.operationId);
       if (known) {
         if (known.fingerprint !== input.fingerprint) throw new RequestError(409, 'identity_conflict');
@@ -229,9 +246,13 @@ export function createIllustrations(database, env, retention) {
         for (const photo of input.photos) {
           const known = database.prepare('SELECT * FROM illustration_sources WHERE item_id=? AND photo_id=?').get(input.itemId, photo.id);
           if (known && known.digest !== photo.digest) throw new RequestError(409, 'identity_conflict');
+          if (photo.prepared && (!known || known.prepared_digest !== digest(photo.prepared)
+            || known.prepared_versions !== json(illustrationVersions))) throw new RequestError(409, 'prepared_source_conflict');
           database.prepare(`INSERT INTO illustration_sources(item_id,photo_id,digest,source,expires_at) VALUES (?,?,?,?,?)
             ON CONFLICT(item_id,photo_id) DO UPDATE SET source=excluded.source,expires_at=excluded.expires_at`)
             .run(input.itemId, photo.id, photo.digest, photo.source, deadline);
+          if (photo.prepared) database.prepare("UPDATE illustration_sources SET prepared=?,state='done' WHERE item_id=? AND photo_id=?")
+            .run(photo.prepared, input.itemId, photo.id);
         }
         database.exec('COMMIT');
       } catch (error) { database.exec('ROLLBACK'); throw error; }
@@ -244,6 +265,16 @@ export function createIllustrations(database, env, retention) {
       if (row.retention_state !== 'active') throw new RequestError(410, row.error);
       if (row.status !== 'ready') throw new RequestError(409, 'not_ready');
       return Buffer.from(row.result);
+    },
+    prepared(itemId, operationId, photoId) {
+      const row = readable(itemId, operationId);
+      if (row.retention_state !== 'active') throw new RequestError(410, row.error);
+      if (row.status !== 'ready') throw new RequestError(409, 'not_ready');
+      const input = parse(row.photos).find(photo => photo.id === photoId);
+      if (!input) throw new RequestError(404, 'not_found');
+      const source = database.prepare('SELECT * FROM illustration_sources WHERE item_id=? AND photo_id=?').get(itemId, photoId);
+      if (!source?.prepared || source.digest !== input.digest) throw new RequestError(410, 'source_unavailable');
+      return Buffer.from(source.prepared);
     },
     acknowledge(itemId, operationId) {
       if (!uuid.test(itemId) || !uuid.test(operationId)) throw new RequestError(400, 'invalid_identity');

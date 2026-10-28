@@ -13,9 +13,11 @@ export async function illustrationFixture(t, handlers = {}) {
       const chunks = []; for await (const chunk of request) chunks.push(chunk);
       const body = Buffer.concat(chunks);
       if (request.url === '/fal-ai/nano-banana-pro/requests/fixture-1/status') {
+        if (handlers.status) { await handlers.status(request, response); return; }
         response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ status: 'COMPLETED' })); return;
       }
       if (request.url === '/fal-ai/nano-banana-pro/requests/fixture-1') {
+        if (handlers.result) { await handlers.result(request, response); return; }
         response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ images: [{ url: `${url}/result.png` }] })); return;
       }
       if (request.url === '/result.png') {

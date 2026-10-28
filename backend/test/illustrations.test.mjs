@@ -4,6 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { once } from 'node:events';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { providerFixture } from './providers/fixture.mjs';
 import { environment, photoRequest, upload, waitForItem } from './support.mjs';
 import { illustrationFixture } from './providers/illustration.mjs';
 
@@ -134,4 +137,144 @@ test('native test fixture explicitly enables illustrations without changing exis
   assert.equal(counters.illustrationGenerationCalls, 1);
   await control({ reset: true });
   assert.equal((await (await server.request('/health')).json()).illustrationAvailable, false);
+});
+
+test('an opaque generated canvas gets a separate final sandbox cutout without replay charges', async t => {
+  const fixture = await illustrationFixture(t, { opaque: true }), env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  const ready = await waitForIllustration(server, photo.itemId, input.operationId);
+  assert.equal(ready.processing.finalization, 'done');
+  const replay = await requestIllustration(server, photo.itemId, input);
+  assert.equal(replay.status, 200);
+  await server.request(ready.resultPath); await server.request(ready.resultPath);
+  assert.equal(fixture.calls.preparation.length, 1); assert.equal(fixture.calls.finalization.length, 1); assert.equal(fixture.calls.generation.length, 1);
+});
+
+test('generation refusal supports explicit retry with cached preparation while unknown outcomes cannot repeat paid work', async t => {
+  let outcome = 'quota';
+  const fixture = await illustrationFixture(t, { generation: async (request, response) => {
+    if (outcome === 'unknown') { response.destroy(); return; }
+    response.writeHead(429); response.end();
+  } });
+  const env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const first = illustration(photo); await requestIllustration(server, photo.itemId, first);
+  const failure = await waitForIllustration(server, photo.itemId, first.operationId, 'failed');
+  assert.equal(failure.error, 'provider_quota_exceeded');
+  assert.equal(failure.processing.generation, 'failed');
+  outcome = 'unknown';
+  const retry = { ...first, operationId: randomUUID(), revision: 2 };
+  assert.equal((await requestIllustration(server, photo.itemId, retry)).status, 202);
+  const unknown = await waitForIllustration(server, photo.itemId, retry.operationId, 'failed');
+  assert.equal(unknown.error, 'processing_unknown');
+  assert.equal(unknown.processing.generation, 'unknown');
+  assert.equal((await requestIllustration(server, photo.itemId, retry)).status, 200);
+  const unsafe = await requestIllustration(server, photo.itemId, { ...retry, operationId: randomUUID(), revision: 3 });
+  assert.equal(unsafe.status, 409); assert.equal((await unsafe.json()).error, 'processing_unknown');
+  assert.equal(fixture.calls.preparation.length, 1);
+  assert.equal(fixture.calls.generation.length, 2);
+  await server.stop(); const restarted = await env.launch(fixture.env);
+  assert.equal((await (await restarted.request(`/v1/items/${photo.itemId}/illustrations/${retry.operationId}`)).json()).error, 'processing_unknown');
+  assert.equal(fixture.calls.generation.length, 2);
+});
+
+test('delete during generation permanently removes illustrations and rejects late receipt, result and replay', async t => {
+  let release;
+  const fixture = await illustrationFixture(t, { generation: async (request, response) => {
+    await new Promise(resolve => { release = resolve; });
+    response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ request_id: 'fixture-1' }));
+  } });
+  const env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  await until(() => release);
+  assert.equal((await server.request(`/v1/items/${photo.itemId}`, { method: 'DELETE' })).status, 204);
+  release();
+  const path = `/v1/items/${photo.itemId}/illustrations/${input.operationId}`;
+  assert.equal((await server.request(path)).status, 410);
+  assert.equal((await server.request(`${path}/result`)).status, 410);
+  assert.equal((await requestIllustration(server, photo.itemId, input)).status, 410);
+  await server.stop(); const restarted = await env.launch(fixture.env);
+  assert.equal((await restarted.request(path)).status, 410);
+  assert.equal((await restarted.request(`${path}/ack`, { method: 'POST' })).status, 204);
+  assert.equal(fixture.calls.generation.length, 1);
+});
+
+test('crash during JEV preserves uncertain outcome and cannot automatically repeat its external request', async t => {
+  const fixture = await illustrationFixture(t, { attributes: async () => {} });
+  const env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  await until(() => fixture.calls.attributes.length === 1);
+  await server.stop('SIGKILL'); const restarted = await env.launch(fixture.env);
+  const failed = await waitForIllustration(restarted, photo.itemId, input.operationId, 'failed');
+  assert.equal(failed.processing.attributes, 'unknown'); assert.equal(failed.error, 'processing_unknown');
+  assert.equal((await requestIllustration(restarted, photo.itemId, input)).status, 200);
+  assert.equal(fixture.calls.attributes.length, 1); assert.equal(fixture.calls.generation.length, 0);
+});
+
+test('ready illustration survives restart, expires after seven days, and old acknowledgement does not clear an explicit refresh', async t => {
+  const ordinary = await providerFixture(t), fixture = await illustrationFixture(t), env = await environment(t);
+  const clock = join(env.directory, 'clock.json'); await writeFile(clock, JSON.stringify({ offsetMs: 0 }));
+  const config = { ...ordinary.env, ...fixture.env, TYPESAFE_API_KEY: ordinary.env.TYPESAFE_API_KEY, SAINT_LOOK_TEST_CLOCK_FILE: clock };
+  const server = await env.launch(config);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  const ready = await waitForIllustration(server, photo.itemId, input.operationId);
+  await server.stop(); const restarted = await env.launch(config);
+  assert.deepEqual(Buffer.from(await (await restarted.request(ready.resultPath)).arrayBuffer()), fixture.result);
+  await writeFile(clock, JSON.stringify({ offsetMs: 8 * 24 * 60 * 60 * 1000 }));
+  assert.equal((await restarted.request(ready.resultPath)).status, 410);
+  const expired = await (await restarted.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}`)).json();
+  assert.equal(expired.error, 'result_expired'); assert.equal(expired.effectiveFeatures, null);
+  const refresh = { ...input, operationId: randomUUID(), revision: 2 };
+  assert.equal((await requestIllustration(restarted, photo.itemId, refresh)).status, 202);
+  const refreshed = await waitForIllustration(restarted, photo.itemId, refresh.operationId);
+  assert.equal((await restarted.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}/ack`, { method: 'POST' })).status, 204);
+  assert.equal((await restarted.request(refreshed.resultPath)).status, 200);
+  assert.equal(fixture.calls.preparation.length, 2);
+});
+
+test('fal retrieval refusal after acceptance is unknown and never permits a second generation submission', async t => {
+  const fixture = await illustrationFixture(t, { status: async (request, response) => { response.writeHead(429); response.end(); } });
+  const env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  const failed = await waitForIllustration(server, photo.itemId, input.operationId, 'failed');
+  assert.equal(failed.error, 'processing_unknown');
+  assert.equal((await requestIllustration(server, photo.itemId, { ...input, operationId: randomUUID(), revision: 2 })).status, 409);
+  assert.equal(fixture.calls.generation.length, 1);
+});
+
+test('a malformed successful generation receipt remains uncertain rather than allowing another paid submission', async t => {
+  const fixture = await illustrationFixture(t, { generation: async (request, response) => { response.writeHead(200); response.end('{'); } });
+  const env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  const failed = await waitForIllustration(server, photo.itemId, input.operationId, 'failed');
+  assert.equal(failed.error, 'processing_unknown');
+  assert.equal((await requestIllustration(server, photo.itemId, { ...input, operationId: randomUUID(), revision: 2 })).status, 409);
+  assert.equal(fixture.calls.generation.length, 1);
+});
+
+test('locally saved prepared sources survive acknowledgement and avoid sandbox charges on manual refresh', async t => {
+  const fixture = await illustrationFixture(t), env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  const first = await waitForIllustration(server, photo.itemId, input.operationId);
+  assert.equal(first.preparedSources.length, 1);
+  assert.equal(first.preparedSources[0].photoId, photo.photoVersionId);
+  const prepared = await server.request(first.preparedSources[0].preparedPath);
+  assert.equal(prepared.status, 200);
+  const preparedBase64 = Buffer.from(await prepared.arrayBuffer()).toString('base64');
+  assert.equal((await server.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}/ack`, { method: 'POST' })).status, 204);
+  assert.equal((await server.request(first.preparedSources[0].preparedPath)).status, 410);
+  const refresh = { ...input, operationId: randomUUID(), revision: 2, manualType: 'Худи', photos: [{ ...input.photos[0], preparedBase64 }] };
+  assert.equal((await requestIllustration(server, photo.itemId, refresh)).status, 202);
+  assert.equal((await waitForIllustration(server, photo.itemId, refresh.operationId)).effectiveFeatures.type, 'Худи');
+  assert.equal(fixture.calls.preparation.length, 1);
+  const bad = { ...refresh, operationId: randomUUID(), revision: 3, photos: [{ ...input.photos[0], preparedBase64: input.photos[0].imageBase64 }] };
+  assert.equal((await requestIllustration(server, photo.itemId, bad)).status, 409);
+  assert.equal(fixture.calls.preparation.length, 1);
 });

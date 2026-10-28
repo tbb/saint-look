@@ -94,16 +94,24 @@ export function createIllustrationProvider(env) {
         const payload = { prompt, image_urls: [...photos.flatMap(photo => [dataURI(photo.source), dataURI(photo.prepared)]), dataURI(template)],
           num_images: 1, aspect_ratio: '1:1', output_format: 'png', resolution: '1K', limit_generations: true, enable_web_search: false };
         if (Buffer.byteLength(JSON.stringify(payload)) > 32 * 1024 * 1024) throw new ProviderError('image_too_large');
-        const receipt = await json(`${falOrigin}/${illustrationVersions.modelVersion}`, { method: 'POST', headers, body: JSON.stringify(payload) }, signal);
+        let receipt;
+        try { receipt = await json(`${falOrigin}/${illustrationVersions.modelVersion}`, { method: 'POST', headers, body: JSON.stringify(payload) }, signal); }
+        catch (error) {
+          // A successful but undecodable receipt may already own a paid job.
+          if (error.code === 'invalid_provider_response') throw new ProviderError('processing_unknown', true);
+          throw error;
+        }
         if (typeof receipt.request_id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(receipt.request_id)) throw new ProviderError('processing_unknown', true);
         requestId = receipt.request_id;
         recordReceipt(requestId);
       }
       const base = `${falOrigin}/fal-ai/nano-banana-pro/requests/${requestId}`;
+      let provenFailure = false;
+      try {
       for (let poll = 0; poll < 120; poll++) {
         const state = await json(`${base}/status`, { headers }, signal);
         if (state.status === 'COMPLETED') {
-          if (state.error || state.error_type) throw new ProviderError('provider_rejected');
+          if (state.error || state.error_type) { provenFailure = true; throw new ProviderError('provider_rejected'); }
           const output = await json(base, { headers }, signal);
           let url;
           try {
@@ -119,6 +127,12 @@ export function createIllustrationProvider(env) {
         await pause(pollMs, undefined, { signal });
       }
       throw new ProviderError('processing_unknown', true);
+      } catch (error) {
+        // Retrieval authentication, quota, corrupt payload or network failure
+        // says nothing about whether an accepted generation finished and billed.
+        if (provenFailure) throw error;
+        throw new ProviderError('processing_unknown', true);
+      }
     },
   };
 }

@@ -60,6 +60,11 @@ const server = createServer(async (request, response) => {
     if (!authorized(request)) return send(response, 401, { error: 'unauthorized' });
     retention.sweep();
     illustrations.sweep();
+    const prepared = path.match(/^\/v1\/items\/([^/]+)\/illustrations\/([^/]+)\/sources\/([^/]+)\/prepared$/);
+    if (request.method === 'GET' && prepared) {
+      const image = illustrations.prepared(...prepared.slice(1).map(value => value.toLowerCase()));
+      response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' }); return response.end(image);
+    }
     const illustration = path.match(/^\/v1\/items\/([^/]+)\/illustrations(?:\/([^/]+)(?:\/(result|ack))?)?$/);
     if (illustration) {
       const itemId = illustration[1].toLowerCase(), operationId = illustration[2]?.toLowerCase(), action = illustration[3];
