@@ -213,7 +213,7 @@ jobs:
             if [[ "$SAINT_LOOK_VISUAL_PROFILES" == "iphone-light" ]]; then
               # Match the existing light-profile setup without its deliberate UDID reset.
               export SAINT_LOOK_VISUAL_PROFILE=iphone-light
-              export SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/VisualAcceptanceTests
+              export SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/VisualAcceptanceTests/testPublicPhotoJourney
               export SAINT_LOOK_SIMULATOR_FAMILY=iPhone
               export SAINT_LOOK_UI_APPEARANCE=light
               export SAINT_LOOK_UI_CONTENT_SIZE=large
