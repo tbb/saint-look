@@ -185,13 +185,17 @@ DEBUG-bootstrap записывает начальный обычный ката�
 в основном пути. Проверки реальных загрузок, retry, ack, offline и late callbacks
 остаются в отдельных регрессионных наборах и не подменяются fixtures.
 
-Artifacts `simulator-screenshots-visual` содержат PNG, no-AI и profile JSON;
-`simulator-ui-video-visual` — запись светлого iPhone, `simulator-results-visual` —
-xcresult. Сохранение выполняется и после ошибок; срок хранения 7 дней. Скриншоты
+Каждый профиль запускается отдельным CI-заданием с собственными артефактами.
+`simulator-screenshots-visual-{profile}` содержит PNG, no-AI и profile JSON;
+`simulator-results-visual-{profile}` — xcresult. Значения `{profile}`:
+`iphone-light`, `iphone-dark`, `iphone-max-text`, `ipad-light`.
+Видео записывается только для светлого iPhone и сохраняется в
+`simulator-ui-video-visual-iphone-light`. Сохранение выполняется и после ошибок;
+срок хранения 7 дней. Скриншоты
 нужно открыть и оценить, наличие attachments само по себе не является приёмкой.
 При предупреждении XCTest о зависшем event loop visual runner сохраняет не более
 двух односекундных стеков выбранного Simulator-приложения в
-`simulator-stall-diagnostics-visual`. Если sampler сам задержался на 4 секунды,
+`simulator-stall-diagnostics-visual-{profile}`. Если sampler сам задержался на 4 секунды,
 один дополнительный снимок исследует именно его процесс; оба ограничены общим
 пределом 8 секунд.
 Диагностика не повторяет действия и сохраняет исходный код завершения теста.
