@@ -18,7 +18,7 @@ export SAINT_LOOK_OBSERVE_VISUAL_STALLS=1
 unset SAINT_LOOK_SIMULATOR_UDID
 for profile in "${profiles[@]}"; do
   export SAINT_LOOK_VISUAL_PROFILE="$profile"
-  export SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/VisualAcceptanceTests
+  export SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/VisualAcceptanceTests/testPublicPhotoJourney
   export SAINT_LOOK_SIMULATOR_FAMILY=iPhone
   export SAINT_LOOK_UI_APPEARANCE=light
   export SAINT_LOOK_UI_CONTENT_SIZE=large

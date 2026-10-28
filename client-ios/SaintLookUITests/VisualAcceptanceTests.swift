@@ -66,12 +66,51 @@ final class VisualAcceptanceTests: XCTestCase {
         add(state)
     }
 
+    private func diagnosticRead<T>(_ name: String, _ read: () -> T) -> T {
+        let started = ProcessInfo.processInfo.systemUptime
+        let value = read()
+        print("[DEBUG-ipad53] \(name) value=\(value) elapsed=\(ProcessInfo.processInfo.systemUptime - started)")
+        return value
+    }
+
     @MainActor
-    private func waitVisible(_ element: XCUIElement, in app: XCUIApplication) throws {
+    private func waitVisible(_ element: XCUIElement, in app: XCUIApplication, diagnosticTab: String? = nil) throws {
+        let started = ProcessInfo.processInfo.systemUptime
+        var evaluation = 0
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            element.exists && element.isHittable && !element.frame.isEmpty && app.frame.intersects(element.frame)
+            guard let title = diagnosticTab else {
+                return element.exists && element.isHittable && !element.frame.isEmpty && app.frame.intersects(element.frame)
+            }
+            evaluation += 1
+            let prefix = "tab=\(title) evaluation=\(evaluation)"
+            print("[DEBUG-ipad53] \(prefix) began=\(ProcessInfo.processInfo.systemUptime - started)")
+            // Same short-circuit order and number of AX reads as the original predicate.
+            let result = self.diagnosticRead("\(prefix) exists") { element.exists }
+                && self.diagnosticRead("\(prefix) hittable") { element.isHittable }
+                && !self.diagnosticRead("\(prefix) firstFrame") { element.frame }.isEmpty
+                && self.diagnosticRead("\(prefix) appFrame") { app.frame }.intersects(
+                    self.diagnosticRead("\(prefix) finalFrame") { element.frame })
+            print("[DEBUG-ipad53] \(prefix) result=\(result) ended=\(ProcessInfo.processInfo.systemUptime - started)")
+            return result
         }, object: element)
-        guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
+        let result = XCTWaiter.wait(for: [ready], timeout: 10)
+        if let title = diagnosticTab {
+            print("[DEBUG-ipad53] tab=\(title) waiter=\(result.rawValue) elapsed=\(ProcessInfo.processInfo.systemUptime - started)")
+        }
+        guard result == .completed else {
+            if let title = diagnosticTab {
+                let symbol = title == "Луки" ? "square.grid.2x2" : "tshirt"
+                let candidatesStarted = ProcessInfo.processInfo.systemUptime
+                let candidates = app.buttons.matching(NSPredicate(format: "identifier == %@ AND label == %@", symbol, title)).allElementsBoundByIndex
+                print("[DEBUG-ipad53] tab=\(title) failureCandidateCount=\(candidates.count) elapsed=\(ProcessInfo.processInfo.systemUptime - candidatesStarted)")
+                // Failure-only observation: never choose another candidate or retry a tap.
+                for (index, candidate) in candidates.prefix(2).enumerated() {
+                    let prefix = "tab=\(title) failureCandidate=\(index)"
+                    _ = diagnosticRead("\(prefix) exists") { candidate.exists }
+                    _ = diagnosticRead("\(prefix) hittable") { candidate.isHittable }
+                    _ = diagnosticRead("\(prefix) frame") { candidate.frame }
+                }
+            }
             diagnose("unavailable-native-control", app: app, detail: element.debugDescription)
             try require(false, "The intended native control is not visible and hittable")
             return
@@ -79,8 +118,8 @@ final class VisualAcceptanceTests: XCTestCase {
     }
 
     @MainActor
-    private func nativeTap(_ element: XCUIElement, in app: XCUIApplication) throws {
-        try waitVisible(element, in: app)
+    private func nativeTap(_ element: XCUIElement, in app: XCUIApplication, diagnosticTab: String? = nil) throws {
+        try waitVisible(element, in: app, diagnosticTab: diagnosticTab)
         let failures = testRun?.failureCount ?? 0
         element.tap()
         try requireEqual(testRun?.failureCount ?? 0, failures, "Native tap failed; stop this journey")
@@ -133,7 +172,7 @@ final class VisualAcceptanceTests: XCTestCase {
             let symbol = title == "Луки" ? "square.grid.2x2" : "tshirt"
             button = app.buttons.matching(NSPredicate(format: "identifier == %@ AND label == %@", symbol, title)).firstMatch
         }
-        try nativeTap(button, in: app)
+        try nativeTap(button, in: app, diagnosticTab: profile == "ipad-light" ? title : nil)
         try waitNavigation(title, in: app)
         try require(button.isSelected, "The intended native tab must be selected")
     }
