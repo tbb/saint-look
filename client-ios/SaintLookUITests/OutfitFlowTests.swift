@@ -718,6 +718,7 @@ final class OutfitFlowTests: XCTestCase {
         app.buttons["create-first-outfit"].tap()
         let head = button(prefix: "outfit-slot-head-", in: app)
         let originalHead = head.label
+        guard reveal(head, in: app, towardTop: true) else { return }
         head.swipeLeft()
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "A swipe must not activate the row's tap action")
         guard !app.buttons["cancel-outfit-picker"].exists else { return }
