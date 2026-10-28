@@ -25,7 +25,8 @@ async function readInput(request, itemId) {
     throw new RequestError(400, 'invalid_identity');
   }
   if (!Number.isSafeInteger(input.revision) || input.revision < 1) throw new RequestError(400, 'invalid_attempt');
-  if (!Array.isArray(input.photos) || input.photos.length !== 1 || input.photos[0]?.role !== 'front') throw new RequestError(400, 'invalid_photos');
+  if (!Array.isArray(input.photos) || input.photos.length < 1 || input.photos.length > 3 || input.photos[0]?.role !== 'front'
+    || input.photos.slice(1).some(photo => photo?.role === 'front')) throw new RequestError(400, 'invalid_photos');
   const photos = [];
   for (const photo of input.photos) {
     if (!photo || typeof photo.id !== 'string' || !uuid.test(photo.id) || !['front', 'back', 'detail'].includes(photo.role)
@@ -41,6 +42,7 @@ async function readInput(request, itemId) {
     } catch { throw new RequestError(400, 'invalid_image'); }
     photos.push({ id: photo.id.toLowerCase(), role: photo.role, digest: digest(source), source });
   }
+  if (new Set(photos.map(photo => photo.id)).size !== photos.length || photos[0].id !== input.photoVersionId.toLowerCase()) throw new RequestError(400, 'invalid_photos');
   const manualType = input.manualType ?? null, manualColors = input.manualColors ?? null;
   if ((manualType !== null && !illustrationTaxonomy.types.some(type => type.label === manualType))
     || (manualColors !== null && (!Array.isArray(manualColors) || manualColors.length > 5
@@ -200,6 +202,9 @@ export function createIllustrations(database, env, retention) {
       if (previous && input.revision <= previous.revision) throw new RequestError(409, 'stale_revision');
       if (previous?.status === 'pending') throw new RequestError(409, 'processing_in_progress');
       if (previous?.error === 'processing_unknown') throw new RequestError(409, 'processing_unknown');
+      const sourceSet = json(input.photos.map(({ id, role, digest }) => ({ id, role, digest })));
+      const knownSet = database.prepare('SELECT photos FROM illustrations WHERE item_id=? AND source_set_version_id=? LIMIT 1').get(input.itemId, input.sourceSetVersionId);
+      if (knownSet && knownSet.photos !== sourceSet) throw new RequestError(409, 'identity_conflict');
       const deadline = retention.deadline();
       database.exec('BEGIN IMMEDIATE');
       try {

@@ -58,3 +58,30 @@ test('single photo produces a separate transparent illustration with observed tr
   assert.equal((await server.request(ready.resultPath)).status, 410);
   assert.equal((await server.request(`/v1/items/${photo.itemId}/result`)).status, 200);
 });
+
+test('multiple views preserve manual type and colors, reuse prepared photos, and reject mutated identities', async t => {
+  const fixture = await illustrationFixture(t), env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const initial = illustration(photo);
+  await requestIllustration(server, photo.itemId, initial);
+  await waitForIllustration(server, photo.itemId, initial.operationId);
+  const detail = await photoRequest();
+  const update = illustration(photo, { revision: 2, manualType: 'Худи', manualColors: ['Чёрный'],
+    photos: [...initial.photos, { id: detail.photoVersionId, role: 'detail', imageBase64: detail.imageBase64 }] });
+  assert.equal((await requestIllustration(server, photo.itemId, update)).status, 202);
+  const ready = await waitForIllustration(server, photo.itemId, update.operationId);
+  assert.equal(ready.observedFeatures.type, 'Футболка');
+  assert.equal(ready.effectiveFeatures.type, 'Худи');
+  assert.deepEqual(ready.effectiveFeatures.colors, ['Чёрный']);
+  // External boundary accounting: unchanged source must not consume sandbox quota twice.
+  assert.equal(fixture.calls.preparation.length, 2);
+  const payload = JSON.parse(fixture.calls.attributes.at(-1).body);
+  assert.deepEqual(Object.keys(payload.state), ['photo_0_prepared_front', 'photo_1_original_front', 'photo_2_prepared_detail', 'photo_3_original_detail']);
+  assert.ok(JSON.parse(fixture.calls.generation.at(-1).body).prompt.includes('Худи'));
+  assert.equal((await requestIllustration(server, photo.itemId, update)).status, 200);
+  assert.equal((await requestIllustration(server, photo.itemId, { ...update, manualColors: ['Белый'] })).status, 409);
+  const changedSet = { ...update, operationId: randomUUID(), revision: 3, photos: initial.photos };
+  const conflict = await requestIllustration(server, photo.itemId, changedSet);
+  assert.equal(conflict.status, 409);
+  assert.equal((await conflict.json()).error, 'identity_conflict');
+});
