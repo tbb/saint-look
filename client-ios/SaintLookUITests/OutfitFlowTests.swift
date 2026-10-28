@@ -286,6 +286,26 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testFittingRoomHasIndependentAccessibleZonesAndHonestEmptyCanvas() {
+        let app = launch(reset: true)
+        app.tabBars.buttons["Луки"].tap()
+        app.buttons["create-first-outfit"].tap()
+        XCTAssertTrue(app.otherElements["fitting-canvas"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["fitting-empty-preview"].exists)
+        let head = app.buttons["fitting-zone-head"]
+        tap(head, in: app)
+        XCTAssertTrue(head.isSelected)
+        let shoes = app.buttons["fitting-zone-shoes"]
+        tap(shoes, in: app)
+        XCTAssertTrue(shoes.isSelected)
+        XCTAssertFalse(head.isSelected)
+        XCTAssertFalse(app.buttons["save-outfit"].isEnabled)
+        app.buttons["cancel-outfit"].tap()
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Changing the active zone must not dirty an empty look")
+        app.terminate()
+    }
+
+    @MainActor
     func testEmptyLooksOfferWardrobeAndPendingChoicesExplainReadiness() async throws {
         let app = launch(reset: true)
         app.tabBars.buttons["Луки"].tap()

@@ -272,6 +272,15 @@ private struct OutfitComposition: View {
 
     var body: some View {
         VStack(spacing: compact ? 12 : 24) {
+            FittingRoomCanvas(store: store, outfit: outfit)
+                .frame(maxWidth: compact ? 300 : 460)
+            if visibleSlots.contains(where: { slot in
+                guard let item = store.items.first(where: { $0.id == slot.itemID }) else { return false }
+                return store.illustrationURL(for: item) == nil
+            }) {
+                Text("Фото вещей без иллюстраций — ниже")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
             ForEach(visibleSlots) { slot in
                 VStack(spacing: 8) {
                     if let item = store.items.first(where: { $0.id == slot.itemID }) {
@@ -343,6 +352,7 @@ struct OutfitEditorView: View {
     @State var draft: Outfit
     @Environment(\.dismiss) private var dismiss
     @State private var choosingSlot: OutfitSlot?
+    @State private var activeSlotID: UUID?
     @State private var errorMessage: String?
     @State private var saving = false
     @State private var initial: Outfit
@@ -357,6 +367,7 @@ struct OutfitEditorView: View {
         _errorMessage = State(initialValue: errorMessage)
     }
 
+    private var activeSlot: OutfitSlot? { draft.slots.first { $0.id == activeSlotID } ?? draft.slots.first { $0.zone == .body } }
     private var dirty: Bool { draft != initial }
     private var editingExisting: Bool { store.outfits.contains { $0.id == draft.id } }
 
@@ -364,6 +375,7 @@ struct OutfitEditorView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    fittingPreview
                     TextField("Название — необязательно", text: $draft.name)
                         .focused($naming)
                         .submitLabel(.done)
@@ -443,17 +455,87 @@ struct OutfitEditorView: View {
         }
     }
 
+    private var fittingPreview: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            FittingRoomCanvas(store: store, outfit: draft)
+                .frame(maxWidth: 460)
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { value in
+                    guard let slot = activeSlot,
+                          abs(value.translation.width) > 40,
+                          abs(value.translation.width) > abs(value.translation.height) * 1.3 else { return }
+                    cycle(slot.id, forward: value.translation.width < 0)
+                })
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 8) {
+                ForEach(OutfitZone.allCases, id: \.rawValue) { zone in
+                    Button {
+                        activeSlotID = draft.slots.first { $0.zone == zone }?.id
+                    } label: {
+                        HStack {
+                            Text(zone.title)
+                            if activeSlot?.zone == zone { Image(systemName: "checkmark") }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(activeSlot?.zone == zone ? SaintLookStyle.accent : .secondary)
+                    .accessibilityAddTraits(activeSlot?.zone == zone ? .isSelected : [])
+                    .accessibilityIdentifier("fitting-zone-\(zone.rawValue)")
+                }
+            }
+            if let slot = activeSlot {
+                HStack {
+                    Button { cycle(slot.id, forward: false) } label: {
+                        Image(systemName: "chevron.left").frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("Предыдущая вещь: \(outfitSlotTitle(slot, in: draft))")
+                    .disabled(candidates(for: slot).count < 2)
+                    Button { choosingSlot = slot } label: {
+                        VStack(spacing: 4) {
+                            Text(outfitSlotTitle(slot, in: draft)).font(.subheadline)
+                            Text(itemLabel(slot)).font(.headline)
+                        }.frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .accessibilityIdentifier("fitting-choose-active")
+                    Button { cycle(slot.id, forward: true) } label: {
+                        Image(systemName: "chevron.right").frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("Следующая вещь: \(outfitSlotTitle(slot, in: draft))")
+                    .disabled(candidates(for: slot).count < 2)
+                }
+                if candidates(for: slot).count < 2 {
+                    Text(candidates(for: slot).isEmpty ? "Нет доступных вещей для этой зоны." : "В этой зоне один вариант. Его можно выбрать нажатием.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            if draft.selectedIDs.isEmpty {
+                Text("Выберите вещи по зонам. Иллюстрации появятся на манекене; фотографии доступны ниже.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("fitting-empty-preview")
+            } else if draft.slots.contains(where: { slot in
+                guard let item = store.items.first(where: { $0.id == slot.itemID }) else { return false }
+                return store.illustrationURL(for: item) == nil
+            }) {
+                Text("Не для всех вещей готова иллюстрация. Их фотографии показаны в составе ниже, а не на манекене.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("fitting-missing-illustration")
+            }
+        }
+    }
+
     private func slotSelection(_ slot: OutfitSlot) -> some View {
         OutfitSlotContent(store: store, slot: slot)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
             // A Button in a List can activate on release after a simultaneous drag.
             // TapGesture fails when the finger moves; the drag still coexists with scrolling.
-            .onTapGesture { choosingSlot = slot }
+            .onTapGesture { activeSlotID = slot.id; choosingSlot = slot }
             .simultaneousGesture(slotDrag(slot.id))
             .accessibilityElement(children: .ignore)
             .accessibilityAddTraits(.isButton)
-            .accessibilityAction { choosingSlot = slot }
+            .accessibilityAction { activeSlotID = slot.id; choosingSlot = slot }
             .accessibilityIdentifier("outfit-slot-\(slot.zone.rawValue)-\(slot.id)")
             .accessibilityLabel("\(outfitSlotTitle(slot, in: draft)). \(itemLabel(slot))")
             .accessibilityValue(itemLabel(slot))
@@ -554,6 +636,7 @@ struct OutfitEditorView: View {
 
     private func cycle(_ slotID: UUID, forward: Bool) {
         guard let slot = draft.slots.first(where: { $0.id == slotID }) else { return }
+        activeSlotID = slotID
         draft.cycleItem(for: slotID, among: candidates(for: slot).map(\.id), forward: forward)
         if draft.slots.first(where: { $0.id == slotID })?.itemID != slot.itemID { swipeDiscovered = true }
         errorMessage = nil
@@ -734,6 +817,11 @@ struct OutfitSlotContent: View {
                                height: slot.zone == .bottom ? 152 : 124)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(item.displayedType ?? "Вещь").font(.headline)
+                        Text(store.illustrationURL(for: item) == nil ? "Фото · без иллюстрации" : "Иллюстрация на манекене")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        if let status = item.illustrationStatusMessage {
+                            Text(status).font(.footnote).foregroundStyle(.secondary)
+                        }
                         if !item.displayedColors.isEmpty {
                             Text(item.displayedColors.joined(separator: ", "))
                                 .font(.subheadline).foregroundStyle(.secondary)
