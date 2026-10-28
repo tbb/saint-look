@@ -1,7 +1,4 @@
 import SwiftUI
-#if DEBUG
-import UIKit
-#endif
 
 @main
 @MainActor
@@ -9,12 +6,6 @@ struct SaintLookApp: App {
     @StateObject private var store = WardrobeStore()
     @State private var selectedTab = AppTab.wardrobe
     @Environment(\.scenePhase) private var scenePhase
-
-    init() {
-        #if DEBUG
-        NameSelectionTrace.shared.start()
-        #endif
-    }
 
     var body: some Scene {
         WindowGroup {
@@ -39,80 +30,3 @@ struct SaintLookApp: App {
 private enum AppTab: Hashable {
     case wardrobe, outfits
 }
-
-#if DEBUG
-// Temporary #53 read-only probe. No view modifiers or changes to focus, selection or text.
-@MainActor
-private final class NameSelectionTrace: NSObject {
-    static let shared = NameSelectionTrace()
-    private var timer: Timer?
-    private var deadline = Date.distantPast
-    private var previous = ""
-
-    func start() {
-        let environment = ProcessInfo.processInfo.environment
-        guard environment["SAINT_LOOK_UI_TESTING"] == "1",
-              environment["SAINT_LOOK_NAME_TRACE"] == "1", timer == nil else { return }
-        deadline = Date().addingTimeInterval(600)
-        let probe = Timer(timeInterval: 0.1, target: self, selector: #selector(sample), userInfo: nil, repeats: true)
-        timer = probe
-        RunLoop.main.add(probe, forMode: .common)
-        NotificationCenter.default.addObserver(self, selector: #selector(stop),
-            name: UIApplication.didEnterBackgroundNotification, object: nil)
-        NSLog("[DEBUG-name-range] started interval=0.1s limit=600s")
-    }
-
-    @objc private func stop() {
-        timer?.invalidate()
-        timer = nil
-        NotificationCenter.default.removeObserver(self)
-        NSLog("[DEBUG-name-range] stopped")
-    }
-
-    private func fields(in view: UIView) -> [UITextField] {
-        var result: [UITextField] = []
-        if let field = view as? UITextField { result.append(field) }
-        for child in view.subviews { result.append(contentsOf: fields(in: child)) }
-        return result
-    }
-
-    @objc private func sample() {
-        guard Date() < deadline else { stop(); return }
-        var names: [UITextField] = []
-        for scene in UIApplication.shared.connectedScenes {
-            guard let windowScene = scene as? UIWindowScene else { continue }
-            for window in windowScene.windows {
-                for field in fields(in: window) {
-                    let matchesID = field.accessibilityIdentifier == "outfit-name"
-                    let matchesPlaceholder = field.placeholder == "Название — необязательно"
-                    if matchesID || matchesPlaceholder { names.append(field) }
-                }
-            }
-        }
-        var samples: [String] = []
-        for field in names {
-            let selection: String
-            if let range = field.selectedTextRange {
-                let start = field.offset(from: field.beginningOfDocument, to: range.start)
-                let end = field.offset(from: field.beginningOfDocument, to: range.end)
-                selection = "\(start)..\(end)"
-            } else { selection = "nil" }
-            let identity = String(describing: ObjectIdentifier(field))
-            let className = String(describing: type(of: field))
-            let length = field.text?.utf16.count ?? 0
-            let language = field.textInputMode?.primaryLanguage ?? "nil"
-            let marked = field.markedTextRange != nil
-            let frame: CGRect = field.convert(field.bounds, to: nil as UIView?)
-            let focus = "first=\(field.isFirstResponder) length=\(length) selected=\(selection)"
-            let context = "marked=\(marked) language=\(language) frame=\(frame)"
-            samples.append("id=\(identity) class=\(className) " + focus + " " + context)
-        }
-        let state = samples.joined(separator: " | ")
-        let line = state.isEmpty ? "no-name-field" : state
-        if line != previous {
-            previous = line
-            NSLog("[DEBUG-name-range] %@", line)
-        }
-    }
-}
-#endif

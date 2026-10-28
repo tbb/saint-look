@@ -18,7 +18,7 @@ export SAINT_LOOK_OBSERVE_VISUAL_STALLS=1
 unset SAINT_LOOK_SIMULATOR_UDID
 for profile in "${profiles[@]}"; do
   export SAINT_LOOK_VISUAL_PROFILE="$profile"
-  export SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/VisualAcceptanceTests/testNativeLongOutfitNameReplacement
+  export SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/VisualAcceptanceTests
   export SAINT_LOOK_SIMULATOR_FAMILY=iPhone
   export SAINT_LOOK_UI_APPEARANCE=light
   export SAINT_LOOK_UI_CONTENT_SIZE=large
@@ -26,7 +26,7 @@ for profile in "${profiles[@]}"; do
   case "$profile" in
     iphone-light) export SAINT_LOOK_RECORD_VIDEO=1 ;;
     iphone-dark) export SAINT_LOOK_UI_APPEARANCE=dark ;;
-    iphone-max-text) export SAINT_LOOK_UI_CONTENT_SIZE=accessibility-extra-extra-extra-large; export SAINT_LOOK_RECORD_VIDEO=1 ;;
+    iphone-max-text) export SAINT_LOOK_UI_CONTENT_SIZE=accessibility-extra-extra-extra-large ;;
     ipad-light) export SAINT_LOOK_SIMULATOR_FAMILY=iPad ;;
   esac
   current=0

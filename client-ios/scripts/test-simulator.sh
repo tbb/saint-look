@@ -21,7 +21,6 @@ fi
 xcodebuild -version
 work_directory="$(mktemp -d)"
 recording_pid=''
-name_diagnostic_pid=''
 remote_manifest=''
 previous_content_size=''
 previous_appearance=''
@@ -30,10 +29,6 @@ simulator_family="${SAINT_LOOK_SIMULATOR_FAMILY:-iPhone}"
 cleanup() {
   local test_status=$?
   trap - EXIT
-  if [[ -n "$name_diagnostic_pid" ]]; then
-    kill "$name_diagnostic_pid" 2>/dev/null || true
-    wait "$name_diagnostic_pid" 2>/dev/null || true
-  fi
   if [[ -n "$recording_pid" ]]; then
     # SIGINT lets simctl finish the MP4 container, including after a failed test.
     kill -INT "$recording_pid" 2>/dev/null || true
@@ -202,13 +197,6 @@ if [[ "${SAINT_LOOK_RECORD_VIDEO:-0}" == '1' ]]; then
   echo "Recording Simulator UI tests to $video_path"
 fi
 
-# Temporary #53 probe: collect only the name-field selection state, never general application logs.
-mkdir -p build/visual-stall-diagnostics
-xcrun simctl spawn "$simulator_id" log stream --level debug --style compact \
-  --predicate 'eventMessage CONTAINS "[DEBUG-name-range]"' \
-  > build/visual-stall-diagnostics/name-range.log 2>&1 &
-name_diagnostic_pid=$!
-
 test_options=("${build_options[@]}")
 if [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" == '1' || "${SAINT_LOOK_LIVE_TRIAL:-0}" == '1' || -n "${SAINT_LOOK_VISUAL_PROFILE:-}" ]]; then
   # Shell variables are not a portable way to configure a Simulator test host.
@@ -259,8 +247,6 @@ if [[ -n "${SAINT_LOOK_UI_TEST_ONLY:-}" ]]; then
     test_options+=("-only-testing:$test_selector")
   done <<< "$SAINT_LOOK_UI_TEST_ONLY"
 fi
-# Five fixed candidate checks; no retry-on-failure or run-until-success.
-test_options+=(-test-iterations 5)
 if [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" && "${SAINT_LOOK_OBSERVE_VISUAL_STALLS:-0}" == 1 ]]; then
   # Observe the existing 60-second XCTest warning; do not retry or change its verdict.
   python3 scripts/observe-visual-stalls.py --udid "$simulator_id" \
