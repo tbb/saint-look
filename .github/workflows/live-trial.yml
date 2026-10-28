@@ -37,6 +37,7 @@ jobs:
     outputs:
       revision: ${{ steps.upload.outputs.revision }}
       deployment_id: ${{ steps.upload.outputs.deployment_id }}
+      data_version: ${{ steps.release.outputs.data_version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -134,6 +135,7 @@ jobs:
           SAINT_LOOK_REMOTE_TOKEN: ${{ secrets.SAINT_LOOK_DEV_OWNER_TOKEN }}
           SAINT_LOOK_REMOTE_REVISION: ${{ needs.deploy.outputs.revision }}
           SAINT_LOOK_REMOTE_DEPLOYMENT_ID: ${{ needs.deploy.outputs.deployment_id }}
+          SAINT_LOOK_REMOTE_DATA_VERSION: ${{ needs.deploy.outputs.data_version }}
           SAINT_LOOK_UI_TEST_ONLY: SaintLookUITests/LiveTrialTests
           SAINT_LOOK_RECORD_VIDEO: '1'
         run: bash client-ios/scripts/test-simulator.sh
