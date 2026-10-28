@@ -244,6 +244,12 @@ struct IllustrationResponse: Codable {
 }
 
 extension WardrobeItem {
+    var canResumeIllustrationDelivery: Bool {
+        guard let request = illustration, request.status == .failed, request.readyForDelivery == true else { return false }
+        return request.photoVersionID == photoVersionID && request.sourceSetVersionID == sourceSetVersionID
+            && request.manualType == manualType && request.manualColors == manualColors
+    }
+
     var illustrationIsStale: Bool {
         guard let result = illustrationResult else { return false }
         return result.response.photoVersionId != photoVersionID || result.response.sourceSetVersionId != sourceSetVersionID

@@ -536,8 +536,7 @@ extension WardrobeStore {
               items[index].status == .ready, items[index].illustration?.status != .pending else { return }
         var updated = items
         let item = updated[index]
-        if var delivery = item.illustration, delivery.status == .failed, delivery.readyForDelivery == true,
-           illustrationIsCurrent(item, request: delivery) {
+        if var delivery = item.illustration, item.canResumeIllustrationDelivery {
             // Retry downloading the already generated operation, never pay to regenerate
             // because a cache download or local file write failed.
             delivery.status = .pending

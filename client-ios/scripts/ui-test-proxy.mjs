@@ -81,7 +81,7 @@ const server = createServer(async (request, response) => {
       if (request.headers.authorization !== `Bearer ${controlToken}`) return reply(response, 401, { error: 'unauthorized' });
       if (request.method === 'POST') {
         const input = JSON.parse((await readBody(request, 1024)).toString());
-        if (!['online', 'offline', 'drop-next-upload-response', 'drop-next-delete-response', 'block-acks', 'drop-next-ack-response', 'accept-upload-then-offline', 'hold-next-result', 'hold-next-illustration-result', 'foreign-illustration', 'block-prepared-sources', 'legacy-attributes'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
+        if (!['online', 'offline', 'drop-next-upload-response', 'drop-next-delete-response', 'block-acks', 'drop-next-ack-response', 'accept-upload-then-offline', 'hold-next-result', 'hold-next-illustration-result', 'foreign-illustration', 'block-prepared-sources', 'corrupt-prepared-source', 'legacy-attributes'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
         let nextOffset;
         if (input.advanceTimeMs !== undefined) {
           if (!clockFile || !Number.isSafeInteger(input.advanceTimeMs) || input.advanceTimeMs < 0) {
@@ -103,6 +103,11 @@ const server = createServer(async (request, response) => {
     if (mode === 'offline') { request.socket.destroy(); return; }
     const isPreparedSource = request.method === 'GET' && /^\/v1\/items\/[^/]+\/illustrations\/[^/]+\/sources\/[^/]+\/prepared$/.test(request.url);
     if (isPreparedSource) preparedSourceDownloads++;
+    if (isPreparedSource && mode === 'corrupt-prepared-source') {
+      response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
+      response.end('not a PNG');
+      return;
+    }
     if (isPreparedSource && mode === 'block-prepared-sources') return reply(response, 502, { error: 'fixture_delivery_unavailable' });
     const body = await readBody(request, 16 * 1024 * 1024);
     const isUpload = request.method === 'POST' && (request.url === '/v1/items' || /^\/v1\/items\/[^/]+\/attempts$/.test(request.url));

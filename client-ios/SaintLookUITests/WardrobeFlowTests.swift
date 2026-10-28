@@ -254,6 +254,37 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testReadyIllustrationDeliveryCanRetryAfterGenerationIsDisabled() async throws {
+        _ = try await providerControl(["illustrationMode": "success"])
+        try await control(mode: "corrupt-prepared-source")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        try openFirstItem(in: app)
+        let failure = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "неполный результат"), object: app.staticTexts["illustration-status"])
+        await fulfillment(of: [failure], timeout: 30)
+        let before = try await transportState()
+        XCTAssertEqual(before["illustrationAcknowledgements"] as? Int, 0)
+        XCTAssertEqual(before["illustrationUploads"] as? Int, 1)
+        app.terminate()
+        _ = try await providerControl(["illustrationMode": NSNull()])
+        try await control(mode: "online")
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 1, pending: 0)
+        try openFirstItem(in: restored)
+        XCTAssertTrue(restored.staticTexts["illustration-unavailable"].waitForExistence(timeout: 10), "The health capability must actually be disabled before retry")
+        XCTAssertTrue(restored.buttons["generate-illustration"].isEnabled, "Downloading a ready operation does not require generation availability")
+        try tapVisibleButton("generate-illustration", in: restored)
+        XCTAssertTrue(restored.staticTexts["illustration-saved"].waitForExistence(timeout: 30))
+        let acknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 1, timeout: 30)
+        XCTAssertTrue(acknowledged)
+        let after = try await transportState()
+        XCTAssertEqual(after["illustrationUploads"] as? Int, 1)
+        let provider = try await providerControl()
+        XCTAssertEqual(provider["illustrationGenerationCalls"] as? Int, 1)
+    }
+
+    @MainActor
     func testPreparedPhotoDeliveryFailureDelaysAcknowledgementAndResumesSameOperation() async throws {
         _ = try await providerControl(["illustrationMode": "success"])
         try await control(mode: "block-prepared-sources")

@@ -322,12 +322,13 @@ private struct ItemDetailView: View {
                 ProgressView("Готовим иллюстрацию…")
                     .accessibilityIdentifier("illustration-pending")
             } else {
-                Button(item.illustrationResult == nil ? "Создать иллюстрацию" : "Обновить иллюстрацию") {
+                Button(item.canResumeIllustrationDelivery ? "Повторить сохранение иллюстрации"
+                       : item.illustrationResult == nil ? "Создать иллюстрацию" : "Обновить иллюстрацию") {
                     store.requestIllustration(itemID)
                 }
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("generate-illustration")
-                .disabled(item.status != .ready || store.illustrationAvailable == false || !store.storageAvailable)
+                .disabled(item.status != .ready || (store.illustrationAvailable == false && !item.canResumeIllustrationDelivery) || !store.storageAvailable)
             }
             if item.illustrationResult != nil {
                 Text(item.illustrationIsStale ? "Показана предыдущая версия иллюстрации." : "Иллюстрация сохранена на устройстве.")
