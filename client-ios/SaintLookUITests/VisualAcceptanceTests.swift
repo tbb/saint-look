@@ -68,8 +68,13 @@ final class VisualAcceptanceTests: XCTestCase {
 
     @MainActor
     private func waitVisible(_ element: XCUIElement, in app: XCUIApplication) throws {
+        // Each AX property read is a remote snapshot. Re-reading frames consumed
+        // the full wait deadline on iPad even when the control was already hittable.
+        let viewport = app.frame
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            element.exists && element.isHittable && !element.frame.isEmpty && app.frame.intersects(element.frame)
+            guard element.exists else { return false }
+            let frame = element.frame
+            return element.isHittable && !frame.isEmpty && viewport.intersects(frame)
         }, object: element)
         guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
             diagnose("unavailable-native-control", app: app, detail: element.debugDescription)
@@ -160,6 +165,23 @@ final class VisualAcceptanceTests: XCTestCase {
     }
 
     @MainActor
+    private func createFirstOutfit(in app: XCUIApplication) throws {
+        let createFirst = app.buttons["create-first-outfit"]
+        let outfitsBar = try navigationBar(app)
+        try requireEqual(outfitsBar.identifier, "Луки")
+        let overlays = app.tabBars.allElementsBoundByIndex + app.keyboards.allElementsBoundByIndex
+        // ContentUnavailableView has no ScrollView when its contents already fit (iPad).
+        let creationIsVisible = createFirst.exists && createFirst.isHittable
+            && app.frame.contains(createFirst.frame) && createFirst.frame.minY >= outfitsBar.frame.maxY
+            && !overlays.contains { $0.exists && $0.frame.intersects(createFirst.frame) }
+        if creationIsVisible {
+            try nativeTap(createFirst, in: app)
+        } else {
+            try tap(createFirst, in: app) // Maximum text still exercises bounded native scrolling.
+        }
+    }
+
+    @MainActor
     private func slot(_ zone: String, in app: XCUIApplication) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "outfit-slot-\(zone)-")).firstMatch
     }
@@ -224,7 +246,7 @@ final class VisualAcceptanceTests: XCTestCase {
         case "Собрать лук", "Изменить лук": query = app.scrollViews.containing(.textField, identifier: "outfit-name")
         case "Голова", "Тело", "Низ", "Обувь": query = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-'"))
         case "Луки": query = app.scrollViews.containing(NSPredicate(format: "identifier == 'create-first-outfit' OR identifier BEGINSWITH 'outfit-card-'"))
-        case "Лук": query = app.scrollViews.containing(NSPredicate(format: "identifier BEGINSWITH 'repair-slot-'"))
+        case "Лук": query = app.scrollViews.containing(NSPredicate(format: "identifier == 'fitting-canvas' OR identifier BEGINSWITH 'repair-slot-'"))
         default: query = app.scrollViews.containing(.button, identifier: "edit-item")
         }
         // A native Form's CollectionView is a layout/scroll surface, not a tappable control.
@@ -249,7 +271,7 @@ final class VisualAcceptanceTests: XCTestCase {
         let bar = try navigationBar(app)
         let container = try scrollSurface(in: app, bar: bar)
         var last = ""
-        for _ in 0..<7 {
+        for attempt in 0...7 {
             var viewport = container.frame.intersection(app.frame)
             if bar.frame.intersects(viewport) { viewport.origin.y = max(viewport.minY, bar.frame.maxY); viewport.size.height = max(0, container.frame.intersection(app.frame).maxY - viewport.minY) }
             let blockers = app.tabBars.allElementsBoundByIndex + app.keyboards.allElementsBoundByIndex
@@ -265,6 +287,8 @@ final class VisualAcceptanceTests: XCTestCase {
             // Requiring the center also works for content taller than the safe viewport.
             let tapCenter = CGPoint(x: frame.midX, y: frame.midY)
             if element.exists && element.isHittable && viewport.contains(tapCenter) { return }
+            // Inspect the result of the final bounded drag before declaring it unreachable.
+            if attempt == 7 { break }
             let direction: CGFloat = element.exists ? (frame.midY < viewport.midY ? 1 : -1) : (towardTop ? 1 : -1)
             let distance = min(viewport.height * 0.65, element.exists ? max(40, abs(viewport.midY - frame.midY)) : viewport.height * 0.65)
             let y = direction < 0 ? viewport.maxY - 12 : viewport.minY + 12
@@ -348,6 +372,108 @@ final class VisualAcceptanceTests: XCTestCase {
         return counts
     }
 
+    /// Drawn fixtures verify native compositing and local behavior, not provider quality.
+    @MainActor
+    func testPreparedFittingLayersAndFallbackStayLocal() async throws {
+        func illustrationCounts() async throws -> [String: Int] {
+            var request = URLRequest(url: URL(string: "\(baseURL)/__control")!)
+            request.setValue("Bearer saint-look-ui-control-test-token-00000001", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            try requireEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            let state = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            return try Dictionary(uniqueKeysWithValues: ["illustrationUploads", "illustrationOperations", "illustrationAcknowledgements"].map {
+                ($0, try XCTUnwrap(state[$0] as? Int))
+            })
+        }
+        func canvas(in app: XCUIApplication) throws -> XCUIElement {
+            // A sheet retains the detail canvas in accessibility, and global query order
+            // does not identify the foreground. Use the same content surface as reveal.
+            let surface = try scrollSurface(in: app, bar: navigationBar(app))
+            return try XCTUnwrap(surface.otherElements.matching(identifier: "fitting-canvas").allElementsBoundByIndex.first)
+        }
+        let before = try await activityCounts()
+        let illustrationsBefore = try await illustrationCounts()
+        let app = try launch("fitting-ready")
+        try selectTab("Луки", in: app)
+        let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).firstMatch
+        try require(saved.waitForExistence(timeout: 5))
+        try reveal(try canvas(in: app), in: app, towardTop: true)
+        try capture("fitting-01-prepared-collection")
+        try tap(saved, in: app)
+        try waitVisible(app.buttons["edit-outfit"], in: app)
+        try reveal(try canvas(in: app), in: app, towardTop: true)
+        try capture("fitting-02-open-jacket-over-tee-detail")
+        try nativeTap(app.buttons["edit-outfit"], in: app)
+        try waitVisible(app.buttons["cancel-outfit"], in: app)
+        try reveal(try canvas(in: app), in: app, towardTop: true)
+        try require(!(app.staticTexts["fitting-missing-illustration"].exists))
+        try capture("fitting-03-prepared-editor")
+        let layers = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'fitting-layer-'"))
+        // The iPad sheet can show only the canvas: its lazy layer grid enters
+        // accessibility when scrolled into view, so reveal it before counting.
+        try reveal(layers.firstMatch, in: app)
+        try requireEqual(layers.count, 2)
+        try tap(layers.element(boundBy: 0), in: app)
+        try require(layers.element(boundBy: 0).isSelected)
+        try tap(layers.element(boundBy: 1), in: app)
+        try require(layers.element(boundBy: 1).isSelected)
+        let outerID = String(layers.element(boundBy: 1).identifier.dropFirst("fitting-layer-".count))
+        let pin = app.buttons["pin-slot-\(outerID)"]
+        try tap(pin, in: app)
+        try require(pin.isSelected)
+        let shoes = slot("shoes", in: app)
+        let shoeID = String(shoes.identifier.dropFirst("outfit-slot-shoes-".count))
+        try tap(app.buttons["outfit-slot-menu-\(shoeID)"], in: app)
+        try tapMenuAction("clear-slot-\(shoeID)", in: app)
+        try require(shoes.label.contains("Выбрать вещь"))
+        try tap(app.buttons["fitting-shuffle"], in: app)
+        try require(shoes.label.contains("Туфли"), "Shuffle fills the unpinned empty footwear slot")
+        try require(pin.isSelected)
+        try tap(app.buttons["fitting-undo"], in: app)
+        try require(shoes.label.contains("Выбрать вещь"), "A shuffle is undone as one composition change")
+        try tap(app.buttons["fitting-undo"], in: app)
+        try require(shoes.label.contains("Туфли"))
+        try require(pin.isSelected, "Composition undo preserves the outer layer pin")
+        try reveal(try canvas(in: app), in: app, towardTop: true)
+        try capture("fitting-04-layers-restored-after-two-undos")
+        try nativeTap(app.buttons["cancel-outfit"], in: app)
+        try require(!(app.alerts.firstMatch.exists), "Undo restored the saved composition; a pin alone does not dirty it")
+        let afterOnline = try await activityCounts()
+        let illustrationsAfter = try await illustrationCounts()
+        try requireEqual(afterOnline, before, "Prepared fitting interactions must not invoke ingestion providers")
+        try requireEqual(illustrationsAfter, illustrationsBefore, "Prepared fitting must not submit or acknowledge generation")
+        app.terminate()
+
+        try await control("offline")
+        let offline = try launch("fitting-ready", reset: false)
+        try selectTab("Луки", in: offline)
+        let offlineSaved = offline.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).firstMatch
+        try tap(offlineSaved, in: offline)
+        try reveal(try canvas(in: offline), in: offline, towardTop: true)
+        try require((try canvas(in: offline)).label.contains("иллюстрация"))
+        try capture("fitting-05-prepared-offline-restart")
+        offline.terminate()
+
+        let fallback = try launch("ready-four")
+        try selectTab("Луки", in: fallback)
+        try createFirstOutfit(in: fallback)
+        try tap(slot("body", in: fallback), in: fallback)
+        try choose(0, in: fallback)
+        let explanation = fallback.staticTexts["fitting-missing-illustration"]
+        try reveal(explanation, in: fallback)
+        try capture("fitting-06-honest-photo-fallback")
+        try require((try canvas(in: fallback)).label.contains("без иллюстрации"))
+        try nativeTap(fallback.buttons["cancel-outfit"], in: fallback)
+        try nativeTap(fallback.alerts.buttons.matching(identifier: "discard-outfit-changes").firstMatch, in: fallback)
+        fallback.terminate()
+        let evidence = try JSONSerialization.data(withJSONObject: ["providersBefore": before, "providersAfter": afterOnline,
+            "illustrationsBefore": illustrationsBefore, "illustrationsAfter": illustrationsAfter], options: [.sortedKeys, .prettyPrinted])
+        let attachment = XCTAttachment(data: evidence, uniformTypeIdentifier: "public.json")
+        attachment.name = "\(profile)-fitting-local-only-counters"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     @MainActor
     func testPublicPhotoJourney() async throws {
         let before = try await activityCounts()
@@ -378,19 +504,7 @@ final class VisualAcceptanceTests: XCTestCase {
         try nativeTap(app.buttons["cancel-item-edits"], in: app)
         try back(app)
         try selectTab("Луки", in: app)
-        let createFirst = app.buttons["create-first-outfit"]
-        let outfitsBar = try navigationBar(app)
-        try requireEqual(outfitsBar.identifier, "Луки")
-        let overlays = app.tabBars.allElementsBoundByIndex + app.keyboards.allElementsBoundByIndex
-        // ContentUnavailableView has no ScrollView when its contents already fit (iPad).
-        let creationIsVisible = createFirst.exists && createFirst.isHittable
-            && app.frame.contains(createFirst.frame) && createFirst.frame.minY >= outfitsBar.frame.maxY
-            && !overlays.contains { $0.exists && $0.frame.intersects(createFirst.frame) }
-        if creationIsVisible {
-            try nativeTap(createFirst, in: app)
-        } else {
-            try tap(createFirst, in: app) // Maximum text still exercises bounded native scrolling.
-        }
+        try createFirstOutfit(in: app)
         try waitVisible(app.buttons["cancel-outfit"], in: app)
         try tap(slot("body", in: app), in: app)
         try choose(0, in: app)

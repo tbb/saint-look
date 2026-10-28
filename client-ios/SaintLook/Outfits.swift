@@ -90,7 +90,7 @@ extension Outfit {
         guard let slot = slots.first(where: { $0.id == slotID }) else { return }
         let occupied = Set(slots.filter { $0.id != slotID }.compactMap(\.itemID))
         let candidates = candidateIDs.filter { !occupied.contains($0) }
-        guard candidates.count > 1 else { return }
+        guard !candidates.isEmpty else { return }
         let next: UUID
         if let itemID = slot.itemID, let current = candidates.firstIndex(of: itemID) {
             let offset = forward ? 1 : candidates.count - 1
@@ -156,5 +156,58 @@ extension WardrobeCatalog {
         pendingDeletionIDs.insert(id)
         pendingAcknowledgements = pendingAcknowledgements.map { Set($0.filter { $0.itemID != id }) }
         outfits = outfits.map { $0.removingItem(id) }
+    }
+}
+
+extension Outfit {
+    /// One local composition operation. Reserve pinned and unavailable selections,
+    /// then assign occupied slots before empty ones so a scarce item isn't stolen by a gap.
+    mutating func shuffle(pinnedSlotIDs: Set<UUID>, candidates: [OutfitZone: [UUID]]) {
+        let mutable = slots.indices.filter {
+            !pinnedSlotIDs.contains(slots[$0].id) && !(candidates[slots[$0].zone] ?? []).isEmpty
+        }
+        var occupied = Set(slots.indices.filter { !mutable.contains($0) }.compactMap { slots[$0].itemID })
+        let ordered = mutable.filter { slots[$0].itemID != nil } + mutable.filter { slots[$0].itemID == nil }
+        for index in ordered {
+            let available = (candidates[slots[index].zone] ?? []).filter { !occupied.contains($0) }
+            let alternatives = available.filter { $0 != slots[index].itemID }
+            if let choice = (alternatives.isEmpty ? available : alternatives).randomElement() {
+                slots[index].itemID = choice
+                slots[index].needsReplacement = false
+                occupied.insert(choice)
+            } else if let current = slots[index].itemID {
+                if occupied.contains(current) {
+                    slots[index].itemID = nil
+                } else {
+                    occupied.insert(current)
+                }
+            }
+        }
+    }
+}
+
+/// Editor-only history. Names and pins are intentionally outside composition snapshots.
+struct OutfitCompositionHistory {
+    private var previous: [[OutfitSlot]] = []
+    var canUndo: Bool { !previous.isEmpty }
+
+    mutating func recordChange(from before: Outfit, to after: Outfit) {
+        guard before.slots != after.slots else { return }
+        previous.append(before.slots)
+        if previous.count > 100 { previous.removeFirst() }
+    }
+
+    mutating func undo(in outfit: inout Outfit, availableItemIDs: Set<UUID>) {
+        while var slots = previous.popLast() {
+            for index in slots.indices {
+                if let id = slots[index].itemID, !availableItemIDs.contains(id) {
+                    slots[index].itemID = nil
+                    slots[index].needsReplacement = true
+                }
+            }
+            guard slots != outfit.slots else { continue }
+            outfit.slots = slots
+            return
+        }
     }
 }

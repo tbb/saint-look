@@ -16,7 +16,7 @@ test('startup refuses a newer data format instead of pretending rollback succeed
   const env = await environment(t);
   // Historical/future database is input to the public process boundary, not an assertion side channel.
   const future = new DatabaseSync(join(env.directory, 'wardrobe.sqlite'));
-  future.exec('PRAGMA user_version=2; CREATE TABLE future_only (value TEXT);');
+  future.exec('PRAGMA user_version=3; CREATE TABLE future_only (value TEXT);');
   future.close();
   await assert.rejects(env.launch(), /Unsupported data version/);
 });
@@ -77,7 +77,7 @@ test('controlled release changes deployment identity while retaining its revisio
   const health = await (await server.request('/health')).json();
   assert.equal(health.revision, release.revision);
   assert.equal(health.deploymentId, 'b10826ef-458b-4caa-9ee1-9402e94071cb');
-  assert.equal(health.dataVersion, 1);
+  assert.equal(health.dataVersion, 2);
   assert.equal(health.mode, 'demo');
   assert.equal((await server.request('/__control')).status, 404);
   const item = await photoRequest();
@@ -95,6 +95,24 @@ test('controlled release changes deployment identity while retaining its revisio
   const persisted = await waitForItem(restarted, item.itemId);
   assert.equal(persisted.operationId, item.operationId);
   assert.deepEqual(Buffer.from(await (await restarted.request(persisted.resultPath)).arrayBuffer()), before);
+});
+
+test('version one ingestion data migrates to illustration-aware storage and a version one release refuses rollback', async t => {
+  const env = await environment(t), server = await env.launch();
+  const photo = await photoRequest(); await upload(server, photo);
+  const ready = await waitForItem(server, photo.itemId);
+  const bytes = Buffer.from(await (await server.request(ready.resultPath)).arrayBuffer());
+  await server.stop();
+  // An older schema is an input fixture to the startup boundary.
+  const legacy = new DatabaseSync(join(env.directory, 'wardrobe.sqlite'));
+  legacy.exec('DROP TABLE illustrations; DROP TABLE illustration_sources; PRAGMA user_version=1'); legacy.close();
+  const migrated = await env.launch();
+  assert.equal((await (await migrated.request('/health')).json()).dataVersion, 2);
+  assert.deepEqual(Buffer.from(await (await migrated.request(ready.resultPath)).arrayBuffer()), bytes);
+  await migrated.stop();
+  const old = await controlledRelease(t);
+  await writeFile(join(old.directory, 'release.json'), JSON.stringify({ format: 1, dataVersion: 1, minDataVersion: 1, maxDataVersion: 1 }));
+  await assert.rejects(old.launch({ SAINT_LOOK_DATA_DIR: env.directory }), /Unsupported data version/);
 });
 
 test('a controlled release refuses missing or invalid baked identity', async t => {

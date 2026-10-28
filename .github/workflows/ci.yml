@@ -21,7 +21,7 @@ on:
         description: Local Simulator suite
         type: choice
         default: all
-        options: [all, wardrobe, outfits, visual, camera]
+        options: [all, wardrobe, outfits, visual, camera, wardrobe-recovery]
       visual_profiles:
         description: Visual evidence profiles (only used by the visual suite)
         type: choice
@@ -46,6 +46,7 @@ jobs:
     outputs:
       backend: ${{ steps.paths.outputs.backend }}
       ios: ${{ steps.paths.outputs.ios }}
+      ios_matrix: ${{ steps.paths.outputs.ios_matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,16 +56,25 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          IOS_SUITE: ${{ inputs.ios_suite || 'all' }}
+          VISUAL_PROFILES: ${{ inputs.visual_profiles || 'all' }}
         run: |
           python3 - <<'PY'
-          import os, subprocess
+          import json, os, subprocess
           base, head = os.environ['BASE_SHA'], os.environ['HEAD_SHA']
           paths = subprocess.check_output(['git', 'diff', '--name-only', base, head], text=True).splitlines() if base and head else []
           common = not base or any(p != '.github/workflows/fitting-experiment.yml' and p.startswith(('shared/', 'docs/api/', '.github/workflows/')) for p in paths)
+          selected_suite = os.environ['IOS_SUITE'] or 'all'
+          suites = ['wardrobe', 'outfits', 'visual'] if selected_suite == 'all' else [selected_suite]
+          selected_profile = os.environ['VISUAL_PROFILES'] or 'all'
+          profiles = ['iphone-light', 'iphone-dark', 'iphone-max-text', 'ipad-light'] if selected_profile == 'all' else [selected_profile]
+          matrix = [{'suite': suite, 'profile': profile, 'label': f'{suite}-{profile}' if profile else suite}
+                    for suite in suites for profile in (profiles if suite == 'visual' else [''])]
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               for name, prefix in [('backend', 'backend/'), ('ios', 'client-ios/')]:
                   needed = common or any(p.startswith(prefix) for p in paths)
                   output.write(f'{name}={str(needed).lower()}\n')
+              output.write(f'ios_matrix={json.dumps({"include": matrix})}\n')
           PY
 
   backend:
@@ -86,17 +96,17 @@ jobs:
       - run: npm --prefix backend test
 
   ios:
-    name: ${{ matrix.suite == 'wardrobe' && 'ios' || format('ios-{0}', matrix.suite) }}
+    name: ${{ matrix.suite == 'wardrobe' && 'ios' || format('ios-{0}', matrix.label) }}
     if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.ios == 'true'
     needs: changes
     strategy:
       fail-fast: false
-      matrix:
-        suite: ${{ fromJSON(inputs.ios_suite == 'camera' && '["camera"]' || inputs.ios_suite == 'outfits' && '["outfits"]' || inputs.ios_suite == 'wardrobe' && '["wardrobe"]' || inputs.ios_suite == 'visual' && '["visual"]' || '["wardrobe","outfits","visual"]') }}
+      matrix: ${{ fromJSON(needs.changes.outputs.ios_matrix) }}
     runs-on: macos-26
-    # Wardrobe includes cold Simulator startup (~9 min observed), 24 checks and manifest smoke.
-    # Keep a bounded 40 min for that job; outfits and four visual profiles retain their own caps.
-    timeout-minutes: ${{ matrix.suite == 'visual' && 90 || matrix.suite == 'outfits' && 60 || 40 }}
+    # Wardrobe now has 33 public scenarios plus cold Simulator startup and manifest smoke.
+    # Each visual profile gets its own cold boot/build/evidence budget; no serial four-profile timeout.
+    # Keep wardrobe/outfits/recovery and each visual profile bounded at 60 min; camera retains 40 min.
+    timeout-minutes: ${{ matrix.suite == 'camera' && 40 || 60 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -115,7 +125,7 @@ jobs:
       - name: Real Simulator and local backend (controlled providers)
         env:
           TEST_SUITE: ${{ matrix.suite }}
-          SAINT_LOOK_VISUAL_PROFILES: ${{ inputs.visual_profiles || 'all' }}
+          SAINT_LOOK_VISUAL_PROFILES: ${{ matrix.profile || 'all' }}
           SAINT_LOOK_UI_TEST_ONLY: ${{ matrix.suite == 'outfits' && 'SaintLookUITests/OutfitFlowTests' || 'SaintLookUITests/WardrobeFlowTests' }}
           NODE_ENV: test
           SAINT_LOOK_TEST_CLOCK_FILE: ${{ runner.temp }}/saint-look-clock.json
@@ -123,6 +133,12 @@ jobs:
           SAINT_LOOK_OWNER_TOKEN: saint-look-ui-tests-owner-token-00000001
           SAINT_LOOK_PROVIDER: live
           SAINT_LOOK_TEST_PROVIDER_ORIGIN: http://127.0.0.1:8789
+          # Fixture capability is off until a focused test opts in through provider control.
+          SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true'
+          SAINT_LOOK_ILLUSTRATION_TEST_ORIGIN: http://127.0.0.1:8789
+          SAINT_LOOK_ILLUSTRATION_TEST_CONTROLLED: 'true'
+          PHOTOROOM_SANDBOX_API_KEY: sandbox_fixture
+          FAL_KEY: fixture
           TYPESAFE_API_KEY: fixture-typesafe-key
           PHOTOROOM_API_KEY: fixture-photoroom-key
           SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED: 'true'
@@ -189,6 +205,11 @@ jobs:
           SaintLookUITests/WardrobeFlowTests/testDeniedCameraOffersSettingsAndGalleryWithoutCreatingAnItem
           SaintLookUITests/WardrobeFlowTests/testReplacementSourceCancellationAndRestrictedCameraKeepTheItem"
           fi
+          if [[ "$TEST_SUITE" == "wardrobe-recovery" ]]; then
+            export SAINT_LOOK_UI_TEST_ONLY="SaintLookUITests/WardrobeFlowTests/testCancelDeletionKeepsPhotoAndDoesNotSendDelete
+          SaintLookUITests/WardrobeFlowTests/testOfflineReplacementRetainsPreviousCutoutAndEditsUntilNewResultAfterRelaunch
+          SaintLookUITests/WardrobeFlowTests/testOpeningPhotoKeepsItemContextThroughEditingAndBackToCollection"
+          fi
           bash client-ios/scripts/test-simulator.sh
           if [[ "$TEST_SUITE" == "wardrobe" ]]; then
           # Exercise the explicit XCTest manifest using one existing local test.
@@ -206,7 +227,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-ui-video-${{ matrix.suite }}
+          name: simulator-ui-video-${{ matrix.label }}
           path: client-ios/build/videos/*.mp4
           if-no-files-found: warn
           retention-days: 7
@@ -228,7 +249,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-screenshots-${{ matrix.suite }}
+          name: simulator-screenshots-${{ matrix.label }}
           path: client-ios/build/screenshots
           if-no-files-found: warn
           retention-days: 7
@@ -236,7 +257,7 @@ jobs:
         if: always() && matrix.suite == 'visual'
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-stall-diagnostics-visual
+          name: simulator-stall-diagnostics-${{ matrix.label }}
           path: client-ios/build/visual-stall-diagnostics
           if-no-files-found: warn
           retention-days: 7
@@ -244,7 +265,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-results-${{ matrix.suite }}
+          name: simulator-results-${{ matrix.label }}
           path: client-ios/build/*.xcresult
           if-no-files-found: warn
           retention-days: 7

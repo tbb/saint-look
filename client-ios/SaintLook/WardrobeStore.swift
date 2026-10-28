@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import UIKit
+import CryptoKit
 
 @MainActor
 final class WardrobeStore: ObservableObject {
@@ -8,6 +9,8 @@ final class WardrobeStore: ObservableObject {
     @Published private(set) var outfits: [Outfit] = []
     @Published private(set) var settings = ConnectionSettings(baseURL: "http://127.0.0.1:8787", token: "")
     @Published private(set) var backendMode: ProcessingMode?
+    @Published private(set) var illustrationAvailable: Bool?
+    private var illustrationTasks: [UUID: (generation: UUID, task: Task<Void, Never>)] = [:]
     @Published var notice: String?
     @Published private(set) var storageAvailable = false
 
@@ -74,6 +77,7 @@ final class WardrobeStore: ObservableObject {
         stopObserving()
         settings = newSettings
         backendMode = nil
+        illustrationAvailable = nil
         if wasObserving { resumePendingItems() }
     }
 
@@ -81,7 +85,8 @@ final class WardrobeStore: ObservableObject {
         guard storageAvailable, let directory else { return }
         do {
             let upload = try PhotoData.uploadCopy(of: original)
-            let item = WardrobeItem(id: UUID(), operationID: UUID(), photoVersionID: UUID())
+            var item = WardrobeItem(id: UUID(), operationID: UUID(), photoVersionID: UUID())
+            item.automaticallyIllustrate = true
             let itemDirectory = directory.appendingPathComponent(item.directoryName, isDirectory: true)
             try FileManager.default.createDirectory(at: itemDirectory, withIntermediateDirectories: true)
             try original.write(to: itemDirectory.appendingPathComponent("original.photo"), options: .atomic)
@@ -102,6 +107,12 @@ final class WardrobeStore: ObservableObject {
         var updated = items
         if let type { updated[index].manualType = type }
         if let colors { updated[index].manualColors = colors }
+        if updated[index].manualType != items[index].manualType || updated[index].manualColors != items[index].manualColors {
+            if updated[index].illustration?.status == .pending {
+                updated[index].illustration?.status = .failed
+                updated[index].illustration?.error = "source_changed"
+            }
+        }
         try persist(updated)
         items = updated
     }
@@ -124,6 +135,8 @@ final class WardrobeStore: ObservableObject {
             }
             pendingDeletionIDs = deletions
             items = updated
+            illustrationTasks[id]?.task.cancel()
+            illustrationTasks[id] = nil
             tasks[id]?.task.cancel()
             tasks[id] = nil
             try? removeLocalFiles(for: id)
@@ -153,7 +166,15 @@ final class WardrobeStore: ObservableObject {
         do {
             if let original {
                 let upload = try PhotoData.uploadCopy(of: original)
+                let previousPhotoID = item.photoVersionID
+                item.preparedPhotos.removeAll { $0.photoID == previousPhotoID }
                 item.photoVersionID = UUID()
+                item.sourceSetVersionID = UUID()
+                item.automaticallyIllustrate = false
+                if item.illustration?.status == .pending {
+                    item.illustration?.status = .failed
+                    item.illustration?.error = "source_changed"
+                }
                 let version = item.photoVersionID.uuidString.lowercased()
                 item.originalFilename = "photo-\(version).original"
                 item.uploadFilename = "photo-\(version).png"
@@ -172,8 +193,12 @@ final class WardrobeStore: ObservableObject {
             item.errorCode = nil
             var updated = items
             updated[index] = item
+            let removedPrepared = items[index].preparedPhotos.filter { cached in !item.preparedPhotos.contains(where: { $0.filename == cached.filename }) }
             try persist(updated)
             items = updated
+            for cached in removedPrepared {
+                try? FileManager.default.removeItem(at: directory.appendingPathComponent(item.directoryName).appendingPathComponent(cached.filename))
+            }
             tasks[id]?.task.cancel()
             tasks[id] = nil
             if observing { start(id) }
@@ -236,12 +261,15 @@ final class WardrobeStore: ObservableObject {
         for id in pendingDeletionIDs { startDeletion(id) }
         for acknowledgement in pendingAcknowledgements { startAcknowledgement(acknowledgement) }
         for item in items where item.status == .pending { start(item.id) }
+        for item in items where item.illustration?.status == .pending { startIllustration(item.id) }
     }
 
     func stopObserving() {
         observing = false
         for entry in tasks.values { entry.task.cancel() }
         tasks.removeAll()
+        for entry in illustrationTasks.values { entry.task.cancel() }
+        illustrationTasks.removeAll()
         for entry in deletionTasks.values { entry.task.cancel() }
         deletionTasks.removeAll()
         for entry in acknowledgementTasks.values { entry.task.cancel() }
@@ -256,9 +284,11 @@ final class WardrobeStore: ObservableObject {
         modeTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
-                    let mode = try await client.mode()
+                    let health = try await client.health()
                     try Task.checkCancellation()
-                    self?.backendMode = mode
+                    self?.backendMode = health.mode
+                    self?.illustrationAvailable = health.illustrationAvailable ?? false
+                    self?.startNewItemIllustrations()
                     return
                 } catch {
                     guard !Task.isCancelled else { return }
@@ -367,6 +397,12 @@ final class WardrobeStore: ObservableObject {
         // Processing updates never own manual values, including pending and failure updates.
         updated[index].manualType = items[index].manualType
         updated[index].manualColors = items[index].manualColors
+        updated[index].illustration = items[index].illustration
+        updated[index].illustrationResult = items[index].illustrationResult
+        updated[index].sourceSetVersionID = items[index].sourceSetVersionID
+        updated[index].automaticallyIllustrate = items[index].automaticallyIllustrate
+        updated[index].additionalPhotos = items[index].additionalPhotos
+        updated[index].preparedPhotos = items[index].preparedPhotos
         var acknowledgements = pendingAcknowledgements
         if let acknowledgement { acknowledgements.insert(acknowledgement) }
         try persist(updated, pendingAcknowledgements: acknowledgements)
@@ -446,6 +482,7 @@ final class WardrobeStore: ObservableObject {
                     completed.errorMessage = nil
                     completed.errorCode = nil
                     try replace(completed, acknowledgement: ResultAcknowledgement(itemID: item.id, operationID: item.operationID))
+                    startNewItemIllustrations()
                     return
                 }
                 item.errorMessage = nil
@@ -479,4 +516,294 @@ final class WardrobeStore: ObservableObject {
             }
         }
     }
+}
+
+
+extension WardrobeStore {
+    func originalImage(for item: WardrobeItem) -> UIImage? {
+        guard let directory else { return nil }
+        return UIImage(contentsOfFile: directory.appendingPathComponent(item.directoryName).appendingPathComponent(item.originalFilename).path)
+    }
+
+    func illustrationURL(for item: WardrobeItem) -> URL? {
+        guard let directory, let result = item.illustrationResult else { return nil }
+        let url = directory.appendingPathComponent(item.directoryName).appendingPathComponent(result.filename)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    func requestIllustration(_ id: UUID) {
+        guard storageAvailable, let index = items.firstIndex(where: { $0.id == id }),
+              items[index].status == .ready, items[index].illustration?.status != .pending else { return }
+        var updated = items
+        let item = updated[index]
+        if var delivery = item.illustration, item.canResumeIllustrationDelivery {
+            // Retry downloading the already generated operation, never pay to regenerate
+            // because a cache download or local file write failed.
+            delivery.status = .pending
+            delivery.error = nil
+            updated[index].illustration = delivery
+        } else {
+            let revision = (item.illustration?.revision ?? 0) + 1
+            guard revision <= 9_007_199_254_740_991 else { return }
+            updated[index].illustration = IllustrationRequest(operationID: UUID(), photoVersionID: item.photoVersionID,
+                sourceSetVersionID: item.sourceSetVersionID, revision: revision,
+                manualType: item.manualType, manualColors: item.manualColors)
+        }
+        updated[index].automaticallyIllustrate = false
+        do {
+            try persist(updated)
+            items = updated
+            illustrationTasks[id]?.task.cancel()
+            illustrationTasks[id] = nil
+            if observing { startIllustration(id) }
+        } catch { notice = "Не удалось сохранить запрос. Иллюстрация не отправлена." }
+    }
+
+    private func startNewItemIllustrations() {
+        guard let illustrationAvailable else { return }
+        for item in items where item.automaticallyIllustrate && item.status == .ready {
+            if illustrationAvailable {
+                requestIllustration(item.id)
+            } else if let index = items.firstIndex(where: { $0.id == item.id }) {
+                var updated = items
+                updated[index].automaticallyIllustrate = false
+                do { try persist(updated); items = updated }
+                catch { notice = "Не удалось сохранить состояние иллюстрации." }
+            }
+        }
+    }
+
+    private func startIllustration(_ id: UUID) {
+        guard illustrationTasks[id] == nil,
+              let operationID = items.first(where: { $0.id == id })?.illustration?.operationID else { return }
+        let generation = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.processIllustration(id, operationID: operationID)
+            if self.illustrationTasks[id]?.generation == generation { self.illustrationTasks[id] = nil }
+        }
+        illustrationTasks[id] = (generation, task)
+    }
+
+    private func illustrationIsCurrent(_ item: WardrobeItem, request: IllustrationRequest) -> Bool {
+        items.contains { $0.id == item.id && $0.illustration?.operationID == request.operationID
+            && $0.photoVersionID == request.photoVersionID && $0.sourceSetVersionID == request.sourceSetVersionID
+            && $0.manualType == request.manualType && $0.manualColors == request.manualColors }
+    }
+
+    private func saveIllustration(_ id: UUID, request: IllustrationRequest,
+                                  result: IllustrationResult? = nil, preparedPhotos: [IllustrationPreparedPhoto]? = nil,
+                                  acknowledge: Bool = false) throws {
+        guard let index = items.firstIndex(where: { $0.id == id }),
+              illustrationIsCurrent(items[index], request: request) else { throw CancellationError() }
+        var updated = items
+        updated[index].illustration = request
+        if let result { updated[index].illustrationResult = result }
+        if let preparedPhotos { updated[index].preparedPhotos = preparedPhotos }
+        var acknowledgements = pendingAcknowledgements
+        let acknowledgement = ResultAcknowledgement(itemID: id, operationID: request.operationID, illustration: true)
+        if acknowledge { acknowledgements.insert(acknowledgement) }
+        try persist(updated, pendingAcknowledgements: acknowledgements)
+        items = updated
+        pendingAcknowledgements = acknowledgements
+        if acknowledge && observing { startAcknowledgement(acknowledgement) }
+    }
+
+    private func processIllustration(_ id: UUID, operationID: UUID) async {
+        guard let directory else { return }
+        var retrySeconds: UInt64 = 1
+        while observing && !Task.isCancelled {
+            guard let item = items.first(where: { $0.id == id }), var intent = item.illustration,
+                  intent.operationID == operationID, intent.status == .pending else { return }
+            guard illustrationIsCurrent(item, request: intent) else { return }
+            do {
+                let client = BackendClient(settings: settings)
+                let response: IllustrationResponse
+                if intent.submitted {
+                    do { response = try await client.illustrationStatus(item, request: intent) }
+                    catch ClientError.server(404) {
+                        response = try await submitIllustration(item, intent: intent, client: client, directory: directory)
+                    }
+                } else {
+                    intent.submitted = true
+                    try saveIllustration(id, request: intent)
+                    response = try await submitIllustration(item, intent: intent, client: client, directory: directory)
+                }
+                try Task.checkCancellation()
+                guard illustrationIsCurrent(item, request: intent) else { return }
+                intent.processing = response.processing
+                intent.error = response.error
+                intent.status = response.status
+                if response.status == .ready {
+                    intent.readyForDelivery = true
+                    // Keep the public state pending until every required artifact is durable.
+                    intent.status = .pending
+                    try saveIllustration(id, request: intent)
+                    let prepared = try await downloadPreparedPhotos(item, intent: intent, response: response, client: client, directory: directory)
+                    let data = try await client.illustrationResult(item, request: intent, response: response)
+                    guard data.count <= 10 * 1024 * 1024, let image = UIImage(data: data),
+                          let cgImage = image.cgImage, cgImage.width == 1024, cgImage.height == 1024,
+                          [.first, .last, .premultipliedFirst, .premultipliedLast].contains(cgImage.alphaInfo) else {
+                        throw ClientError.invalidResponse
+                    }
+                    try Task.checkCancellation()
+                    guard illustrationIsCurrent(item, request: intent) else { return }
+                    let filename = "illustration-\(operationID.uuidString.lowercased()).png"
+                    try data.write(to: directory.appendingPathComponent(item.directoryName).appendingPathComponent(filename), options: .atomic)
+                    let previous = items.first(where: { $0.id == id })
+                    let previousFilename = previous?.illustrationResult?.filename
+                    var completed = intent
+                    completed.status = .ready
+                    completed.readyForDelivery = false
+                    try saveIllustration(id, request: completed, result: IllustrationResult(filename: filename, response: response), preparedPhotos: prepared, acknowledge: true)
+                    for cached in previous?.preparedPhotos ?? [] where !prepared.contains(where: { $0.filename == cached.filename }) {
+                        try? FileManager.default.removeItem(at: directory.appendingPathComponent(item.directoryName).appendingPathComponent(cached.filename))
+                    }
+                    if let previousFilename, previousFilename != filename {
+                        try? FileManager.default.removeItem(at: directory.appendingPathComponent(item.directoryName).appendingPathComponent(previousFilename))
+                    }
+                    return
+                }
+                try saveIllustration(id, request: intent)
+                if intent.status == .failed { return }
+                retrySeconds = 1
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+            } catch {
+                guard !Task.isCancelled, illustrationIsCurrent(item, request: intent) else { return }
+                let retryable: Bool
+                if let error = error as? ClientError {
+                    switch error {
+                    case .server(let status): retryable = status >= 500 || status == 408 || status == 429
+                    default: retryable = false
+                    }
+                } else { retryable = error is URLError }
+                intent.status = retryable ? .pending : .failed
+                if case ClientError.resultUnavailable(let code) = error {
+                    intent.error = code
+                    if ["result_expired", "result_delivered"].contains(code) { intent.readyForDelivery = false }
+                }
+                else if case ClientError.oversizedPhoto = error { intent.error = "image_too_large" }
+                else { intent.error = retryable ? "offline" : "invalid_provider_response" }
+                do { try saveIllustration(id, request: intent) }
+                catch { notice = "Не удалось сохранить состояние иллюстрации."; return }
+                guard retryable else { return }
+                do { try await Task.sleep(nanoseconds: retrySeconds * 1_000_000_000) } catch { return }
+                retrySeconds = min(retrySeconds * 2, 10)
+            }
+        }
+    }
+
+    private func submitIllustration(_ item: WardrobeItem, intent: IllustrationRequest,
+                                    client: BackendClient, directory: URL) async throws -> IllustrationResponse {
+        try Task.checkCancellation()
+        guard illustrationIsCurrent(item, request: intent) else { throw CancellationError() }
+        let folder = directory.appendingPathComponent(item.directoryName)
+        let photos = try illustrationSources(for: item).map { source -> [String: String] in
+            let data = try Data(contentsOf: folder.appendingPathComponent(source.filename))
+            var photo = ["id": source.id.uuidString.lowercased(), "role": source.role, "imageBase64": data.base64EncodedString()]
+            if let cached = item.preparedPhotos.first(where: {
+                $0.photoID == source.id && $0.modelVersion == "fal-ai/nano-banana-pro/edit"
+                    && $0.templateVersion == "front-360x560-proposed-v1" && $0.geometryVersion == "fitting-square-1024-v1"
+            }) {
+                guard cached.sourceDigest == photoDigest(data),
+                      let prepared = try? Data(contentsOf: folder.appendingPathComponent(cached.filename)),
+                      cached.preparedDigest == photoDigest(prepared) else {
+                    throw ClientError.resultUnavailable("prepared_source_missing")
+                }
+                photo["preparedBase64"] = prepared.base64EncodedString()
+            }
+            return photo
+        }
+        return try await client.submitIllustration(item, request: intent, photos: photos)
+    }
+
+    private func illustrationSources(for item: WardrobeItem) -> [(id: UUID, role: String, filename: String)] {
+        [(item.photoVersionID, "front", item.uploadFilename)] + item.additionalPhotos.map { ($0.id, $0.role, $0.uploadFilename) }
+    }
+
+    private func photoDigest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func downloadPreparedPhotos(_ item: WardrobeItem, intent: IllustrationRequest, response: IllustrationResponse,
+                                        client: BackendClient, directory: URL) async throws -> [IllustrationPreparedPhoto] {
+        guard let sources = response.preparedSources else { throw ClientError.invalidResponse }
+        let folder = directory.appendingPathComponent(item.directoryName)
+        var saved: [IllustrationPreparedPhoto] = []
+        for source in sources {
+            guard let original = illustrationSources(for: item).first(where: { $0.id == source.photoId }) else { throw ClientError.invalidResponse }
+            let originalData = try Data(contentsOf: folder.appendingPathComponent(original.filename))
+            let prepared = try await client.preparedIllustrationSource(item, request: intent, response: response, source: source)
+            guard prepared.count <= 10 * 1024 * 1024,
+                  prepared.starts(with: [137, 80, 78, 71, 13, 10, 26, 10]),
+                  let originalImage = UIImage(data: originalData)?.cgImage,
+                  let image = UIImage(data: prepared)?.cgImage,
+                  image.width == originalImage.width, image.height == originalImage.height,
+                  [.first, .last, .premultipliedFirst, .premultipliedLast].contains(image.alphaInfo) else {
+                throw ClientError.invalidResponse
+            }
+            try Task.checkCancellation()
+            guard illustrationIsCurrent(item, request: intent) else { throw CancellationError() }
+            let filename = "prepared-\(source.photoId.uuidString.lowercased())-\(intent.operationID.uuidString.lowercased()).png"
+            try prepared.write(to: folder.appendingPathComponent(filename), options: .atomic)
+            saved.append(IllustrationPreparedPhoto(photoID: source.photoId, filename: filename,
+                sourceDigest: photoDigest(originalData), preparedDigest: photoDigest(prepared), modelVersion: response.modelVersion,
+                templateVersion: response.templateVersion, geometryVersion: response.geometryVersion))
+        }
+        return saved
+    }
+
+    func additionalPhotoImage(_ photo: IllustrationPhotoDraft, for item: WardrobeItem) -> UIImage? {
+        if let original = photo.original { return UIImage(data: original) }
+        guard let directory, let saved = photo.saved else { return nil }
+        return UIImage(contentsOfFile: directory.appendingPathComponent(item.directoryName).appendingPathComponent(saved.uploadFilename).path)
+    }
+
+    func saveAdditionalPhotos(_ drafts: [IllustrationPhotoDraft], for id: UUID, primaryVersion: UUID) throws {
+        guard let directory, storageAvailable, let index = items.firstIndex(where: { $0.id == id }),
+              items[index].photoVersionID == primaryVersion else { throw ClientError.invalidPhoto }
+        guard drafts.count <= 2, Set(drafts.map(\.id)).count == drafts.count,
+              drafts.allSatisfy({ ["back", "detail"].contains($0.role) }) else { throw ClientError.invalidPhoto }
+        let previous = items[index].additionalPhotos
+        if drafts.count == previous.count, zip(drafts, previous).allSatisfy({ $0.id == $1.id && $0.role == $1.role }) { return }
+        let folder = directory.appendingPathComponent(items[index].directoryName)
+        var photos: [IllustrationSourcePhoto] = []
+        for draft in drafts {
+            if let original = draft.original {
+                let upload = try PhotoData.uploadCopy(of: original)
+                let name = draft.id.uuidString.lowercased()
+                let source = IllustrationSourcePhoto(id: draft.id, role: draft.role,
+                    originalFilename: "detail-\(name).original", uploadFilename: "detail-\(name).png")
+                try original.write(to: folder.appendingPathComponent(source.originalFilename), options: .atomic)
+                try upload.write(to: folder.appendingPathComponent(source.uploadFilename), options: .atomic)
+                photos.append(source)
+            } else if var saved = draft.saved, previous.contains(where: { $0.id == saved.id }) {
+                saved.role = draft.role
+                photos.append(saved)
+            } else { throw ClientError.invalidPhoto }
+        }
+        var updated = items
+        updated[index].additionalPhotos = photos
+        let activePhotoIDs = Set([updated[index].photoVersionID] + photos.map(\.id))
+        let removedPrepared = updated[index].preparedPhotos.filter { !activePhotoIDs.contains($0.photoID) }
+        updated[index].preparedPhotos.removeAll { !activePhotoIDs.contains($0.photoID) }
+        updated[index].sourceSetVersionID = UUID()
+        updated[index].automaticallyIllustrate = false
+        if updated[index].illustration?.status == .pending {
+            updated[index].illustration?.status = .failed
+            updated[index].illustration?.error = "source_changed"
+        }
+        try persist(updated)
+        items = updated
+        illustrationTasks[id]?.task.cancel()
+        illustrationTasks[id] = nil
+        for cached in removedPrepared {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(cached.filename))
+        }
+        for photo in previous where !photos.contains(where: { $0.id == photo.id }) {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(photo.originalFilename))
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(photo.uploadFilename))
+        }
+    }
+
 }

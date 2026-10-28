@@ -70,6 +70,32 @@ test('a fully checked main commit produces exactly its source plus the baked rev
   assert.deepEqual(JSON.parse(result.stdout), { revision: f.sha, ciRunId: 42, profile: 'controlled-http', dataVersion: 1 });
 });
 
+test('a checked illustration release preserves data format 2 in its deployment proof', async t => {
+  const f = await fixture(t, true, async directory => {
+    const path = join(directory, 'backend/release.json');
+    const manifest = JSON.parse(await readFile(path));
+    Object.assign(manifest, { dataVersion: 2, minDataVersion: 2, maxDataVersion: 2 });
+    await writeFile(path, JSON.stringify(manifest));
+  });
+  const result = await f.run();
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).dataVersion, 2);
+  assert.equal(JSON.parse(await readFile(join(f.output, 'backend/release.json'))).minDataVersion, 2);
+});
+
+test('unknown or inconsistent data formats cannot produce a deployment archive', async t => {
+  for (const versions of [[3, 3, 3], [2, 1, 2], [1, 1, 2]]) {
+    const f = await fixture(t, true, async directory => {
+      const path = join(directory, 'backend/release.json');
+      const manifest = JSON.parse(await readFile(path));
+      [manifest.dataVersion, manifest.minDataVersion, manifest.maxDataVersion] = versions;
+      await writeFile(path, JSON.stringify(manifest));
+    });
+    assert.equal((await f.run()).code, 1);
+    await assert.rejects(access(f.output));
+  }
+});
+
 for (const job of ['backend', 'ios', 'container', 'deploy-policy']) {
   test(`a skipped ${job} job cannot authorize deployment`, async t => {
     const f = await fixture(t, true);

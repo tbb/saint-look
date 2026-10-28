@@ -33,7 +33,9 @@ final class RemoteDeploymentTests: XCTestCase {
         XCTAssertEqual(health["mode"] as? String, "demo")
         XCTAssertEqual(health["revision"] as? String, revision)
         XCTAssertEqual(health["deploymentId"] as? String, deploymentID)
-        XCTAssertEqual(health["dataVersion"] as? Int, 1)
+        let dataVersion = try XCTUnwrap(Int(ProcessInfo.processInfo.environment["SAINT_LOOK_REMOTE_DATA_VERSION"] ?? "1"))
+        XCTAssertTrue([1, 2].contains(dataVersion))
+        XCTAssertEqual(health["dataVersion"] as? Int, dataVersion)
 
         func launch(reset: Bool, baseURL: String) -> XCUIApplication {
             let app = XCUIApplication()
@@ -109,7 +111,9 @@ final class LiveTrialTests: XCTestCase {
         XCTAssertEqual(health["mode"] as? String, "live")
         XCTAssertEqual(health["revision"] as? String, revision)
         XCTAssertEqual(health["deploymentId"] as? String, marker)
-        XCTAssertEqual(health["dataVersion"] as? Int, 1)
+        let dataVersion = try XCTUnwrap(Int(ProcessInfo.processInfo.environment["SAINT_LOOK_REMOTE_DATA_VERSION"] ?? "1"))
+        XCTAssertTrue([1, 2].contains(dataVersion))
+        XCTAssertEqual(health["dataVersion"] as? Int, dataVersion)
         defer { XCUIApplication().terminate() }
         func launch(reset: Bool, online: Bool, index: Int) -> XCUIApplication {
             let app = XCUIApplication()

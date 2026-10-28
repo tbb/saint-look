@@ -223,6 +223,255 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testIllustrationDeliverySurvivesOfflineRestartAndLostAcknowledgement() async throws {
+        _ = try await providerControl(["illustrationMode": "success"])
+        try await control(mode: "block-acks")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        try openFirstItem(in: app)
+        XCTAssertTrue(app.staticTexts["illustration-saved"].waitForExistence(timeout: 30))
+        try tapVisibleButton("show-illustration", in: app)
+        let before = try await transportState()
+        let path = try XCTUnwrap(before["lastIllustrationPath"] as? String)
+        XCTAssertEqual(before["illustrationOperations"] as? Int, 1)
+        let retained = try await backendResponse(path: path + "/result")
+        XCTAssertEqual(retained.status, 200)
+        try await control(mode: "offline")
+        app.terminate()
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 1, pending: 0)
+        try openFirstItem(in: restored)
+        try tapVisibleButton("show-illustration", in: restored)
+        XCTAssertTrue(restored.images["item-photo"].firstMatch.exists)
+        try await control(mode: "drop-next-ack-response")
+        let acknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 1, timeout: 30)
+        XCTAssertTrue(acknowledged)
+        let cleaned = try await backendResponse(path: path + "/result")
+        XCTAssertEqual(cleaned.status, 410)
+        let after = try await transportState()
+        XCTAssertEqual(after["illustrationOperations"] as? Int, 1, "Restart and acknowledgement never regenerate")
+    }
+
+    @MainActor
+    func testReadyIllustrationDeliveryCanRetryAfterGenerationIsDisabled() async throws {
+        _ = try await providerControl(["illustrationMode": "success"])
+        try await control(mode: "corrupt-prepared-source")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        try openFirstItem(in: app)
+        let failure = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "неполный результат"), object: app.staticTexts["illustration-status"])
+        await fulfillment(of: [failure], timeout: 30)
+        let before = try await transportState()
+        XCTAssertEqual(before["illustrationAcknowledgements"] as? Int, 0)
+        XCTAssertEqual(before["illustrationUploads"] as? Int, 1)
+        app.terminate()
+        _ = try await providerControl(["illustrationMode": NSNull()])
+        try await control(mode: "online")
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 1, pending: 0)
+        try openFirstItem(in: restored)
+        XCTAssertTrue(restored.staticTexts["illustration-unavailable"].waitForExistence(timeout: 10), "The health capability must actually be disabled before retry")
+        XCTAssertTrue(restored.buttons["generate-illustration"].isEnabled, "Downloading a ready operation does not require generation availability")
+        try tapVisibleButton("generate-illustration", in: restored)
+        XCTAssertTrue(restored.staticTexts["illustration-saved"].waitForExistence(timeout: 30))
+        let acknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 1, timeout: 30)
+        XCTAssertTrue(acknowledged)
+        let after = try await transportState()
+        XCTAssertEqual(after["illustrationUploads"] as? Int, 1)
+        let provider = try await providerControl()
+        XCTAssertEqual(provider["illustrationGenerationCalls"] as? Int, 1)
+    }
+
+    @MainActor
+    func testPreparedPhotoDeliveryFailureDelaysAcknowledgementAndResumesSameOperation() async throws {
+        _ = try await providerControl(["illustrationMode": "success"])
+        try await control(mode: "block-prepared-sources")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        try openFirstItem(in: app)
+        XCTAssertTrue(app.staticTexts["illustration-status"].waitForExistence(timeout: 20))
+        var attempted = false
+        for _ in 0..<100 {
+            let state = try await transportState()
+            if (state["preparedSourceDownloads"] as? Int ?? 0) > 0 { attempted = true; break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(attempted)
+        let before = try await transportState()
+        XCTAssertEqual(before["illustrationAcknowledgements"] as? Int, 0, "The result must not be acknowledged before its prepared source is durable")
+        XCTAssertFalse(app.buttons["show-illustration"].isEnabled)
+        app.terminate()
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 1, pending: 0)
+        try openFirstItem(in: restored)
+        try await control(mode: "online")
+        XCTAssertTrue(restored.staticTexts["illustration-saved"].waitForExistence(timeout: 30))
+        let acknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 1, timeout: 30)
+        XCTAssertTrue(acknowledged)
+        let after = try await transportState()
+        XCTAssertEqual(after["illustrationUploads"] as? Int, 1, "A delivery failure resumes GET of the same operation")
+        let provider = try await providerControl()
+        XCTAssertEqual(provider["illustrationGenerationCalls"] as? Int, 1)
+    }
+
+    @MainActor
+    func testPreparedPhotosSurviveAcknowledgementAndAreReusedForExplicitUpdates() async throws {
+        _ = try await providerControl(["illustrationMode": "success"])
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        try openFirstItem(in: app)
+        XCTAssertTrue(app.staticTexts["illustration-saved"].waitForExistence(timeout: 30))
+        let firstAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 1, timeout: 30)
+        XCTAssertTrue(firstAcknowledged)
+        let initial = try await providerControl()
+        XCTAssertEqual(initial["illustrationPreparationCalls"] as? Int, 1)
+        try tapVisibleButton("generate-illustration", in: app)
+        let refreshed = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 2, timeout: 30)
+        XCTAssertTrue(refreshed, "Explicit refresh of an unchanged ready image starts a new operation after ack")
+        let refreshProvider = try await providerControl()
+        XCTAssertEqual(refreshProvider["illustrationPreparationCalls"] as? Int, 1)
+        XCTAssertEqual(refreshProvider["illustrationGenerationCalls"] as? Int, 2)
+        app.terminate()
+
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 1, pending: 0)
+        try tapVisibleButton("edit-item", in: restored)
+        try chooseType("hoodie", in: restored)
+        restored.buttons["save-item-edits"].tap()
+        try tapVisibleButton("generate-illustration", in: restored)
+        let secondAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 3, timeout: 30)
+        XCTAssertTrue(secondAcknowledged)
+        let reused = try await providerControl()
+        XCTAssertEqual(reused["illustrationPreparationCalls"] as? Int, 1, "Manual edits reuse the prepared source even after server ack cleanup and app restart")
+
+        try tapVisibleButton("illustration-sources", in: restored)
+        restored.buttons["add-demo-detail-photo"].tap()
+        restored.buttons["save-illustration-sources"].tap()
+        try tapVisibleButton("generate-illustration", in: restored)
+        let thirdAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 4, timeout: 30)
+        XCTAssertTrue(thirdAcknowledged)
+        let added = try await providerControl()
+        XCTAssertEqual(added["illustrationPreparationCalls"] as? Int, 2, "Only the added photo needs preparation")
+    }
+
+    @MainActor
+    func testIllustrationManualEditsAreExplicitAndFailedUpdateKeepsPriorImage() async throws {
+        _ = try await providerControl(["illustrationMode": "success"])
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        try openFirstItem(in: app)
+        XCTAssertTrue(app.staticTexts["illustration-saved"].waitForExistence(timeout: 30))
+        try tapVisibleButton("edit-item", in: app)
+        try chooseType("hoodie", in: app)
+        app.buttons["save-item-edits"].tap()
+        let before = try await transportState()
+        XCTAssertEqual(before["illustrationOperations"] as? Int, 1)
+        XCTAssertTrue(app.staticTexts["illustration-saved"].label.contains("предыдущая"))
+        _ = try await providerControl(["illustrationMode": "failed"])
+        try tapVisibleButton("generate-illustration", in: app)
+        let failed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "не удалась"), object: app.staticTexts["illustration-status"])
+        await fulfillment(of: [failed], timeout: 30)
+        try tapVisibleButton("show-illustration", in: app)
+        XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
+        _ = try await providerControl(["illustrationMode": "success"])
+        try tapVisibleButton("generate-illustration", in: app)
+        let current = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Иллюстрация сохранена на устройстве."), object: app.staticTexts["illustration-saved"])
+        await fulfillment(of: [current], timeout: 30)
+        let after = try await transportState()
+        XCTAssertEqual(after["illustrationOperations"] as? Int, 3)
+        XCTAssertTrue(app.navigationBars["Худи"].exists)
+    }
+
+    @MainActor
+    func testLateIllustrationCannotRestoreDeletedThing() async throws {
+        _ = try await providerControl(["illustrationMode": "success"])
+        try await control(mode: "hold-next-illustration-result")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        let held = try await waitForTransportCount("heldResultResponses", equalTo: 1, timeout: 30)
+        XCTAssertTrue(held)
+        try await control(mode: "offline")
+        try deleteFirstItem(in: app)
+        await waitForSummary(app, ready: 0, pending: 0)
+        try await control(mode: "online")
+        let deleted = try await waitForTransportCount("deletedItems", equalTo: 1, timeout: 30)
+        XCTAssertTrue(deleted)
+        app.terminate()
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 0, pending: 0)
+    }
+
+    @MainActor
+    func testForeignIllustrationIsRejectedWithoutAutomaticRegeneration() async throws {
+        _ = try await providerControl(["illustrationMode": "success"])
+        try await control(mode: "foreign-illustration")
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        try openFirstItem(in: app)
+        let failed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "неполный результат"), object: app.staticTexts["illustration-status"])
+        await fulfillment(of: [failed], timeout: 30)
+        XCTAssertFalse(app.buttons["show-illustration"].isEnabled)
+        let state = try await transportState()
+        XCTAssertEqual(state["illustrationUploads"] as? Int, 1)
+        XCTAssertEqual(state["illustrationAcknowledgements"] as? Int, 0)
+    }
+
+    @MainActor
+    func testAdditionalPhotoDraftCancellationAndSaveDoNotGenerate() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        app.images["item-photo"].firstMatch.tap()
+        try tapVisibleButton("illustration-sources", in: app)
+        app.buttons["add-demo-detail-photo"].tap()
+        XCTAssertTrue(app.buttons["remove-detail-photo"].firstMatch.exists)
+        app.buttons["cancel-illustration-sources"].tap()
+        XCTAssertTrue(app.alerts["Отбросить изменения?"].waitForExistence(timeout: 5))
+        app.alerts.buttons.matching(identifier: "continue-illustration-sources").firstMatch.tap()
+        XCTAssertTrue(app.buttons["remove-detail-photo"].firstMatch.exists)
+        app.buttons["cancel-illustration-sources"].tap()
+        app.alerts.buttons.matching(identifier: "discard-illustration-sources").firstMatch.tap()
+        try tapVisibleButton("illustration-sources", in: app)
+        XCTAssertFalse(app.buttons["remove-detail-photo"].firstMatch.exists)
+        app.buttons["add-demo-detail-photo"].tap()
+        app.buttons["save-illustration-sources"].tap()
+        app.terminate()
+        let offline = launch(reset: false, baseURL: "http://127.0.0.1:1")
+        await waitForSummary(offline, ready: 1, pending: 0)
+        offline.images["item-photo"].firstMatch.tap()
+        try tapVisibleButton("illustration-sources", in: offline)
+        XCTAssertTrue(offline.buttons["remove-detail-photo"].firstMatch.exists)
+        let state = try await transportState()
+        XCTAssertEqual(state["illustrationUploads"] as? Int ?? 0, 0)
+    }
+
+    @MainActor
+    func testIllustrationUnavailablePreservesOriginalAndCutout() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        app.images["item-photo"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["show-original"].waitForExistence(timeout: 5))
+        app.buttons["show-original"].tap()
+        XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
+        app.buttons["show-cutout"].tap()
+        for _ in 0..<4 where !app.staticTexts["illustration-unavailable"].isHittable { app.swipeUp() }
+        XCTAssertTrue(app.staticTexts["illustration-unavailable"].exists)
+        XCTAssertFalse(app.buttons["generate-illustration"].isEnabled)
+        app.terminate()
+        let offline = launch(reset: false, baseURL: "http://127.0.0.1:1")
+        await waitForSummary(offline, ready: 1, pending: 0)
+        XCTAssertTrue(offline.images["item-photo"].firstMatch.exists)
+    }
+
+    @MainActor
     func testPhotoBecomesReadyThroughBackendAndSurvivesOfflineRelaunch() async throws {
         let app = launch(reset: true, baseURL: testURL, trialIndex: 1)
         XCTAssertTrue(app.staticTexts["demo-notice"].waitForExistence(timeout: 5))
@@ -377,7 +626,7 @@ final class WardrobeFlowTests: XCTestCase {
         app.buttons["add-demo-photo"].tap()
         await waitForSummary(app, ready: 1, pending: 0)
         let before = try await transportState()
-        try tapVisibleButton("delete-item", in: app)
+        try presentDeletionConfirmation(in: app)
         let cancel = app.alerts.buttons.matching(identifier: "cancel-delete-item").firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 5), "Deletion must wait for explicit confirmation")
         XCTAssertTrue(app.alerts.staticTexts["Вещь исчезнет из гардероба. В сохранённых луках её места останутся пустыми."].exists)
@@ -893,6 +1142,33 @@ final class WardrobeFlowTests: XCTestCase {
     private enum InteractionError: Error { case buttonNotVisible(String) }
 
     @MainActor
+    private func presentDeletionConfirmation(in app: XCUIApplication) throws {
+        try openFirstItem(in: app)
+        app.navigationBars.buttons["item-actions"].tap()
+        let command = app.collectionViews.buttons.matching(identifier: "delete-item").firstMatch
+        var previousFrame: CGRect?
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard command.exists, command.isHittable else { previousFrame = nil; return false }
+            let frame = command.frame
+            defer { previousFrame = frame }
+            return !frame.isEmpty && previousFrame == frame
+        }, object: nil)
+        guard XCTWaiter.wait(for: [ready], timeout: 5) == .completed else {
+            XCTFail("The native item menu must present a stable, tappable deletion command")
+            throw InteractionError.buttonNotVisible("delete-item")
+        }
+        command.press(forDuration: 0.1)
+        let cancel = app.alerts.buttons.matching(identifier: "cancel-delete-item").firstMatch
+        // CI captured a centered short tap that left this menu open. Repeat only
+        // its confirmation presenter, once, while the same menu is still visible.
+        // An alert (including an unexpected one) prevents any second interaction.
+        if !cancel.waitForExistence(timeout: 1), !app.alerts.firstMatch.exists,
+           command.exists, command.isHittable {
+            command.press(forDuration: 0.1)
+        }
+    }
+
+    @MainActor
     private func tapVisibleButton(_ identifier: String, in app: XCUIApplication) throws {
         let itemActions = ["edit-item", "cutout-problem", "retry-processing", "replace-demo-photo", "replace-photo", "delete-item"]
         if itemActions.contains(identifier) {
@@ -900,8 +1176,18 @@ final class WardrobeFlowTests: XCTestCase {
             let visibleAction = app.buttons[identifier].firstMatch
             if identifier != "edit-item", !visibleAction.exists || !visibleAction.isHittable {
                 app.buttons["item-actions"].tap()
-                guard let action = app.buttons.matching(identifier: identifier).allElementsBoundByIndex.first(where: { $0.isHittable }) else {
-                    XCTFail("The item menu must offer \(identifier)")
+                let action = app.collectionViews.buttons.matching(identifier: identifier).firstMatch
+                var previousFrame: CGRect?
+                let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    guard action.exists, action.isHittable else { previousFrame = nil; return false }
+                    let frame = action.frame
+                    defer { previousFrame = frame }
+                    return !frame.isEmpty && previousFrame == frame
+                }, object: nil)
+                // Native menu entries can exist before presentation finishes. Wait
+                // for that one command rather than repeating an action with side effects.
+                guard XCTWaiter.wait(for: [ready], timeout: 5) == .completed else {
+                    XCTFail("The item menu must offer a stable, hittable \(identifier)")
                     throw InteractionError.buttonNotVisible(identifier)
                 }
                 action.tap()
@@ -928,12 +1214,22 @@ final class WardrobeFlowTests: XCTestCase {
     @MainActor
     private func openFirstItem(in app: XCUIApplication) throws {
         if app.buttons["item-actions"].exists { return }
-        let photo = app.images["item-photo"].firstMatch
-        guard photo.waitForExistence(timeout: 5) else { throw InteractionError.buttonNotVisible("item-photo") }
-        for _ in 0..<4 where !photo.isHittable { app.swipeDown() }
-        XCTAssertTrue(photo.isHittable)
-        photo.tap()
-        XCTAssertTrue(app.buttons["item-actions"].waitForExistence(timeout: 5))
+        // The photo is content inside the NavigationLink, not the action itself.
+        // Address the native button exposed by the identified wardrobe card.
+        // Photo-hit behavior remains covered by its dedicated navigation test.
+        let card = app.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@", "wardrobe-item-")).firstMatch
+        let link = card.buttons.firstMatch
+        guard link.waitForExistence(timeout: 5) else { throw InteractionError.buttonNotVisible("wardrobe-item-link") }
+        for _ in 0..<4 where !link.isHittable { app.swipeDown() }
+        guard link.isHittable else {
+            XCTFail("The wardrobe item's native navigation button must be hittable")
+            throw InteractionError.buttonNotVisible("wardrobe-item-link")
+        }
+        link.tap()
+        guard app.buttons["item-actions"].waitForExistence(timeout: 5) else {
+            XCTFail("The wardrobe item must open before its detail is inspected")
+            throw InteractionError.buttonNotVisible("item-actions")
+        }
     }
 
     @MainActor

@@ -47,6 +47,32 @@ import Foundation
         let inactive = try VisualFixtures.prepare(environment: [:], support: support, resources: sources, taxonomy: taxonomy)
         precondition(inactive == nil)
         print("PASS: fixture boundary rejects unknown scenarios and non-test launches")
+        var fittingEnvironment = environment
+        fittingEnvironment["SAINT_LOOK_VISUAL_SCENARIO"] = "fitting-ready"
+        _ = try VisualFixtures.prepare(environment: fittingEnvironment, support: support, resources: sources, taxonomy: taxonomy)
+        let fitting = try WardrobeCatalogFile(directory: root).load()
+        precondition(fitting.items.count == 4 && fitting.outfits.count == 1)
+        precondition(fitting.outfits[0].slots.filter { $0.zone == .body }.count == 2)
+        precondition(fitting.outfits[0].selectedIDs == Set(fitting.items.map(\.id)))
+        for item in fitting.items {
+            let result = item.illustrationResult!
+            precondition(result.response.mode == "test" && result.response.status == .ready)
+            precondition(result.response.itemId == item.id && result.response.photoVersionId == item.photoVersionID)
+            precondition(result.response.sourceSetVersionId == item.sourceSetVersionID)
+            precondition(result.response.geometryVersion == "fitting-square-1024-v1")
+            precondition(result.response.templateVersion == "front-360x560-proposed-v1")
+            precondition(!item.illustrationIsStale && !item.automaticallyIllustrate)
+            precondition(item.illustration?.status == .ready && item.illustration?.submitted == true)
+            let data = try Data(contentsOf: root.appendingPathComponent(item.directoryName).appendingPathComponent(result.filename))
+            precondition(Array(data.prefix(8)) == [137, 80, 78, 71, 13, 10, 26, 10])
+            precondition(Array(data[16..<24]) == [0, 0, 4, 0, 0, 0, 4, 0], "Every layer has the full 1024 square canvas")
+            precondition(data[25] == 6, "RGBA fixture retains transparent pixels")
+        }
+        fittingEnvironment["SAINT_LOOK_RESET_DATA"] = "0"
+        _ = try VisualFixtures.prepare(environment: fittingEnvironment, support: support, resources: sources, taxonomy: taxonomy)
+        let restoredFitting = try WardrobeCatalogFile(directory: root).load()
+        precondition(restoredFitting.outfits == fitting.outfits)
+        print("PASS: isolated full-canvas illustration fixtures and multilayer look survive restart without generation intent")
         var broken = environment
         broken["SAINT_LOOK_VISUAL_SCENARIO"] = "unreadable-catalog"
         _ = try VisualFixtures.prepare(environment: broken, support: support, resources: sources, taxonomy: taxonomy)

@@ -41,7 +41,8 @@ final class OutfitFlowTests: XCTestCase {
         }
         var lastFrame = CGRect.zero
         var lastViewport = CGRect.zero
-        for _ in 0..<7 {
+        // Seven scroll gestures, with a visibility check after the final gesture too.
+        for attempt in 0...7 {
             let bars = app.navigationBars.allElementsBoundByIndex
             let foregroundBar = bars.reversed().first { $0.isHittable } ?? bars.last
             let top = foregroundBar?.frame.maxY ?? app.frame.minY
@@ -61,6 +62,7 @@ final class OutfitFlowTests: XCTestCase {
             if present, frame.midY > viewport.minY, frame.midY < viewport.maxY, element.isHittable {
                 return true
             }
+            guard attempt < 7 else { break }
             let distance = present ? viewport.midY - frame.midY : (towardTop ? 180 : -180)
             let movement = (distance < 0 ? -1.0 : 1.0) * min(180, max(100, abs(distance)))
             let start = app.coordinate(withNormalizedOffset: .zero)
@@ -283,6 +285,85 @@ final class OutfitFlowTests: XCTestCase {
         XCTAssertEqual(offline.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'repair-slot-'")).count, 2)
         XCUIDevice.shared.press(.home)
         offline.terminate()
+    }
+
+    @MainActor
+    func testFittingRoomHasIndependentAccessibleZonesAndHonestEmptyCanvas() {
+        let app = launch(reset: true)
+        app.tabBars.buttons["Луки"].tap()
+        app.buttons["create-first-outfit"].tap()
+        XCTAssertTrue(app.otherElements["fitting-canvas"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["fitting-empty-preview"].exists)
+        let head = app.buttons["fitting-zone-head"]
+        tap(head, in: app)
+        XCTAssertTrue(head.isSelected)
+        let shoes = app.buttons["fitting-zone-shoes"]
+        tap(shoes, in: app)
+        XCTAssertTrue(shoes.isSelected)
+        XCTAssertFalse(head.isSelected)
+        XCTAssertFalse(app.buttons["save-outfit"].isEnabled)
+        app.buttons["cancel-outfit"].tap()
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Changing the active zone must not dirty an empty look")
+        app.terminate()
+    }
+
+    @MainActor
+    func testMannequinActiveBodyLayerSurvivesIndependentZoneSwitches() {
+        let app = launch(reset: true)
+        app.tabBars.buttons["Луки"].tap()
+        app.buttons["create-first-outfit"].tap()
+        tap(app.buttons["fitting-add-layer"], in: app)
+        let layers = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'fitting-layer-'"))
+        XCTAssertEqual(layers.count, 2)
+        XCTAssertTrue(layers.element(boundBy: 1).isSelected)
+        tap(layers.element(boundBy: 0), in: app)
+        XCTAssertTrue(layers.element(boundBy: 0).isSelected)
+        tap(layers.element(boundBy: 1), in: app)
+        tap(app.buttons["fitting-zone-bottom"], in: app)
+        tap(app.buttons["fitting-zone-body"], in: app)
+        XCTAssertTrue(layers.element(boundBy: 1).isSelected, "Returning to body restores its active layer")
+        app.buttons["cancel-outfit"].tap()
+        app.alerts.buttons.matching(identifier: "discard-outfit-changes").firstMatch.tap()
+        XCTAssertTrue(app.buttons["create-first-outfit"].waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
+    @MainActor
+    func testPinnedSlotAllowsManualReplacementAndUndoWithoutAI() async throws {
+        let app = launch(reset: true)
+        for count in 1...3 {
+            tap(app.buttons["add-demo-photo"], in: app)
+            await summary(app, ready: count, pending: 0)
+        }
+        let before = try await activityCounts()
+        app.tabBars.buttons["Луки"].tap()
+        tap(app.buttons["create-first-outfit"], in: app)
+        let row = button(prefix: "outfit-slot-body-", in: app)
+        tap(row, in: app)
+        chooseCandidate(button(prefix: "outfit-candidate-", in: app), in: app)
+        let slotID = String(row.identifier.dropFirst("outfit-slot-body-".count))
+        let pin = app.buttons["pin-slot-\(slotID)"]
+        tap(pin, in: app)
+        XCTAssertTrue(pin.isSelected)
+        tap(row, in: app)
+        let old = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-' AND selected == true")).firstMatch.identifier
+        let alternative = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-' AND selected == false")).firstMatch
+        let new = alternative.identifier
+        chooseCandidate(alternative, in: app)
+        XCTAssertTrue(pin.isSelected, "Manual choice must not remove the slot pin")
+        tap(app.buttons["fitting-undo"], in: app)
+        tap(row, in: app)
+        XCTAssertTrue(app.buttons[old].isSelected)
+        XCTAssertFalse(app.buttons[new].isSelected)
+        app.buttons["cancel-outfit-picker"].tap()
+        XCTAssertTrue(pin.isSelected, "Undo changes composition, not pins")
+        tap(app.buttons["fitting-shuffle"], in: app)
+        XCTAssertTrue(app.staticTexts["fitting-action-message"].exists)
+        let after = try await activityCounts()
+        XCTAssertEqual(after, before, "Pinning, manual choice, shuffle and undo must stay local")
+        app.buttons["cancel-outfit"].tap()
+        app.alerts.buttons.matching(identifier: "discard-outfit-changes").firstMatch.tap()
+        app.terminate()
     }
 
     @MainActor
@@ -613,6 +694,9 @@ final class OutfitFlowTests: XCTestCase {
         head.swipeLeft()
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "Horizontal drag must never open the picker")
         guard !app.buttons["cancel-outfit-picker"].exists else { return }
+        // Selecting the head zone via swipe collapses body-layer controls above this row.
+        // Re-reveal after that layout change before measuring or starting a vertical gesture.
+        guard reveal(head, in: app, towardTop: true) else { return }
         let body = button(prefix: "outfit-slot-body-", in: app)
         let originalBodyY = body.frame.minY
         let dragStart = head.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
@@ -639,6 +723,7 @@ final class OutfitFlowTests: XCTestCase {
         app.buttons["create-first-outfit"].tap()
         let head = button(prefix: "outfit-slot-head-", in: app)
         let originalHead = head.label
+        guard reveal(head, in: app, towardTop: true) else { return }
         head.swipeLeft()
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "A swipe must not activate the row's tap action")
         guard !app.buttons["cancel-outfit-picker"].exists else { return }
@@ -651,6 +736,7 @@ final class OutfitFlowTests: XCTestCase {
         chooseCandidate(button(prefix: "outfit-candidate-", in: app), in: app)
         let firstID = first.identifier
         let selectedLabel = first.label
+        guard reveal(first, in: app) else { return }
         first.swipeLeft()
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "A one-candidate swipe must stay in the editor")
         XCTAssertEqual(first.label, selectedLabel, "One candidate must never clear a selection")
@@ -660,6 +746,7 @@ final class OutfitFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Все подходящие вещи уже выбраны"].waitForExistence(timeout: 5))
         app.buttons["cancel-outfit-picker"].tap()
         let secondID = second.identifier.replacingOccurrences(of: "outfit-slot-body-", with: "")
+        guard reveal(second, in: app) else { return }
         second.swipeRight()
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists, "An empty-pool swipe must stay in the editor")
         XCTAssertTrue(second.label.contains("Выбрать вещь"))

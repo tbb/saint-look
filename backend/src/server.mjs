@@ -11,6 +11,7 @@ import { initializeDeletion, deleteItem } from './deletion.mjs';
 import { createRetention, acknowledge } from './retention.mjs';
 import { initializeDataVersion, release } from './data-version.mjs';
 import { readRevision } from './revision.mjs';
+import { createIllustrations } from './illustrations.mjs';
 
 const revision = readRevision();
 
@@ -40,6 +41,7 @@ initializeAttempts(database);
 const provider = createProviders(process.env);
 const retention = createRetention(database, process.env, provider);
 const worker = createWorker(database, provider, process.env, retention);
+const illustrations = createIllustrations(database, process.env, retention);
 
 function itemResponse(row) {
   return { itemId: row.item_id, operationId: row.operation_id, photoVersionId: row.photo_version_id,
@@ -53,10 +55,32 @@ function send(response, status, body) {
 const server = createServer(async (request, response) => {
   try {
     const path = new URL(request.url, 'http://localhost').pathname;
-    if (request.method === 'GET' && path === '/health') return send(response, 200, { status: 'ok', mode: provider.mode, revision, dataVersion: release.dataVersion,
+    if (request.method === 'GET' && path === '/health') return send(response, 200, { status: 'ok', mode: provider.mode, revision, dataVersion: release.dataVersion, illustrationAvailable: await illustrations.available(),
       ...(process.env.SAINT_LOOK_DEPLOYMENT_ID ? { deploymentId: process.env.SAINT_LOOK_DEPLOYMENT_ID } : {}) });
     if (!authorized(request)) return send(response, 401, { error: 'unauthorized' });
     retention.sweep();
+    illustrations.sweep();
+    const prepared = path.match(/^\/v1\/items\/([^/]+)\/illustrations\/([^/]+)\/sources\/([^/]+)\/prepared$/);
+    if (request.method === 'GET' && prepared) {
+      const image = illustrations.prepared(...prepared.slice(1).map(value => value.toLowerCase()));
+      response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' }); return response.end(image);
+    }
+    const illustration = path.match(/^\/v1\/items\/([^/]+)\/illustrations(?:\/([^/]+)(?:\/(result|ack))?)?$/);
+    if (illustration) {
+      const itemId = illustration[1].toLowerCase(), operationId = illustration[2]?.toLowerCase(), action = illustration[3];
+      if (request.method === 'POST' && !operationId) {
+        const accepted = await illustrations.accept(request, itemId);
+        return send(response, accepted.status, accepted.body);
+      }
+      if (request.method === 'GET' && operationId && !action) return send(response, 200, illustrations.read(itemId, operationId));
+      if (request.method === 'GET' && action === 'result') {
+        const result = illustrations.result(itemId, operationId);
+        response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' }); return response.end(result);
+      }
+      if (request.method === 'POST' && action === 'ack') {
+        illustrations.acknowledge(itemId, operationId); response.writeHead(204, { 'Cache-Control': 'no-store' }); return response.end();
+      }
+    }
     const acknowledgement = path.match(/^\/v1\/items\/([^/]+)\/operations\/([^/]+)\/ack$/);
     if (request.method === 'POST' && acknowledgement) {
       acknowledge(database, acknowledgement[1].toLowerCase(), acknowledgement[2].toLowerCase());
@@ -99,6 +123,7 @@ server.listen(Number(process.env.PORT || 8787), process.env.HOST || '127.0.0.1',
 });
 process.on('SIGTERM', () => {
   worker.close();
+  illustrations.close();
   retention.close();
   server.close(() => { database.close(); process.exit(0); });
   server.closeIdleConnections();

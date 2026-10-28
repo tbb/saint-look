@@ -217,6 +217,8 @@ else:
     targets = [value for key, value in manifest.items() if not key.startswith('__') and isinstance(value, dict)]
 keys = ('SAINT_LOOK_REMOTE_SMOKE', 'SAINT_LOOK_REMOTE_URL', 'SAINT_LOOK_REMOTE_TOKEN',
         'SAINT_LOOK_REMOTE_REVISION', 'SAINT_LOOK_REMOTE_DEPLOYMENT_ID')
+if os.environ.get('SAINT_LOOK_REMOTE_DATA_VERSION'):
+    keys += ('SAINT_LOOK_REMOTE_DATA_VERSION',)
 if os.environ.get('SAINT_LOOK_LIVE_TRIAL') == '1':
     keys = tuple(key for key in keys if key != 'SAINT_LOOK_REMOTE_SMOKE') + ('SAINT_LOOK_LIVE_TRIAL', 'SAINT_LOOK_TRIAL_PHOTO_COUNT')
 if os.environ.get('SAINT_LOOK_VISUAL_PROFILE'):

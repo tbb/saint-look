@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="560" viewBox="0 0 360 560">
+  <title>Saint Look — proposed front pose reference, not a fit model</title>
+  <defs><linearGradient id="body"><stop stop-color="#b5aa9d"/><stop offset=".5" stop-color="#e1d6c8"/><stop offset="1" stop-color="#c8bcad"/></linearGradient></defs>
+  <ellipse cx="180" cy="527" rx="64" ry="8" fill="#81705a" opacity=".12"/>
+  <path d="M164 104 L164 135 Q151 145 135 147 Q121 154 116 181 L100 277 L94 309 Q94 322 103 322 Q110 321 111 306 L119 281 L143 206 L139 264 Q129 296 139 327 L146 402 L145 494 L164 497 L179 372 L182 372 L195 497 L216 494 L215 402 L223 327 Q233 294 220 264 L216 206 L241 281 L249 307 Q250 322 257 322 Q267 321 264 309 L260 277 L244 181 Q239 155 225 148 L196 135 L196 104 Z" fill="url(#body)"/>
+  <path d="M157 72 Q156 45 180 44 Q204 45 204 72 L200 100 Q195 120 180 124 Q165 120 160 100 Z" fill="url(#body)"/>
+  <path d="M164 128 Q180 138 196 128" fill="none" stroke="#b2a696" stroke-width=".7"/>
+</svg>

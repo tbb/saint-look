@@ -271,8 +271,28 @@ private struct OutfitComposition: View {
     }
 
     var body: some View {
+        // A collection card shows each item once. A file that cannot be decoded still
+        // needs its photo fallback, just like a missing illustration.
+        let illustratedSlotIDs = Set(visibleSlots.filter { slot in
+            guard let item = store.items.first(where: { $0.id == slot.itemID }),
+                  let url = store.illustrationURL(for: item) else { return false }
+            return UIImage(contentsOfFile: url.path) != nil
+        }.map(\.id))
+        let showsCanvas = !compact || !illustratedSlotIDs.isEmpty
+        let photoSlots = compact ? visibleSlots.filter { !illustratedSlotIDs.contains($0.id) } : visibleSlots
         VStack(spacing: compact ? 12 : 24) {
-            ForEach(visibleSlots) { slot in
+            if showsCanvas {
+                FittingRoomCanvas(store: store, outfit: outfit)
+                    .frame(maxWidth: compact ? 300 : 460)
+            }
+            if showsCanvas && photoSlots.contains(where: { slot in
+                guard let item = store.items.first(where: { $0.id == slot.itemID }) else { return false }
+                return compact || store.illustrationURL(for: item) == nil
+            }) {
+                Text("Фото вещей без иллюстраций — ниже")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            ForEach(photoSlots) { slot in
                 VStack(spacing: 8) {
                     if let item = store.items.first(where: { $0.id == slot.itemID }) {
                         if let image = store.displayImage(for: item) {
@@ -291,6 +311,9 @@ private struct OutfitComposition: View {
                         if !compact {
                             Text(item.displayedType ?? "Вещь")
                                 .font(.headline)
+                            if let message = item.illustrationStatusMessage {
+                                Text(message).font(.footnote).foregroundStyle(.secondary)
+                            }
                             if !item.displayedColors.isEmpty {
                                 Text(item.displayedColors.joined(separator: ", "))
                                     .font(.subheadline)
@@ -343,6 +366,11 @@ struct OutfitEditorView: View {
     @State var draft: Outfit
     @Environment(\.dismiss) private var dismiss
     @State private var choosingSlot: OutfitSlot?
+    @State private var activeSlotID: UUID?
+    @State private var activeBodySlotID: UUID?
+    @State private var pinnedSlotIDs: Set<UUID> = []
+    @State private var compositionHistory = OutfitCompositionHistory()
+    @State private var actionMessage: String?
     @State private var errorMessage: String?
     @State private var saving = false
     @State private var initial: Outfit
@@ -357,6 +385,7 @@ struct OutfitEditorView: View {
         _errorMessage = State(initialValue: errorMessage)
     }
 
+    private var activeSlot: OutfitSlot? { draft.slots.first { $0.id == activeSlotID } ?? draft.slots.first { $0.zone == .body } }
     private var dirty: Bool { draft != initial }
     private var editingExisting: Bool { store.outfits.contains { $0.id == draft.id } }
 
@@ -364,6 +393,15 @@ struct OutfitEditorView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if errorMessage == nil, let message = saveExplanation {
+                        Text(message)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("outfit-save-explanation")
+                    }
+                    fittingPreview
                     TextField("Название — необязательно", text: $draft.name)
                         .focused($naming)
                         .submitLabel(.done)
@@ -382,13 +420,13 @@ struct OutfitEditorView: View {
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                                 Spacer(minLength: 0)
+                                pinButton(slot)
                                 slotMenu(slot)
                             }
                             slotSelection(slot)
                             if slot.id == draft.slots.last(where: { $0.zone == .body })?.id {
                                 Button("Добавить слой", systemImage: "plus") {
-                                    draft.addBodyLayer()
-                                    errorMessage = nil
+                                    addBodyLayer()
                                 }
                                 .frame(minHeight: 44)
                                 .accessibilityIdentifier("add-body-layer")
@@ -404,16 +442,16 @@ struct OutfitEditorView: View {
             }
             .background(SaintLookStyle.canvas)
             .safeAreaInset(edge: .top, spacing: 0) {
-                if let message = errorMessage ?? saveExplanation {
-                    Text(message)
+                if let errorMessage {
+                    Text(errorMessage)
                         .font(.footnote)
-                        .foregroundStyle(errorMessage == nil ? Color.secondary : Color.red)
+                        .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
                         .background(.bar)
-                        .accessibilityIdentifier(errorMessage == nil ? "outfit-save-explanation" : "outfit-save-error")
+                        .accessibilityIdentifier("outfit-save-error")
                 }
             }
             .navigationTitle(editingExisting ? "Изменить лук" : "Собрать лук")
@@ -443,17 +481,189 @@ struct OutfitEditorView: View {
         }
     }
 
+    @ViewBuilder
+    private var compositionActions: some View {
+        Button("Перемешать", systemImage: "shuffle", action: shuffle)
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("fitting-shuffle")
+        Button("Отменить", systemImage: "arrow.uturn.backward", action: undoComposition)
+            .frame(minHeight: 44)
+            .disabled(!compositionHistory.canUndo)
+            .accessibilityLabel("Отменить изменение состава")
+            .accessibilityIdentifier("fitting-undo")
+    }
+
+    private var fittingPreview: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) { compositionActions }
+                VStack(alignment: .leading, spacing: 8) { compositionActions }
+            }
+            if let actionMessage {
+                Text(actionMessage).font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("fitting-action-message")
+            }
+            FittingRoomCanvas(store: store, outfit: draft)
+                .frame(maxWidth: 460)
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { value in
+                    guard let slot = activeSlot,
+                          abs(value.translation.width) > 40,
+                          abs(value.translation.width) > abs(value.translation.height) * 1.3 else { return }
+                    cycle(slot.id, forward: value.translation.width < 0)
+                })
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 8) {
+                ForEach(OutfitZone.allCases, id: \.rawValue) { zone in
+                    Button {
+                        if zone == .body, let remembered = activeBodySlotID,
+                           draft.slots.contains(where: { $0.id == remembered }) {
+                            activeSlotID = remembered
+                        } else {
+                            activeSlotID = draft.slots.first { $0.zone == zone }?.id
+                        }
+                    } label: {
+                        HStack {
+                            Text(zone.title)
+                            if activeSlot?.zone == zone { Image(systemName: "checkmark") }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(activeSlot?.zone == zone ? SaintLookStyle.accent : .secondary)
+                    .accessibilityAddTraits(activeSlot?.zone == zone ? .isSelected : [])
+                    .accessibilityIdentifier("fitting-zone-\(zone.rawValue)")
+                }
+            }
+            if activeSlot?.zone == .body {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 8) {
+                    ForEach(draft.slots.filter { $0.zone == .body }) { layer in
+                        Button { activate(layer) } label: {
+                            HStack {
+                                Text(outfitSlotTitle(layer, in: draft))
+                                if activeSlot?.id == layer.id { Image(systemName: "checkmark") }
+                            }.frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityAddTraits(activeSlot?.id == layer.id ? .isSelected : [])
+                        .accessibilityIdentifier("fitting-layer-\(layer.id)")
+                    }
+                    Button("Добавить слой", systemImage: "plus", action: addBodyLayer)
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("fitting-add-layer")
+                }
+                Text("Слои идут изнутри наружу. Свайп меняет только выбранный слой.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if let slot = activeSlot {
+                if pinnedSlotIDs.contains(slot.id) {
+                    Label("Слот закреплён при перемешивании", systemImage: "pin.fill")
+                        .font(.footnote).foregroundStyle(SaintLookStyle.accent)
+                }
+                HStack {
+                    Button { cycle(slot.id, forward: false) } label: {
+                        Image(systemName: "chevron.left").frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("Предыдущая вещь: \(outfitSlotTitle(slot, in: draft))")
+                    .disabled(!canCycle(slot))
+                    Button { choosingSlot = slot } label: {
+                        VStack(spacing: 4) {
+                            Text(outfitSlotTitle(slot, in: draft)).font(.subheadline)
+                            Text(itemLabel(slot)).font(.headline)
+                        }.frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .accessibilityIdentifier("fitting-choose-active")
+                    Button { cycle(slot.id, forward: true) } label: {
+                        Image(systemName: "chevron.right").frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("Следующая вещь: \(outfitSlotTitle(slot, in: draft))")
+                    .disabled(!canCycle(slot))
+                }
+                if candidates(for: slot).count < 2 {
+                    Text(candidates(for: slot).isEmpty ? "Нет доступных вещей для этой зоны." : "В этой зоне один вариант. Его можно выбрать нажатием.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            if draft.selectedIDs.isEmpty {
+                Text("Выберите вещи по зонам. Иллюстрации появятся на манекене; фотографии доступны ниже.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("fitting-empty-preview")
+            } else if draft.slots.contains(where: { slot in
+                guard let item = store.items.first(where: { $0.id == slot.itemID }) else { return false }
+                return store.illustrationURL(for: item) == nil
+            }) {
+                Text("Не для всех вещей готова иллюстрация. Их фотографии показаны в составе ниже, а не на манекене.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("fitting-missing-illustration")
+            }
+        }
+    }
+
+    private func pinButton(_ slot: OutfitSlot) -> some View {
+        let pinned = pinnedSlotIDs.contains(slot.id)
+        return Button {
+            if pinned { pinnedSlotIDs.remove(slot.id) } else { pinnedSlotIDs.insert(slot.id) }
+            actionMessage = nil
+        } label: {
+            Image(systemName: pinned ? "pin.fill" : "pin")
+                .frame(minWidth: 44, minHeight: 44)
+        }
+        .accessibilityLabel("\(pinned ? "Открепить" : "Закрепить"): \(outfitSlotTitle(slot, in: draft))")
+        .accessibilityAddTraits(pinned ? .isSelected : [])
+        .accessibilityIdentifier("pin-slot-\(slot.id)")
+    }
+
+    private func shuffle() {
+        guard draft.slots.contains(where: { !pinnedSlotIDs.contains($0.id) }) else {
+            actionMessage = "Все зоны закреплены. Открепите одну, чтобы перемешать."
+            return
+        }
+        let previous = draft
+        let pools = Dictionary(uniqueKeysWithValues: OutfitZone.allCases.map {
+            ($0, store.outfitCandidates(for: $0, excluding: []).map(\.id))
+        })
+        draft.shuffle(pinnedSlotIDs: pinnedSlotIDs, candidates: pools)
+        compositionHistory.recordChange(from: previous, to: draft)
+        actionMessage = previous.slots == draft.slots ? "Для незакреплённых зон нет других доступных вариантов." : nil
+        errorMessage = nil
+    }
+
+    private func undoComposition() {
+        compositionHistory.undo(in: &draft, availableItemIDs: Set(store.items.map(\.id)))
+        if !draft.slots.contains(where: { $0.id == activeSlotID }) {
+            activeSlotID = draft.slots.first { $0.zone == .body }?.id
+            activeBodySlotID = activeSlotID
+        }
+        actionMessage = nil
+        errorMessage = nil
+    }
+
+    private func activate(_ slot: OutfitSlot) {
+        activeSlotID = slot.id
+        if slot.zone == .body { activeBodySlotID = slot.id }
+    }
+
+    private func addBodyLayer() {
+        let previous = draft
+        let id = draft.addBodyLayer()
+        compositionHistory.recordChange(from: previous, to: draft)
+        activeSlotID = id
+        activeBodySlotID = id
+        errorMessage = nil
+    }
+
     private func slotSelection(_ slot: OutfitSlot) -> some View {
         OutfitSlotContent(store: store, slot: slot)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
             // A Button in a List can activate on release after a simultaneous drag.
             // TapGesture fails when the finger moves; the drag still coexists with scrolling.
-            .onTapGesture { choosingSlot = slot }
+            .onTapGesture { activate(slot); choosingSlot = slot }
             .simultaneousGesture(slotDrag(slot.id))
             .accessibilityElement(children: .ignore)
             .accessibilityAddTraits(.isButton)
-            .accessibilityAction { choosingSlot = slot }
+            .accessibilityAction { activate(slot); choosingSlot = slot }
             .accessibilityIdentifier("outfit-slot-\(slot.zone.rawValue)-\(slot.id)")
             .accessibilityLabel("\(outfitSlotTitle(slot, in: draft)). \(itemLabel(slot))")
             .accessibilityValue(itemLabel(slot))
@@ -474,10 +684,10 @@ struct OutfitEditorView: View {
         Menu {
             Button("Выбрать вещь", systemImage: "square.grid.2x2") { choosingSlot = slot }
             Button("Следующая вещь", systemImage: "chevron.right") { cycle(slot.id, forward: true) }
-                .disabled(candidates(for: slot).count < 2)
+                .disabled(!canCycle(slot))
                 .accessibilityIdentifier("next-slot-\(slot.id)")
             Button("Предыдущая вещь", systemImage: "chevron.left") { cycle(slot.id, forward: false) }
-                .disabled(candidates(for: slot).count < 2)
+                .disabled(!canCycle(slot))
                 .accessibilityIdentifier("previous-slot-\(slot.id)")
             if slot.itemID != nil || slot.needsReplacement {
                 Button("Очистить", systemImage: "xmark") { select(nil, for: slot.id) }
@@ -486,7 +696,13 @@ struct OutfitEditorView: View {
             }
             if slot.zone == .body {
                 Button("Убрать слой", systemImage: "minus") {
+                    let previous = draft
                     draft.removeBodyLayer(slot.id)
+                    compositionHistory.recordChange(from: previous, to: draft)
+                    if !draft.slots.contains(where: { $0.id == activeSlotID }) {
+                        activeSlotID = draft.slots.first { $0.zone == .body }?.id
+                        activeBodySlotID = activeSlotID
+                    }
                     errorMessage = nil
                 }
                 .accessibilityLabel("Убрать: \(outfitSlotTitle(slot, in: draft))")
@@ -543,8 +759,16 @@ struct OutfitEditorView: View {
     private func select(_ itemID: UUID?, for slotID: UUID) {
         guard let slot = draft.slots.first(where: { $0.id == slotID }) else { return }
         if let itemID, !candidates(for: slot).contains(where: { $0.id == itemID }) { return }
+        let previous = draft
         draft.selectItem(itemID, for: slotID)
+        compositionHistory.recordChange(from: previous, to: draft)
+        actionMessage = nil
         errorMessage = nil
+    }
+
+    private func canCycle(_ slot: OutfitSlot) -> Bool {
+        let available = candidates(for: slot)
+        return available.contains { $0.id != slot.itemID }
     }
 
     private func candidates(for slot: OutfitSlot) -> [WardrobeItem] {
@@ -554,7 +778,11 @@ struct OutfitEditorView: View {
 
     private func cycle(_ slotID: UUID, forward: Bool) {
         guard let slot = draft.slots.first(where: { $0.id == slotID }) else { return }
+        activate(slot)
+        let previous = draft
         draft.cycleItem(for: slotID, among: candidates(for: slot).map(\.id), forward: forward)
+        compositionHistory.recordChange(from: previous, to: draft)
+        actionMessage = nil
         if draft.slots.first(where: { $0.id == slotID })?.itemID != slot.itemID { swipeDiscovered = true }
         errorMessage = nil
     }
@@ -734,6 +962,11 @@ struct OutfitSlotContent: View {
                                height: slot.zone == .bottom ? 152 : 124)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(item.displayedType ?? "Вещь").font(.headline)
+                        Text(store.illustrationURL(for: item) == nil ? "Фото · без иллюстрации" : "Иллюстрация на манекене")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        if let status = item.illustrationStatusMessage {
+                            Text(status).font(.footnote).foregroundStyle(.secondary)
+                        }
                         if !item.displayedColors.isEmpty {
                             Text(item.displayedColors.joined(separator: ", "))
                                 .font(.subheadline).foregroundStyle(.secondary)

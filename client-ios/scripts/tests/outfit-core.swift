@@ -134,12 +134,47 @@ struct OutfitCoreChecks {
         precondition(afterDeletion.slots.first { $0.id == cyclingFirst }!.itemID == jeansID)
         afterDeletion.selectItem(nil, for: cyclingFirst)
         afterDeletion.cycleItem(for: cyclingFirst, among: [replacementID], forward: true)
-        precondition(afterDeletion.slots.first { $0.id == cyclingFirst }!.itemID == nil)
+        precondition(afterDeletion.slots.first { $0.id == cyclingFirst }!.itemID == replacementID, "An empty slot can select its only available candidate")
         afterDeletion.removeBodyLayer(cyclingFirst)
         let afterRemoval = afterDeletion
         afterDeletion.cycleItem(for: cyclingFirst, among: [shirtID, replacementID], forward: true)
         precondition(afterDeletion == afterRemoval, "A stale gesture cannot target a different row")
         print("PASS: empty/single pools, removed candidates and stale row gestures keep the remaining composition safe")
+
+        // Shuffle respects stable slots and a pool containing items already pinned elsewhere.
+        var shuffled = Outfit()
+        let fixedBody = shuffled.slots[1].id
+        let freeBody = shuffled.addBodyLayer()
+        shuffled.selectItem(shirtID, for: fixedBody)
+        shuffled.selectItem(hoodie.id, for: freeBody)
+        let beforeShuffle = shuffled
+        shuffled.shuffle(pinnedSlotIDs: [fixedBody], candidates: [.body: [shirtID, hoodie.id, jacket.id], .bottom: [jeansID]])
+        precondition(shuffled.slots.first { $0.id == fixedBody }!.itemID == shirtID)
+        precondition(shuffled.slots.first { $0.id == freeBody }!.itemID == jacket.id)
+        precondition(shuffled.slots.first { $0.zone == .bottom }!.itemID == jeansID)
+        precondition(shuffled.selectedIDs.count == 3)
+        let allPinned = shuffled
+        shuffled.shuffle(pinnedSlotIDs: Set(shuffled.slots.map(\.id)), candidates: [.body: [shirtID, hoodie.id, jacket.id]])
+        precondition(shuffled == allPinned)
+        shuffled.shuffle(pinnedSlotIDs: [], candidates: [:])
+        precondition(shuffled == allPinned, "An empty wardrobe pool must not clear existing references")
+        print("PASS: shuffle changes only unlocked slots with eligible candidates without duplicates")
+
+        var history = OutfitCompositionHistory()
+        history.recordChange(from: beforeShuffle, to: allPinned)
+        shuffled.name = "Название не отменяется"
+        history.undo(in: &shuffled, availableItemIDs: [shirtID, hoodie.id, jacket.id, jeansID])
+        precondition(shuffled.slots == beforeShuffle.slots, "A whole shuffle is undone in one action")
+        precondition(shuffled.name == "Название не отменяется")
+        let beforeClear = shuffled
+        shuffled.selectItem(nil, for: fixedBody)
+        history.recordChange(from: beforeClear, to: shuffled)
+        history.undo(in: &shuffled, availableItemIDs: [hoodie.id, jacket.id, jeansID])
+        precondition(shuffled.slots.first { $0.id == fixedBody }!.itemID == nil)
+        precondition(shuffled.slots.first { $0.id == fixedBody }!.needsReplacement)
+        precondition(shuffled.slots.first { $0.id == freeBody }!.itemID == hoodie.id)
+        precondition(!history.canUndo)
+        print("PASS: atomic composition undo preserves name and never revives a deleted wardrobe item")
 
         // Both historical formats are loaded without replacing the user's wardrobe.
         let catalogURL = root.appendingPathComponent("catalog.json")

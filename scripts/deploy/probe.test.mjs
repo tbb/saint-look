@@ -101,3 +101,14 @@ test('live readiness checks only health and refuses a synthetic smoke', async t 
   assert.equal((await f.run({ SAINT_LOOK_DEPLOYMENT_PROFILE: 'live' })).code, 1);
   assert.ok(f.requests.every(r => r.url === '/health' && r.method === 'GET'));
 });
+
+test('illustration release readiness requires its exact selected data version without uploading', async t => {
+  const health = { status: 'ok', mode: 'live', revision, dataVersion: 1, deploymentId: 'deployment-new' };
+  const f = await fixture(t, health);
+  const selected = { SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', SAINT_LOOK_EXPECTED_DATA_VERSION: '2' };
+  assert.equal((await f.run(selected, ['health'])).code, 1);
+  health.dataVersion = 2;
+  const result = await f.run(selected, ['health']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(f.requests.every(r => r.url === '/health' && r.method === 'GET' && !r.authorization));
+});
