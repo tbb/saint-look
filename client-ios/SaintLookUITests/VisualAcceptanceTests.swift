@@ -68,8 +68,13 @@ final class VisualAcceptanceTests: XCTestCase {
 
     @MainActor
     private func waitVisible(_ element: XCUIElement, in app: XCUIApplication) throws {
+        // Each AX property read is a remote snapshot. Re-reading frames consumed
+        // the full wait deadline on iPad even when the control was already hittable.
+        let viewport = app.frame
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            element.exists && element.isHittable && !element.frame.isEmpty && app.frame.intersects(element.frame)
+            guard element.exists else { return false }
+            let frame = element.frame
+            return element.isHittable && !frame.isEmpty && viewport.intersects(frame)
         }, object: element)
         guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
             diagnose("unavailable-native-control", app: app, detail: element.debugDescription)
@@ -437,7 +442,7 @@ final class VisualAcceptanceTests: XCTestCase {
         try capture("fitting-06-honest-photo-fallback")
         try require((try canvas(in: fallback)).label.contains("без иллюстрации"))
         try nativeTap(fallback.buttons["cancel-outfit"], in: fallback)
-        try nativeTap(fallback.alerts.buttons["discard-outfit-changes"], in: fallback)
+        try nativeTap(fallback.alerts.buttons.matching(identifier: "discard-outfit-changes").firstMatch, in: fallback)
         fallback.terminate()
         let evidence = try JSONSerialization.data(withJSONObject: ["providersBefore": before, "providersAfter": afterOnline,
             "illustrationsBefore": illustrationsBefore, "illustrationsAfter": illustrationsAfter], options: [.sortedKeys, .prettyPrinted])
