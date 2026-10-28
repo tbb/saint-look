@@ -262,6 +262,12 @@ test('missing JEV usage stops before generation and never invent actual cost', a
   const report = JSON.parse(await readFile(join(f.out, 'report.json')));
   assert.equal(report.reservedMicrousd, 2753);
   assert.equal(report.operations[0].usageCostEstimateMicrousd, undefined);
+  const attributes = report.operations.find(op => op.stage === 'attributes');
+  const snapshot = JSON.parse(await readFile(join(f.out, attributes.responseArtifact)));
+  assert.equal(snapshot.httpStatus, 200);
+  assert.equal(snapshot.shape.inputTokens.present, false);
+  assert.match(attributes.semanticRequestSha256, /^[a-f0-9]{64}$/);
+  assert.equal(digest(await readFile(join(f.out, attributes.responseArtifact))), attributes.snapshotSha256);
 });
 
 test('opaque segmentation is not accepted as a prepared layer and generation stays charged in the ledger', async t => {
@@ -474,4 +480,82 @@ test('a fully transparent Nano image is rejected before final sandbox processing
   } });
   await f.approve(); const result = await f.execute(); assert.equal(result.code, 1); assert.match(result.stderr, /no visible pixels/);
   assert.equal(f.calls.filter(c => c.path === '/v1/segment').length, 1);
+});
+
+async function reconciledFixture(t, budgetMicrousd = 1000000, fullDataset = false) {
+  let originalAttempt = true;
+  const f = await fixture(t, { jevAnswer(payload) { if (originalAttempt) delete payload.usage; } });
+  if (fullDataset) {
+    const base = new URL('./', import.meta.url).pathname;
+    const plan = JSON.parse(await readFile(new URL('./plan.json', import.meta.url)));
+    plan.template = join(base, plan.template);
+    for (const item of plan.items) {
+      item.photos = item.photos.map(p => join(base, p));
+      for (const source of item.sources) source.path = join(base, source.path);
+    }
+    await writeFile(f.planPath, JSON.stringify(plan));
+  }
+  await f.approve({ budgetMicrousd, maxCalls: fullDataset ? { preparation: 12, attributes: 14, generation: 28, segmentation: 28 }
+    : { preparation: 12, attributes: 2, generation: 2, segmentation: 2 } });
+  assert.equal((await f.execute()).code, 1); originalAttempt = false;
+  const ledger = JSON.parse(await readFile(join(f.out, 'ledger.json')));
+  const prep = Object.values(ledger.operations).find(op => op.stage === 'preparation');
+  const { featureRequest, featureAnswer } = await import('./trial-jev.mjs');
+  const { semanticRequest } = await import('./jev-diagnostic-response.mjs');
+  const first = JSON.parse(await readFile(f.planPath)).items[0];
+  const original = await sharp(await readFile(first.photos[0].startsWith('/') ? first.photos[0] : join(f.dir, first.photos[0]))).rotate().png().toBuffer();
+  const request = await featureRequest([await readFile(join(f.out, prep.artifact)), original], ['prepared_front', 'original_front']);
+  const answers = Object.fromEntries(Object.entries(request.questions).map(([name, q]) => {
+    if (q.type === 'noul') return [name, { type: 'noul', noul: .8 }];
+    const choice = name === 'suitability' ? 'suitable' : Object.keys(q.criteria)[0];
+    return [name, { type: 'choice', choice, confidence: 1, probabilities: Object.fromEntries(Object.keys(q.criteria).map(k => [k, k === choice ? 1 : 0])) }];
+  }));
+  const key = `${first.id}/single/attributes`, reconciledBy = `${key}-diagnostic-1`;
+  Object.assign(ledger.operations[key], { reservedMicrousd: 100000, originalReservedMicrousd: 2753, reconciledBy });
+  ledger.operations[reconciledBy] = { key: reconciledBy, stage: 'attributes', status: 'completed', reservedMicrousd: 100000,
+    result: featureAnswer({ model: request.model, answers, usage: { input_tokens: 1000 } }, request),
+    semanticRequestSha256: digest(JSON.stringify(semanticRequest(request))) };
+  await writeFile(join(f.out, 'ledger.json'), JSON.stringify(ledger));
+  return f;
+}
+
+test('reconciled attributes preserve both attempts and reuse preparation without another JEV POST', async t => {
+  const f = await reconciledFixture(t), before = f.calls.length;
+  const result = await f.execute(); assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(f.calls.slice(before).filter(c => c.method === 'POST').map(c => c.path),
+    ['/fal-ai/nano-banana-pro/edit', '/v1/segment', '/fal-ai/nano-banana-pro/edit', '/v1/segment']);
+  const report = JSON.parse(await readFile(join(f.out, 'report.json')));
+  assert.deepEqual(report.attemptCounts, { preparation: 1, attributes: 2, generation: 2, segmentation: 2 });
+  assert.equal(report.reservedMicrousd, 500000);
+  assert.equal(report.operations.find(op => op.key === 'shirt/single/attributes').status, 'unknown');
+  assert.equal(report.results.length, 2);
+});
+
+test('historical conservative reservations consume the continuation budget before the next submit', async t => {
+  const f = await reconciledFixture(t, 400000), before = f.calls.length;
+  const result = await f.execute(); assert.equal(result.code, 1); assert.match(result.stderr, /budget\/call limit exhausted/);
+  assert.equal(f.calls.slice(before).filter(c => c.method === 'POST' && c.path.includes('nano')).length, 1);
+  const report = JSON.parse(await readFile(join(f.out, 'report.json')));
+  assert.equal(report.reservedMicrousd, 350000);
+  assert.equal(report.attemptCounts.attributes, 2); assert.equal(report.attemptCounts.generation, 1);
+});
+
+test('reconciliation cannot be applied to a different semantic image request', async t => {
+  const f = await reconciledFixture(t), before = f.calls.length;
+  const path = join(f.out, 'ledger.json'), ledger = JSON.parse(await readFile(path));
+  ledger.operations['shirt/single/attributes-diagnostic-1'].semanticRequestSha256 = 'f'.repeat(64);
+  await writeFile(path, JSON.stringify(ledger));
+  const result = await f.execute(); assert.equal(result.code, 1); assert.match(result.stderr, /does not match this input/);
+  assert.equal(f.calls.length, before);
+});
+
+
+test('the full continued dataset keeps 13 historical JEV attempts and the aggregate reserve', async t => {
+  const f = await reconciledFixture(t, 5000000, true), before = f.calls.length;
+  const result = await f.execute(['--timeout-ms', '2000']); assert.equal(result.code, 0, result.stderr);
+  const report = JSON.parse(await readFile(join(f.out, 'report.json')));
+  assert.deepEqual(report.attemptCounts, { preparation: 12, attributes: 13, generation: 24, segmentation: 24 });
+  assert.equal(report.reservedMicrousd, 3830283); assert.equal(report.results.length, 24);
+  assert.equal(f.calls.slice(before).filter(c => c.method === 'POST' && c.path === '/v1/systemone').length, 11);
+  assert.equal(f.calls.slice(before).filter(c => c.method === 'POST' && c.path === '/v1/segment').length, 35);
 });
