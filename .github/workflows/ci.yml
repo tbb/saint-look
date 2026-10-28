@@ -94,9 +94,9 @@ jobs:
       matrix:
         suite: ${{ fromJSON(inputs.ios_suite == 'camera' && '["camera"]' || inputs.ios_suite == 'outfits' && '["outfits"]' || inputs.ios_suite == 'wardrobe' && '["wardrobe"]' || inputs.ios_suite == 'visual' && '["visual"]' || '["wardrobe","outfits","visual"]') }}
     runs-on: macos-26
-    # Wardrobe includes cold Simulator startup (~9 min observed), 24 checks and manifest smoke.
-    # Keep a bounded 40 min for that job; outfits and four visual profiles retain their own caps.
-    timeout-minutes: ${{ matrix.suite == 'visual' && 90 || matrix.suite == 'outfits' && 60 || 40 }}
+    # Wardrobe now has 33 public scenarios plus cold Simulator startup and manifest smoke.
+    # Keep full wardrobe/outfits bounded at 60 min; the focused camera suite retains 40 min.
+    timeout-minutes: ${{ matrix.suite == 'visual' && 90 || matrix.suite == 'camera' && 40 || 60 }}
     steps:
       - uses: actions/checkout@v4
         with:
