@@ -1,0 +1,292 @@
+{
+  "model": "jev-1.14.0",
+  "usage": {
+    "input_tokens": 13787
+  },
+  "answers": {
+    "suitability": {
+      "type": "choice",
+      "choice": "suitable",
+      "confidence": 1,
+      "probabilities": {
+        "suitable": 1,
+        "on_person": 0,
+        "multiple_items": 0,
+        "no_item": 0,
+        "unclear": 0
+      }
+    },
+    "item_type": {
+      "type": "choice",
+      "choice": "t_shirt",
+      "confidence": 0.93,
+      "probabilities": {
+        "t_shirt": 0.93,
+        "polo": 0,
+        "shirt": 0,
+        "blouse": 0.04,
+        "top": 0.01,
+        "sweater": 0,
+        "cardigan": 0,
+        "sweatshirt": 0.01,
+        "hoodie": 0,
+        "vest": 0,
+        "blazer": 0,
+        "jacket": 0,
+        "coat": 0,
+        "raincoat": 0,
+        "jeans": 0,
+        "trousers": 0,
+        "shorts": 0,
+        "skirt": 0,
+        "dress": 0,
+        "jumpsuit": 0,
+        "sneakers": 0,
+        "shoes": 0,
+        "boots": 0,
+        "sandals": 0,
+        "slippers": 0,
+        "bag": 0,
+        "headwear": 0,
+        "scarf": 0,
+        "belt": 0,
+        "gloves": 0,
+        "socks": 0,
+        "underwear": 0,
+        "swimwear": 0,
+        "unknown": 0
+      }
+    },
+    "silhouette": {
+      "type": "choice",
+      "choice": "fitted",
+      "confidence": 0.29,
+      "probabilities": {
+        "fitted": 0.43,
+        "straight": 0.39,
+        "relaxed": 0.12,
+        "unknown": 0.06,
+        "not_applicable": 0
+      }
+    },
+    "body_length": {
+      "type": "choice",
+      "choice": "regular",
+      "confidence": 0.9,
+      "probabilities": {
+        "cropped": 0.03,
+        "regular": 0.92,
+        "long": 0.01,
+        "unknown": 0.04,
+        "not_applicable": 0
+      }
+    },
+    "sleeves": {
+      "type": "choice",
+      "choice": "short",
+      "confidence": 0.99,
+      "probabilities": {
+        "sleeveless": 0.01,
+        "short": 0.99,
+        "long": 0,
+        "unknown": 0,
+        "not_applicable": 0
+      }
+    },
+    "pattern": {
+      "type": "choice",
+      "choice": "plain",
+      "confidence": 1,
+      "probabilities": {
+        "plain": 1,
+        "stripes": 0,
+        "checks": 0,
+        "graphic": 0,
+        "mixed": 0,
+        "unknown": 0
+      }
+    },
+    "pattern_location": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.94,
+      "probabilities": {
+        "center": 0.01,
+        "left_chest": 0.01,
+        "right_chest": 0.01,
+        "sleeves": 0,
+        "all_over": 0.02,
+        "none": 0.95,
+        "unknown": 0
+      }
+    },
+    "pattern_size": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.96,
+      "probabilities": {
+        "small": 0.01,
+        "medium": 0.01,
+        "large": 0.01,
+        "none": 0.97,
+        "unknown": 0
+      }
+    },
+    "neckline": {
+      "type": "choice",
+      "choice": "round",
+      "confidence": 0.87,
+      "probabilities": {
+        "round": 0.89,
+        "v_neck": 0.03,
+        "collar": 0.07,
+        "high": 0.01,
+        "hood": 0,
+        "unknown": 0,
+        "not_applicable": 0
+      }
+    },
+    "fastening": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.96,
+      "probabilities": {
+        "none": 0.97,
+        "buttons": 0,
+        "zip": 0,
+        "mixed": 0,
+        "unknown": 0,
+        "not_applicable": 0.03
+      }
+    },
+    "surface": {
+      "type": "choice",
+      "choice": "smooth",
+      "confidence": 0.47,
+      "probabilities": {
+        "smooth": 0.56,
+        "knitted": 0.22,
+        "fuzzy": 0,
+        "glossy": 0.18,
+        "mixed": 0.02,
+        "unknown": 0.02
+      }
+    },
+    "hood": {
+      "type": "choice",
+      "choice": "no",
+      "confidence": 0.86,
+      "probabilities": {
+        "yes": 0.07,
+        "no": 0.91,
+        "unknown": 0.02
+      }
+    },
+    "kangaroo_pocket": {
+      "type": "choice",
+      "choice": "no",
+      "confidence": 0.92,
+      "probabilities": {
+        "yes": 0.01,
+        "no": 0.95,
+        "unknown": 0.04
+      }
+    },
+    "patch_pockets": {
+      "type": "choice",
+      "choice": "no",
+      "confidence": 0.95,
+      "probabilities": {
+        "yes": 0,
+        "no": 0.97,
+        "unknown": 0.03
+      }
+    },
+    "dropped_shoulders": {
+      "type": "choice",
+      "choice": "no",
+      "confidence": 0.66,
+      "probabilities": {
+        "yes": 0.19,
+        "no": 0.77,
+        "unknown": 0.04
+      }
+    },
+    "contrast_cuffs": {
+      "type": "choice",
+      "choice": "no",
+      "confidence": 0.67,
+      "probabilities": {
+        "yes": 0.11,
+        "no": 0.78,
+        "unknown": 0.11
+      }
+    },
+    "lettering": {
+      "type": "choice",
+      "choice": "no",
+      "confidence": 0.95,
+      "probabilities": {
+        "yes": 0.01,
+        "no": 0.97,
+        "unknown": 0.02
+      }
+    },
+    "color_black": {
+      "type": "noul",
+      "noul": 0.03
+    },
+    "color_white": {
+      "type": "noul",
+      "noul": 0.98
+    },
+    "color_gray": {
+      "type": "noul",
+      "noul": 0.06
+    },
+    "color_beige": {
+      "type": "noul",
+      "noul": 0.03
+    },
+    "color_brown": {
+      "type": "noul",
+      "noul": 0.01
+    },
+    "color_red": {
+      "type": "noul",
+      "noul": 0.01
+    },
+    "color_orange": {
+      "type": "noul",
+      "noul": 0.01
+    },
+    "color_yellow": {
+      "type": "noul",
+      "noul": 0.01
+    },
+    "color_green": {
+      "type": "noul",
+      "noul": 0.01
+    },
+    "color_light_blue": {
+      "type": "noul",
+      "noul": 0.02
+    },
+    "color_blue": {
+      "type": "noul",
+      "noul": 0.01
+    },
+    "color_purple": {
+      "type": "noul",
+      "noul": 0.01
+    },
+    "color_pink": {
+      "type": "noul",
+      "noul": 0.02
+    },
+    "color_burgundy": {
+      "type": "noul",
+      "noul": 0.01
+    }
+  }
+}

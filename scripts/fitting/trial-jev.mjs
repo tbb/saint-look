@@ -33,6 +33,18 @@ export async function featureRequest(photos, roles) {
   return payload;
 }
 
+function normalizedProbabilityMass(values) {
+  if (Math.abs(values.reduce((sum, p) => sum + p, 0) - 1) <= 0.001) return true;
+  // The captured JEV response rounds to hundredths. Accept only if some
+  // distribution inside those rounding intervals can sum to one; never
+  // normalize the observed values or expand the tolerance for finer precision.
+  const epsilon = Number.EPSILON * values.length;
+  if (!values.every(p => Math.abs(p * 100 - Math.round(p * 100)) <= Number.EPSILON * 100)) return false;
+  const lower = values.reduce((sum, p) => sum + Math.max(0, p - 0.005), 0);
+  const upper = values.reduce((sum, p) => sum + Math.min(1, p + 0.005), 0);
+  return lower <= 1 + epsilon && upper >= 1 - epsilon;
+}
+
 export function featureAnswer(payload, request) {
   const invalid = () => { throw new Error('Invalid JEV feature response'); };
   const probability = n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1;
@@ -51,7 +63,7 @@ export function featureAnswer(payload, request) {
     if (a?.type !== 'choice' || !keys.includes(a.choice) || !probability(a.confidence)
       || !a.probabilities || Object.keys(a.probabilities).length !== keys.length
       || keys.some(k => !probability(a.probabilities[k]))
-      || Math.abs(keys.reduce((sum, k) => sum + a.probabilities[k], 0) - 1) > 0.001
+      || !normalizedProbabilityMass(keys.map(k => a.probabilities[k]))
       || a.probabilities[a.choice] < Math.max(...Object.values(a.probabilities))) invalid();
     evidence[name] = { choice: a.choice, confidence: a.confidence };
     if (name === 'suitability') {
