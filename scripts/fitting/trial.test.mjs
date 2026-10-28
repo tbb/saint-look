@@ -387,6 +387,69 @@ test('malformed JEV probabilities are rejected before generation despite valid m
   assert.deepEqual(f.calls.map(c => c.path), ['/v1/segment', '/v1/systemone']);
 });
 
+test('captured JEV rounded probabilities preserve usable features through the trial CLI', async t => {
+  const captured = JSON.parse(await readFile(new URL('./fixtures/jev-rounded-response.json', import.meta.url)));
+  const f = await fixture(t, { jevAnswer(payload) { Object.assign(payload, structuredClone(captured)); } });
+  await f.approve(); const result = await f.execute(); assert.equal(result.code, 0, result.stderr);
+  const report = JSON.parse(await readFile(join(f.out, 'report.json')));
+  assert.equal(report.status, 'completed');
+  const attributes = report.operations.find(o => o.stage === 'attributes');
+  assert.equal(attributes.status, 'completed');
+  assert.equal(attributes.result.inputTokens, 13787);
+  assert.equal(attributes.result.features.item_type, 't_shirt');
+  assert.deepEqual(attributes.result.features.colors, ['white']);
+  assert.equal(attributes.result.features.surface, 'unknown');
+  assert.equal(captured.answers.item_type.probabilities.t_shirt, 0.93);
+});
+
+test('rounded JEV distributions are accepted when their intervals contain a total of one', async t => {
+  for (const [name, mutate] of [
+    ['34 options totaling 0.98', p => { p.answers.item_type.probabilities.t_shirt = 0.92; }],
+    ['34 options totaling 1.02', p => {
+      for (const key of Object.keys(p.answers.item_type.probabilities)) p.answers.item_type.probabilities[key] = 0.03;
+    }],
+    ['three options totaling 0.99', p => {
+      p.answers.hood = { type: 'choice', choice: 'unknown', confidence: 0.1, probabilities: { yes: 0.33, no: 0.33, unknown: 0.33 } };
+    }],
+  ]) await t.test(name, async t => {
+    const captured = JSON.parse(await readFile(new URL('./fixtures/jev-rounded-response.json', import.meta.url)));
+    mutate(captured);
+    const f = await fixture(t, { jevAnswer(payload) { Object.assign(payload, captured); } });
+    await f.approve(); const result = await f.execute(); assert.equal(result.code, 0, result.stderr);
+  });
+});
+
+test('rounding compatibility still rejects malformed JEV answers before generation', async t => {
+  for (const [name, mutate] of [
+    ['missing option', p => { delete p.answers.item_type.probabilities.polo; }],
+    ['extra option', p => { p.answers.item_type.probabilities.extra = 0; }],
+    ['replaced option', p => { delete p.answers.item_type.probabilities.polo; p.answers.item_type.probabilities.extra = 0; }],
+    ['negative probability', p => { p.answers.item_type.probabilities.polo = -0.01; }],
+    ['probability above one', p => { p.answers.item_type.probabilities.t_shirt = 1.01; }],
+    ['nonfinite probability', p => { p.answers.item_type.probabilities.polo = 'NONFINITE'; }],
+    ['string probability', p => { p.answers.item_type.probabilities.polo = '0'; }],
+    ['choice outside options', p => { p.answers.item_type.choice = 'invented'; }],
+    ['choice is not maximum', p => { p.answers.item_type.choice = 'blouse'; }],
+    ['impossible low total', p => { p.answers.item_type.probabilities.t_shirt = 0.7; }],
+    ['impossible high total', p => { p.answers.item_type.probabilities.t_shirt = 1; }],
+    ['finer precision does not gain rounding tolerance', p => { p.answers.item_type.probabilities.t_shirt = 0.9301; }],
+    ['three options totaling 0.98 cannot round from one', p => {
+      p.answers.hood = { type: 'choice', choice: 'unknown', confidence: 0.1, probabilities: { yes: 0.32, no: 0.33, unknown: 0.33 } };
+    }],
+  ]) await t.test(name, async t => {
+    const captured = JSON.parse(await readFile(new URL('./fixtures/jev-rounded-response.json', import.meta.url)));
+    mutate(captured);
+    const f = await fixture(t, { handle({ call, response }) {
+      if (call.path !== '/v1/systemone') return false;
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify(captured).replace('"NONFINITE"', '1e999')); return true;
+    } });
+    await f.approve(); const result = await f.execute();
+    assert.equal(result.code, 1); assert.match(result.stderr, /Invalid JEV feature response/);
+    assert.deepEqual(f.calls.map(c => c.path), ['/v1/segment', '/v1/systemone']);
+  });
+});
+
 
 test('a usable alpha Nano result skips final Photoroom without consuming its quota slot', async t => {
   const f = await fixture(t, { handle({ call, response, png }) {
