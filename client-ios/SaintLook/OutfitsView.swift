@@ -395,89 +395,138 @@ struct OutfitEditorView: View {
     private var editingExisting: Bool { store.outfits.contains { $0.id == draft.id } }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if errorMessage == nil, let message = saveExplanation {
-                        Text(message)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .accessibilityIdentifier("outfit-save-explanation")
-                    }
-                    fittingPreview
-                    TextField("Название — необязательно", text: Binding(get: { draft.name }, set: { cancelRecommendation(); draft.name = $0 }))
-                        .focused($naming)
-                        .submitLabel(.done)
-                        .onSubmit { naming = false }
-                        .padding(.vertical, 12)
-                        .accessibilityIdentifier("outfit-name")
-                    if !swipeDiscovered {
-                        Label("Смахните вещь влево или вправо, чтобы сравнить варианты", systemImage: "hand.draw")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(draft.slots) { slot in
-                        editorSlotRow(slot)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 24)
-                .frame(maxWidth: 620)
-                .frame(maxWidth: .infinity)
-            }
-            .background(SaintLookStyle.canvas)
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if let errorMessage {
-                    Text(errorMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(.bar)
-                        .accessibilityIdentifier("outfit-save-error")
-                }
-            }
-            .navigationTitle(editingExisting ? "Изменить лук" : "Собрать лук")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { editorToolbar }
-            .interactiveDismissDisabled(dirty)
-            .alert("Отбросить изменения?", isPresented: $confirmingDiscard) {
-                Button("Отбросить изменения", role: .destructive) { cancelRecommendation(); dismiss() }
-                    .accessibilityIdentifier("discard-outfit-changes")
-                Button("Остаться", role: .cancel) { }
-                    .accessibilityLabel("Продолжить редактирование")
-                    .accessibilityIdentifier("continue-outfit-editing")
-            }
-            .sheet(item: $choosingSlot) { slot in
-                OutfitPickerView(store: store, zone: slot.zone, selectedItemID: slot.itemID,
-                                 excluding: draft.selectedIDs.subtracting(slot.itemID.map { [$0] } ?? [])) { itemID in
-                    select(itemID, for: slot.id)
-                    choosingSlot = nil
-                }
-            }
+        NavigationStack { editorObservedContent }
+    }
+
+    private var editorObservedContent: some View {
+        editorDraftObservation
             .onDisappear { cancelRecommendation() }
+            .onChange(of: connectionIdentity) { _, _ in cancelRecommendation() }
+            .onChange(of: store.preparationConfiguration?.encoder.activeSpaceID) { _, _ in
+                cancelRecommendation(message: RecommendationError.preparationRequired.localizedDescription)
+            }
+            .onChange(of: currentItemIDs) { old, current in
+                removeDeletedItems(previous: old, current: current)
+            }
+    }
+
+    private var editorDraftObservation: some View {
+        editorPresentation
             .onChange(of: draft) { _, _ in
                 if recommendation.pending != nil { cancelRecommendation(message: RecommendationError.stale.localizedDescription) }
             }
             .onChange(of: pinnedSlotIDs) { _, _ in cancelRecommendation(message: RecommendationError.stale.localizedDescription) }
-            .onChange(of: OutfitRecommendationSession.inventory(store.items)) { _, _ in
-                cancelRecommendation(message: RecommendationError.stale.localizedDescription)
-            }
+            .onChange(of: currentInventory) { _, _ in cancelRecommendation(message: RecommendationError.stale.localizedDescription) }
             .onChange(of: store.outfits) { _, _ in cancelRecommendation(message: RecommendationError.stale.localizedDescription) }
-            .onChange(of: [store.settings.baseURL, store.settings.token]) { _, _ in cancelRecommendation() }
-            .onChange(of: store.preparationConfiguration?.encoder.activeSpaceID) { _, _ in
-                cancelRecommendation(message: RecommendationError.preparationRequired.localizedDescription)
-            }
-            .onChange(of: store.items.map(\.id)) { old, current in
-                for id in Set(old).subtracting(current) {
-                    draft = draft.removingItem(id)
-                    initial = initial.removingItem(id)
-                }
-            }
+    }
+
+    private var currentItemIDs: [UUID] { store.items.map(\.id) }
+    private var currentInventory: [OutfitRecommendationSession.ItemIdentity] { OutfitRecommendationSession.inventory(store.items) }
+    private var connectionIdentity: [String] { [store.settings.baseURL, store.settings.token] }
+
+    private var editorPresentation: some View {
+        editorLayout
+            .interactiveDismissDisabled(dirty)
+            .alert("Отбросить изменения?", isPresented: $confirmingDiscard) { discardActions }
+            .sheet(item: $choosingSlot) { slot in editorPicker(for: slot) }
+    }
+
+    private var editorLayout: some View {
+        ScrollView { editorSections }
+            .background(SaintLookStyle.canvas)
+            .safeAreaInset(edge: .top, spacing: 0) { saveErrorFeedback }
+            .navigationTitle(editingExisting ? "Изменить лук" : "Собрать лук")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { editorToolbar }
+    }
+
+    private var editorSections: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            saveExplanationFeedback
+            fittingPreview
+            nameField
+            swipeInstruction
+            ForEach(draft.slots) { slot in editorSlotRow(slot) }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 24)
+        .frame(maxWidth: 620)
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var saveExplanationFeedback: some View {
+        if errorMessage == nil, let message = saveExplanation {
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("outfit-save-explanation")
+        }
+    }
+
+    private var nameBinding: Binding<String> {
+        Binding<String>(get: { draft.name }, set: { value in
+            cancelRecommendation()
+            draft.name = value
+        })
+    }
+
+    private var nameField: some View {
+        TextField("Название — необязательно", text: nameBinding)
+            .focused($naming)
+            .submitLabel(.done)
+            .onSubmit { naming = false }
+            .padding(.vertical, 12)
+            .accessibilityIdentifier("outfit-name")
+    }
+
+    @ViewBuilder
+    private var swipeInstruction: some View {
+        if !swipeDiscovered {
+            Label("Смахните вещь влево или вправо, чтобы сравнить варианты", systemImage: "hand.draw")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var saveErrorFeedback: some View {
+        if let errorMessage {
+            Text(errorMessage)
+                .font(.footnote)
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(.bar)
+                .accessibilityIdentifier("outfit-save-error")
+        }
+    }
+
+    @ViewBuilder
+    private var discardActions: some View {
+        Button("Отбросить изменения", role: .destructive) { cancelRecommendation(); dismiss() }
+            .accessibilityIdentifier("discard-outfit-changes")
+        Button("Остаться", role: .cancel) { }
+            .accessibilityLabel("Продолжить редактирование")
+            .accessibilityIdentifier("continue-outfit-editing")
+    }
+
+    private func editorPicker(for slot: OutfitSlot) -> OutfitPickerView {
+        let excluded: Set<UUID> = draft.selectedIDs.subtracting(slot.itemID.map { [$0] } ?? [])
+        return OutfitPickerView(store: store, zone: slot.zone, selectedItemID: slot.itemID, excluding: excluded) { itemID in
+            select(itemID, for: slot.id)
+            choosingSlot = nil
+        }
+    }
+
+    private func removeDeletedItems(previous: [UUID], current: [UUID]) {
+        for id in Set(previous).subtracting(current) {
+            draft = draft.removingItem(id)
+            initial = initial.removingItem(id)
         }
     }
 
