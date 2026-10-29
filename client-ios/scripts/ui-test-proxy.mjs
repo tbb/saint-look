@@ -99,7 +99,11 @@ const server = createServer(async (request, response) => {
       } else if (request.method !== 'GET') return reply(response, 405, { error: 'method_not_allowed' });
       return reply(response, 200, { mode, preparedSourceDownloads, illustrationUploads, illustrationOperations: illustrationOperations.size, illustrationAcknowledgements: illustrationAcknowledgements.size, lastIllustrationPath, acceptedOperations: acceptedOperations.size, forwardedUploads, droppedUploadResponses, heldResultResponses: heldResults.size, deletedItems: deletedItems.size, forwardedDeletes, droppedDeleteResponses, acknowledgedOperations: acknowledgedOperations.size, forwardedAcknowledgements, droppedAcknowledgementResponses, lastOperationPath, clockOffsetMs: clockFile ? readClockOffset() : undefined });
     }
-    if (request.url !== '/health' && !request.url?.startsWith('/v1/items')) return reply(response, 404, { error: 'not_found' });
+    const recommendationRoute = (request.method === 'GET' && request.url === '/v1/recommendations/config')
+      || (request.method === 'POST' && ['/v1/recommendations/single', '/v1/recommendations/compose'].includes(request.url));
+    if (request.url !== '/health' && !request.url?.startsWith('/v1/items') && !recommendationRoute) {
+      return reply(response, 404, { error: 'not_found' });
+    }
     if (mode === 'offline') { request.socket.destroy(); return; }
     const isPreparedSource = request.method === 'GET' && /^\/v1\/items\/[^/]+\/illustrations\/[^/]+\/sources\/[^/]+\/prepared$/.test(request.url);
     if (isPreparedSource) preparedSourceDownloads++;
