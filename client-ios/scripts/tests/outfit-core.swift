@@ -328,10 +328,12 @@ struct OutfitCoreChecks {
         } catch is CancellationError { }
         try stagePrepared(&publishing, for: shirtID, request: initialRequest, result: firstResult, preparedPhotos: [source])
         precondition(!publishing.items[0].photosLocked, "Downloaded output is not yet a committed publication")
+        precondition(publishing.items[0].displayedIllustration == nil, "The first downloaded candidate is not yet visible")
         precondition(!publishing.items[0].canEditPhotos, "An uncertain commit freezes source editing until reconciliation")
         try file.save(publishing)
         publishing = try file.load()
         precondition(publishing.items[0].pendingPublication != nil)
+        precondition(publishing.items[0].displayedIllustration == nil, "Restart cannot publish an unconfirmed candidate")
         do {
             try publishing.editAttributes(for: shirtID, type: "Куртка", colors: nil, taxonomy: taxonomy)
             fatalError("An uncertain publication cannot change its input")
@@ -339,6 +341,7 @@ struct OutfitCoreChecks {
         try publishing.confirmPublication(for: shirtID, operationID: initialRequest.operationID)
         precondition(publishing.items[0].photosLocked)
         precondition(publishing.items[0].publishedVersion?.completeness == .prepared)
+        precondition(publishing.items[0].displayedIllustration?.filename == "first-illustration.png")
         try publishing.editAttributes(for: shirtID, type: "Худи", colors: ["Чёрный"], taxonomy: taxonomy)
         precondition(publishing.items[0].editedType == "Худи")
         precondition(publishing.items[0].displayedType == "Футболка")
