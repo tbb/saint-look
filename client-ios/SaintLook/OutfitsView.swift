@@ -892,6 +892,7 @@ struct OutfitEditorView: View {
                     recommendation.cancel()
                     recommendationTask = nil
                     recommendationMessage = RecommendationError.message(for: error)
+                    await store.refreshPreparationConfiguration(after: error)
                 }
             }
         } catch { recommendationMessage = RecommendationError.message(for: error) }
