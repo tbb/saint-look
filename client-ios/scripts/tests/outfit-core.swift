@@ -463,6 +463,46 @@ struct OutfitCoreChecks {
         try preparing.confirmPublication(for: shirtID, operationID: completed.operationID)
         precondition(preparing.items[0].publishedVersion?.versionID == preparation.operationID && preparing.items[0].hasPreparedVersion)
         precondition(preparing.items[0].preparation == nil && preparing.items[0].downloadedIllustration == nil)
+        // Generator cache is intermediate: losing it must not force paid work
+        // during an encoder-only legacy import or representation refresh.
+        for mode in [ItemPreparation.Mode.legacyImport, .reusePublication] {
+            var cacheless = published
+            let packet = PendingItemPublication(publication: cacheless.items[0].publishedVersion!, request: completed, preparedPhotos: [])
+            let intent = try preparationIntent(item: cacheless.items[0], candidate: packet, mode: mode)
+            try cacheless.beginPreparation(for: shirtID, intent: intent)
+            let response = preparationResponse(item: cacheless.items[0], intent: intent)
+            try cacheless.stagePreparation(for: shirtID, response: response, representationFilename: "cacheless.json",
+                representationDigest: response.representationSHA256!, actualArtifacts: intent.artifacts, actualSourceDigest: intent.sourceSHA256)
+            var uncertain = cacheless.items[0].preparation!
+            uncertain.status = .failed; uncertain.error = "confirmation_failed" // e.g. credentials repaired after401
+            try cacheless.savePreparation(for: shirtID, intent: uncertain)
+            try file.save(cacheless)
+            cacheless = try file.load()
+            try cacheless.resumePreparation(for: shirtID)
+            precondition(cacheless.items[0].preparation?.status == .pending)
+            precondition(cacheless.items[0].preparation?.operationID == intent.operationID)
+            precondition(cacheless.items[0].pendingPublication?.publication.versionID == intent.operationID)
+            precondition(!cacheless.items[0].canEditPhotos)
+            try cacheless.confirmPublication(for: shirtID, operationID: completed.operationID)
+            precondition(cacheless.items[0].hasPreparedVersion && cacheless.items[0].preparedPhotos.isEmpty)
+            precondition(cacheless.items[0].publishedVersion?.representation?.response.provenance == intent.provenance)
+        }
+        var strictNew = published
+        let cachelessNew = PendingItemPublication(publication: strictNew.items[0].publishedVersion!, request: completed, preparedPhotos: [])
+        do {
+            let intent = try preparationIntent(item: strictNew.items[0], candidate: cachelessNew)
+            try strictNew.beginPreparation(for: shirtID, intent: intent)
+            fatalError("A new pipeline still requires all freshly prepared sources")
+        } catch ClientError.invalidResponse { }
+        var rejectedSpace = published
+        try rejectedSpace.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
+        var rejectedIntent = try preparationIntent(item: rejectedSpace.items[0], candidate: rejectedSpace.items[0].downloadedIllustration!)
+        rejectedIntent.status = .failed; rejectedIntent.error = "representation_space_changed"
+        try rejectedSpace.beginPreparation(for: shirtID, intent: rejectedIntent)
+        precondition(rejectedSpace.clearRejectedPreparationSpace())
+        precondition(rejectedSpace.items[0].preparation == nil && rejectedSpace.items[0].downloadedIllustration != nil)
+        precondition(rejectedSpace.items[0].publishedVersion?.versionID == published.items[0].publishedVersion?.versionID)
+        print("PASS: optional generator cache for legacy/reuse, strict new pipeline, same-candidate commit retry and rejected-space recovery")
         let emptyColorFeatures = try CanonicalItemFeatures(displayType: "Рубашка", colors: [], taxonomy: taxonomy)
         precondition(emptyColorFeatures == CanonicalItemFeatures(type: "shirt", colors: []))
         print("PASS: preparation identity/space, opaque bytes, artifact digests, failure/restart, stale edits, and atomic full admission")
@@ -560,14 +600,14 @@ struct OutfitCoreChecks {
             representationDigest: response.representationSHA256!, actualArtifacts: intent.artifacts, actualSourceDigest: intent.sourceSHA256)
     }
 
-    static func preparationIntent(item: WardrobeItem, candidate: PendingItemPublication, space: String = "controlled-space") throws -> ItemPreparation {
+    static func preparationIntent(item: WardrobeItem, candidate: PendingItemPublication, space: String = "controlled-space", mode: ItemPreparation.Mode = .fromIllustration) throws -> ItemPreparation {
         let digest = String(repeating: "a", count: 64)
         return ItemPreparation(operationID: UUID(), revision: item.preparationRevision + 1, spaceID: space,
-            mode: .fromIllustration, cutoutOperationID: item.operationID, publication: candidate.publication,
+            mode: mode, cutoutOperationID: item.operationID, publication: candidate.publication,
             request: candidate.request, preparedPhotos: candidate.preparedPhotos,
             features: try CanonicalItemFeatures(displayType: candidate.publication.type, colors: candidate.publication.colors),
             sourceSHA256: digest, artifacts: .init(cutoutSHA256: digest, illustrationSHA256: digest,
-                observedFeaturesSHA256: digest, effectiveFeaturesSHA256: digest), provenance: "pipeline",
+                observedFeaturesSHA256: digest, effectiveFeaturesSHA256: digest), provenance: mode == .reusePublication ? "reused" : mode == .legacyImport ? "legacyImport" : "pipeline",
             manualType: item.manualType, manualColors: item.manualColors)
     }
 
@@ -575,7 +615,7 @@ struct OutfitCoreChecks {
         PreparationResponse(itemId: item.id, operationId: intent.operationID, revision: intent.revision,
             photoVersionId: intent.publication.photoVersionID, sourceSetVersionId: intent.publication.sourceSetVersionID,
             illustrationOperationId: intent.request.operationID, cutoutOperationId: intent.cutoutOperationID, spaceID: intent.spaceID, status: .ready,
-            mode: "controlled", imageMode: "test", provenance: "pipeline", effectiveFeatures: intent.features,
+            mode: "controlled", imageMode: "test", provenance: intent.provenance, effectiveFeatures: intent.features,
             representationJSON: "{\"fixture\": 1.00000000001}", representationSHA256: String(repeating: "b", count: 64),
             input: .init(sourceSHA256: intent.sourceSHA256, textSHA256: String(repeating: "c", count: 64)), artifacts: intent.artifacts, error: nil)
     }

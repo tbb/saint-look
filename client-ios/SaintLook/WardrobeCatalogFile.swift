@@ -171,10 +171,14 @@ extension WardrobeCatalog {
               illustration.response.effectiveFeatures?.isValid == true,
               illustration.response.effectiveFeatures?.type == intent.publication.type,
               illustration.response.effectiveFeatures?.colors == intent.publication.colors,
-              intent.preparedPhotos.count == items[index].additionalPhotos.count + 1,
-              Set(intent.preparedPhotos.map(\.photoID)) == Set([items[index].photoVersionID] + items[index].additionalPhotos.map(\.id)),
               intent.sourceSHA256.count == 64, intent.artifacts.cutoutSHA256.count == 64,
               intent.artifacts.illustrationSHA256.count == 64 else { throw ClientError.invalidResponse }
+        if intent.mode == .fromIllustration {
+            guard intent.preparedPhotos.count == items[index].additionalPhotos.count + 1,
+                  Set(intent.preparedPhotos.map(\.photoID)) == Set([items[index].photoVersionID] + items[index].additionalPhotos.map(\.id)) else {
+                throw ClientError.invalidResponse
+            }
+        }
         items[index].preparation = intent
         items[index].preparationRevision = intent.revision
     }
@@ -204,5 +208,30 @@ extension WardrobeCatalog {
         items[index].pendingPublication = PendingItemPublication(publication: publication, request: intent.request,
             preparedPhotos: intent.preparedPhotos)
         items[index].preparation?.status = .ready
+    }
+}
+
+
+extension WardrobeCatalog {
+    /// Retry an uncertain commit with exactly the persisted packet and operation.
+    mutating func resumePreparation(for id: UUID) throws {
+        guard let index = items.firstIndex(where: { $0.id == id }), let intent = items[index].preparation,
+              intent.matches(items[index]) else { throw CancellationError() }
+        items[index].preparation?.status = .pending
+        items[index].preparation?.error = nil
+        items[index].pendingPublication?.error = nil
+    }
+
+    /// An authoritative space rejection is not a lost acknowledgement. After fresh
+    /// server config arrives, retain the downloaded packet and allow a new CPU intent.
+    mutating func clearRejectedPreparationSpace() -> Bool {
+        var changed = false
+        for index in items.indices where items[index].preparation?.status == .failed
+            && items[index].preparation?.error == "representation_space_changed"
+            && items[index].pendingPublication == nil {
+            items[index].preparation = nil
+            changed = true
+        }
+        return changed
     }
 }
