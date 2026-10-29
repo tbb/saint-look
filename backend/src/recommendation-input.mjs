@@ -55,4 +55,3 @@ export async function readRecommendationInput(request, { composition = false } =
   }
   return { requestId, snapshotId, targetSlotId, orderedSlots, pinnedSlotIds, excludedItemIds, items, target, intent, mode };
 }
-
