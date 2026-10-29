@@ -25,6 +25,9 @@ jobs:
     if: github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
