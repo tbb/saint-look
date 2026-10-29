@@ -33,8 +33,9 @@ final class RemoteDeploymentTests: XCTestCase {
         XCTAssertEqual(health["mode"] as? String, "demo")
         XCTAssertEqual(health["revision"] as? String, revision)
         XCTAssertEqual(health["deploymentId"] as? String, deploymentID)
-        let dataVersion = try XCTUnwrap(Int(ProcessInfo.processInfo.environment["SAINT_LOOK_REMOTE_DATA_VERSION"] ?? "1"))
-        XCTAssertTrue([1, 2].contains(dataVersion))
+        let expectedVersion = try XCTUnwrap(environment["SAINT_LOOK_REMOTE_DATA_VERSION"])
+        let dataVersion = try XCTUnwrap(Int(expectedVersion))
+        guard dataVersion == 4 else { XCTFail("This client release requires data version 4."); return }
         XCTAssertEqual(health["dataVersion"] as? Int, dataVersion)
 
         func launch(reset: Bool, baseURL: String) -> XCUIApplication {
@@ -103,17 +104,28 @@ final class LiveTrialTests: XCTestCase {
         guard token.count >= 32 else { XCTFail("Owner token is missing."); return }
         let revision = try XCTUnwrap(env["SAINT_LOOK_REMOTE_REVISION"])
         let marker = try XCTUnwrap(env["SAINT_LOOK_REMOTE_DEPLOYMENT_ID"])
+        guard revision.range(of: "^[a-f0-9]{40}$", options: .regularExpression) != nil,
+              !marker.isEmpty else { XCTFail("Expected deployment identity is missing."); return }
         var request = URLRequest(url: url.appendingPathComponent("health"))
         request.timeoutInterval = 15
         let (data, response) = try await URLSession.shared.data(for: request)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
         let health = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(health["status"] as? String, "ok")
         XCTAssertEqual(health["mode"] as? String, "live")
         XCTAssertEqual(health["revision"] as? String, revision)
         XCTAssertEqual(health["deploymentId"] as? String, marker)
-        let dataVersion = try XCTUnwrap(Int(ProcessInfo.processInfo.environment["SAINT_LOOK_REMOTE_DATA_VERSION"] ?? "1"))
-        XCTAssertTrue([1, 2].contains(dataVersion))
+        let expectedVersion = try XCTUnwrap(env["SAINT_LOOK_REMOTE_DATA_VERSION"])
+        let dataVersion = try XCTUnwrap(Int(expectedVersion))
+        guard dataVersion == 4 else { XCTFail("This client release requires data version 4."); return }
         XCTAssertEqual(health["dataVersion"] as? Int, dataVersion)
+        guard health["illustrationAvailable"] as? Bool == true,
+              health["encoderAvailable"] as? Bool == true,
+              health["preparationAvailable"] as? Bool == true,
+              health["publicationProtocol"] as? String == "prepared-item-v1" else {
+            XCTFail("Full item preparation must be available before submitting trial photos.")
+            return
+        }
         defer { XCUIApplication().terminate() }
         func launch(reset: Bool, online: Bool, index: Int) -> XCUIApplication {
             let app = XCUIApplication()
@@ -130,25 +142,33 @@ final class LiveTrialTests: XCTestCase {
             XCTAssertFalse(app.buttons["add-demo-photo"].exists)
             // Exactly one upload action per selected photo. Never retry a failed provider result.
             add.tap()
+            // The summary counts verified complete local publications, including
+            // illustration, attributes and cached representations after commit.
             let expected = "Всего: \(index + 1). Готово: \(index + 1). Ожидают: 0."
             let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", expected), object: app.staticTexts["wardrobe-summary"])
             await fulfillment(of: [ready], timeout: 180)
-            XCTAssertEqual(readyCard(in: app).value as? String, "Готово")
+            let preparedCard = readyCard(in: app)
+            XCTAssertEqual(preparedCard.value as? String, "Готово")
+            let cardIdentifier = preparedCard.identifier
             XCTAssertFalse(app.staticTexts["Тестовая вырезка"].exists, "Real provider results must not be demo fixtures")
-            XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
-            let type = app.staticTexts["item-type"].firstMatch.label
-            let colors = app.staticTexts["item-colors"].firstMatch.label
+            XCTAssertTrue(preparedCard.images["item-photo"].firstMatch.exists)
+            let type = preparedCard.staticTexts["item-type"].firstMatch.label
+            let colorsElement = preparedCard.staticTexts["item-colors"].firstMatch
+            let colors = colorsElement.exists ? colorsElement.label : nil
             XCTAssertFalse(type.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            XCTAssertFalse(colors.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            let image = app.images["item-photo"].firstMatch.screenshot().pngRepresentation
+            // Empty colors are a valid canonical attribute set, not incomplete preparation.
+            let image = preparedCard.images["item-photo"].firstMatch.screenshot().pngRepresentation
             app.terminate()
             let offline = launch(reset: false, online: false, index: index)
-            XCTAssertTrue(readyCard(in: offline).waitForExistence(timeout: 5))
+            let retainedCard = offline.buttons[cardIdentifier]
+            XCTAssertTrue(retainedCard.waitForExistence(timeout: 5))
+            XCTAssertEqual(retainedCard.value as? String, "Готово")
             XCTAssertEqual(offline.staticTexts["wardrobe-summary"].label, expected)
-            XCTAssertEqual(offline.staticTexts["item-type"].firstMatch.label, type)
-            XCTAssertEqual(offline.staticTexts["item-colors"].firstMatch.label, colors)
-            XCTAssertEqual(offline.images["item-photo"].firstMatch.screenshot().pngRepresentation, image)
-            print("Live trial photo \(index + 1)/\(count): ready and retained offline; backend \(revision), deployment \(marker)")
+            XCTAssertEqual(retainedCard.staticTexts["item-type"].firstMatch.label, type)
+            let offlineColors = retainedCard.staticTexts["item-colors"].firstMatch
+            XCTAssertEqual(offlineColors.exists ? offlineColors.label : nil, colors)
+            XCTAssertEqual(retainedCard.images["item-photo"].firstMatch.screenshot().pngRepresentation, image)
+            print("Live trial photo \(index + 1)/\(count): fully prepared and retained offline; backend \(revision), deployment \(marker)")
             offline.terminate()
         }
         // Reconnect so durable acknowledgements drain. Keep cards for visual/manual quality review.
