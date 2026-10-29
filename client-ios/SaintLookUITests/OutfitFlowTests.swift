@@ -110,7 +110,7 @@ final class OutfitFlowTests: XCTestCase {
             }
             guard attempt < 7 else { break }
             let distance = present ? viewport.midY - frame.midY : (towardTop ? 180 : -180)
-            let movement = (distance < 0 ? -1.0 : 1.0) * min(180, max(100, abs(distance)))
+            let movement: CGFloat
             let start: XCUICoordinate
             if let bar = foregroundBar, ["Собрать лук", "Изменить лук"].contains(bar.identifier) {
                 let navigationFrame = bar.frame
@@ -130,10 +130,23 @@ final class OutfitFlowTests: XCTestCase {
                     return false
                 }
                 let bounds = container.frame
-                // Rows have 16pt horizontal padding. The fixed viewport center can
-                // land on a row's gesture recognizer at maximum text; its 8pt gutter
-                // remains inside the actual ScrollView without targeting that row.
-                let origin = CGPoint(x: bounds.minX + 8, y: viewport.midY)
+                let content = viewport.intersection(bounds)
+                guard !content.isEmpty, content.height > 60 else {
+                    capture("invalid-constructor-scroll-path")
+                    XCTFail("Constructor scrolling requires a usable content viewport")
+                    return false
+                }
+                // At maximum text, seven 180pt drags stop before the first row.
+                // Use the visible height, preserving the same bounded attempt count
+                // and keeping the path away from navigation and the bottom safe area.
+                let direction: CGFloat = distance < 0 ? -1 : 1
+                let gestureInset = min(80, content.height * 0.2)
+                let travel = min(content.height - 2 * gestureInset,
+                                 min(content.height * 0.65, present ? max(40, abs(distance)) : content.height * 0.65))
+                movement = direction * travel
+                // The 8pt gutter stays inside the ScrollView, outside padded rows.
+                let y = direction < 0 ? content.maxY - gestureInset : content.minY + gestureInset
+                let origin = CGPoint(x: bounds.minX + 8, y: y)
                 let destination = CGPoint(x: origin.x, y: origin.y + movement)
                 guard bounds.contains(origin), bounds.contains(destination),
                       app.frame.contains(origin), app.frame.contains(destination) else {
@@ -144,6 +157,7 @@ final class OutfitFlowTests: XCTestCase {
                 start = container.coordinate(withNormalizedOffset: .zero)
                     .withOffset(CGVector(dx: origin.x - bounds.minX, dy: origin.y - bounds.minY))
             } else {
+                movement = (distance < 0 ? -1.0 : 1.0) * min(180, max(100, abs(distance)))
                 start = app.coordinate(withNormalizedOffset: .zero)
                     .withOffset(CGVector(dx: viewport.midX, dy: viewport.midY))
             }
