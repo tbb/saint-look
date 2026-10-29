@@ -1031,7 +1031,7 @@ extension WardrobeStore {
             mode: mode, cutoutOperationID: publication.cutoutOperationID ?? item.operationID, publication: publication, request: request,
             preparedPhotos: prepared, features: try CanonicalItemFeatures(displayType: publication.type, colors: publication.colors),
             sourceSHA256: photoDigest(source), artifacts: artifacts,
-            provenance: publication.representation?.response.provenance ?? "pipeline",
+            provenance: mode == .reusePublication ? "reused" : mode == .legacyImport ? "legacyImport" : "pipeline",
             manualType: item.manualType, manualColors: item.manualColors)
     }
 
