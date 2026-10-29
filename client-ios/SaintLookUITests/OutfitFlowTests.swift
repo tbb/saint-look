@@ -114,13 +114,17 @@ final class OutfitFlowTests: XCTestCase {
             let start: XCUICoordinate
             if let bar = foregroundBar, ["Собрать лук", "Изменить лук"].contains(bar.identifier) {
                 let navigationFrame = bar.frame
+                let visibleNavigation = navigationFrame.intersection(app.frame)
+                let reachableNavigation = bar.exists && !visibleNavigation.isEmpty && bar.buttons.allElementsBoundByIndex.contains {
+                    $0.exists && $0.isHittable && !$0.frame.intersection(visibleNavigation).isEmpty
+                }
                 let containers = app.scrollViews.containing(.textField, identifier: "outfit-name").allElementsBoundByIndex.filter {
                     guard $0.exists else { return false }
                     let bounds = $0.frame
                     return !bounds.intersection(viewport).isEmpty && bounds.maxY > navigationFrame.maxY
                         && bounds.minX < navigationFrame.maxX && bounds.maxX > navigationFrame.minX
                 }
-                guard bar.isHittable, containers.count == 1, let container = containers.first else {
+                guard reachableNavigation, containers.count == 1, let container = containers.first else {
                     capture("ambiguous-constructor-scroll-surface")
                     XCTFail("Constructor scrolling requires one visible surface under its foreground navigation bar")
                     return false
