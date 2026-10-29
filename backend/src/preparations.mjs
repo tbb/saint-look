@@ -1,3 +1,4 @@
+import { acknowledge as acknowledgeCutout } from './retention.mjs';
 import { RequestError, uuid } from './upload.mjs';
 import { requireNotDeleted } from './deletion.mjs';
 import { createModelBridge } from './model-bridge.mjs';
@@ -93,11 +94,14 @@ export function createPreparations(database, env, retention, illustrations, dire
     if ((cutout.result_digest && cutout.result_digest !== artifacts.cutoutSHA256) || (row.result_digest && row.result_digest !== artifacts.illustrationSHA256)
       || (row.observed_digest && row.observed_digest !== artifacts.observedFeaturesSHA256) || (row.effective_digest && row.effective_digest !== artifacts.effectiveFeaturesSHA256)) throw new RequestError(409, 'legacy_artifact_conflict');
     const photos = parse(row.photos);
-    if (!Array.isArray(packet.preparedPhotos) || packet.preparedPhotos.length !== photos.length) throw new RequestError(409, 'prepared_source_conflict');
-    for (const photo of photos) {
-      const meta = packet.preparedPhotos.find(value => value.photoId === photo.id);
-      const source = database.prepare('SELECT * FROM illustration_sources WHERE item_id=? AND photo_id=?').get(row.item_id, photo.id);
-      if (!meta || !source || meta.sourceSHA256 !== photo.digest || meta.preparedSHA256 !== source.prepared_digest
+    // Prepared source PNGs are a generation cache, not encoder input or final output.
+    // Missing cache is allowed for legacy/reuse; every supplied cache receipt stays strict.
+    if (!Array.isArray(packet.preparedPhotos) || packet.preparedPhotos.length > photos.length
+      || new Set(packet.preparedPhotos.map(meta => meta?.photoId)).size !== packet.preparedPhotos.length) throw new RequestError(409, 'prepared_source_conflict');
+    for (const meta of packet.preparedPhotos) {
+      const photo = photos.find(value => value.id === meta?.photoId);
+      const source = photo && database.prepare('SELECT * FROM illustration_sources WHERE item_id=? AND photo_id=?').get(row.item_id, photo.id);
+      if (!source || meta.sourceSHA256 !== photo.digest || meta.preparedSHA256 !== source.prepared_digest
         || canonicalJSON(meta.versions) !== canonicalJSON(parse(source.prepared_versions))) throw new RequestError(409, 'prepared_source_conflict');
     }
     return artifacts;
@@ -185,6 +189,7 @@ export function createPreparations(database, env, retention, illustrations, dire
       database.prepare('UPDATE operation_receipts SET result_digest=COALESCE(result_digest,?) WHERE operation_id=?')
         .run(artifacts.cutoutSHA256, row.cutout_operation_id);
       illustrations.commit(itemId, illustrationId);
+      acknowledgeCutout(database, itemId, row.cutout_operation_id);
       database.prepare(`UPDATE preparations SET ${cleared},retention_state='delivered',status='failed',error='result_delivered' WHERE operation_id=?`).run(operationId);
       database.exec('COMMIT');
     } catch (error) { database.exec('ROLLBACK'); throw error; }
