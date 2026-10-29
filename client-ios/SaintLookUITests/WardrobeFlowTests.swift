@@ -87,7 +87,7 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons.matching(identifier: "photo-source-camera").firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons.matching(identifier: "photo-source-library").firstMatch.exists)
         capturePhotoSource("photo-source-chooser-empty", in: app)
-        try await dismissPhotoSource(in: app)
+        try dismissPhotoSource(in: app)
         XCTAssertTrue(app.staticTexts["wardrobe-empty"].exists)
 
         app.buttons["add-photo"].tap()
@@ -139,11 +139,11 @@ final class WardrobeFlowTests: XCTestCase {
         app.buttons["add-photo"].tap()
         XCTAssertTrue(app.buttons.matching(identifier: "photo-source-camera").firstMatch.waitForExistence(timeout: 5))
         capturePhotoSource("photo-source-chooser-populated", in: app)
-        try await dismissPhotoSource(in: app)
+        try dismissPhotoSource(in: app)
         try tapVisibleButton("replace-photo", in: app)
         XCTAssertTrue(app.buttons.matching(identifier: "photo-source-library").firstMatch.waitForExistence(timeout: 5))
         capturePhotoSource("photo-source-replacement", in: app)
-        try await dismissPhotoSource(in: app)
+        try dismissPhotoSource(in: app)
         try tapVisibleButton("replace-photo", in: app)
         app.buttons.matching(identifier: "photo-source-camera").firstMatch.tap()
         XCTAssertTrue(app.alerts["Камера недоступна"].waitForExistence(timeout: 5))
@@ -159,7 +159,7 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func dismissPhotoSource(in app: XCUIApplication) async throws {
+    private func dismissPhotoSource(in app: XCUIApplication) throws {
         let chooser = app.sheets.matching(identifier: "Источник фото").firstMatch
         XCTAssertTrue(chooser.waitForExistence(timeout: 5))
         let cancel = chooser.buttons.matching(identifier: "photo-source-cancel").firstMatch
@@ -182,8 +182,14 @@ final class WardrobeFlowTests: XCTestCase {
             region.coordinate(withNormalizedOffset: .zero)
                 .withOffset(CGVector(dx: point.x - frame.minX, dy: point.y - frame.minY)).tap()
         }
-        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: chooser)
-        await fulfillment(of: [dismissed], timeout: 5)
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !app.sheets.matching(identifier: "Источник фото").firstMatch.exists
+        }, object: app)
+        guard XCTWaiter.wait(for: [dismissed], timeout: 5) == .completed else {
+            capturePhotoSource("photo-source-dismiss-timeout", in: app)
+            XCTFail("The photo source chooser must disappear after native cancellation")
+            throw InteractionError.photoSourceNotDismissed
+        }
         XCTAssertFalse(app.buttons.matching(identifier: "photo-source-camera").firstMatch.exists)
     }
 
@@ -1183,7 +1189,7 @@ final class WardrobeFlowTests: XCTestCase {
                        file: file, line: line)
     }
 
-    private enum InteractionError: Error { case buttonNotVisible(String) }
+    private enum InteractionError: Error { case buttonNotVisible(String), photoSourceNotDismissed }
 
     @MainActor
     private func presentDeletionConfirmation(in app: XCUIApplication) throws {
