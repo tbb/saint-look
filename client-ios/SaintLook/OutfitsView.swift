@@ -419,38 +419,7 @@ struct OutfitEditorView: View {
                             .foregroundStyle(.secondary)
                     }
                     ForEach(draft.slots) { slot in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 12) {
-                                Text(outfitSlotTitle(slot, in: draft))
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                Spacer(minLength: 0)
-                                pinButton(slot)
-                                slotMenu(slot)
-                            }
-                            slotSelection(slot)
-                            if recommendationSlotID == slot.id {
-                                if recommendation.pending != nil {
-                                    ViewThatFits(in: .horizontal) {
-                                        HStack(spacing: 16) { recommendationProgress }
-                                        VStack(alignment: .leading, spacing: 8) { recommendationProgress }
-                                    }
-                                }
-                                if let recommendationMessage {
-                                    Text(recommendationMessage).font(.footnote).foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                        .accessibilityIdentifier("recommendation-message")
-                                }
-                            }
-                            if slot.id == draft.slots.last(where: { $0.zone == .body })?.id {
-                                Button("Добавить слой", systemImage: "plus") {
-                                    addBodyLayer()
-                                }
-                                .frame(minHeight: 44)
-                                .accessibilityIdentifier("add-body-layer")
-                            }
-                        }
-                        if slot.id != draft.slots.last?.id { Divider() }
+                        editorSlotRow(slot)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -508,6 +477,47 @@ struct OutfitEditorView: View {
                     draft = draft.removingItem(id)
                     initial = initial.removingItem(id)
                 }
+            }
+        }
+    }
+
+    private var lastBodySlotID: UUID? { draft.slots.last(where: { $0.zone == .body })?.id }
+
+    @ViewBuilder
+    private func editorSlotRow(_ slot: OutfitSlot) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 12) {
+                Text(outfitSlotTitle(slot, in: draft))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                pinButton(slot)
+                slotMenu(slot)
+            }
+            slotSelection(slot)
+            recommendationFeedback(for: slot.id)
+            if slot.id == lastBodySlotID {
+                Button("Добавить слой", systemImage: "plus") { addBodyLayer() }
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("add-body-layer")
+            }
+        }
+        if slot.id != draft.slots.last?.id { Divider() }
+    }
+
+    @ViewBuilder
+    private func recommendationFeedback(for slotID: UUID) -> some View {
+        if recommendationSlotID == slotID {
+            if recommendation.pending != nil {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 16) { recommendationProgress }
+                    VStack(alignment: .leading, spacing: 8) { recommendationProgress }
+                }
+            }
+            if let recommendationMessage {
+                Text(recommendationMessage).font(.footnote).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("recommendation-message")
             }
         }
     }
