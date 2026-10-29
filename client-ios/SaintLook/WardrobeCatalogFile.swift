@@ -167,6 +167,11 @@ extension WardrobeCatalog {
     mutating func beginPreparation(for id: UUID, intent: ItemPreparation) throws {
         guard let index = items.firstIndex(where: { $0.id == id }), intent.matches(items[index]),
               items[index].pendingPublication == nil, intent.revision > items[index].preparationRevision else { throw CancellationError() }
+        if let downloaded = items[index].downloadedIllustration {
+            guard downloaded.canPrepare(for: items[index]), downloaded.request.operationID == intent.request.operationID else {
+                throw CancellationError()
+            }
+        }
         guard let illustration = intent.publication.illustration,
               illustration.response.observedFeatures?.isValid == true,
               illustration.response.effectiveFeatures?.isValid == true,
