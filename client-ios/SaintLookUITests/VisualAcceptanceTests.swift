@@ -200,10 +200,14 @@ final class VisualAcceptanceTests: XCTestCase {
         let current = (field.value as? String) ?? ""
         let populated = !current.isEmpty && current != "Название — необязательно"
         // Focus first, then choose the native editing command on the insertion point.
+        let appFrame = app.frame
         try nativeTap(field, in: app)
         let keyboardReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             let keyboard = app.keyboards.firstMatch
-            return keyboard.exists && keyboard.isHittable && !keyboard.frame.isEmpty && app.frame.intersects(keyboard.frame)
+            guard keyboard.exists else { return false }
+            // Resolve keyboard geometry once per poll while its AX snapshot settles.
+            let frame = keyboard.frame
+            return !frame.isEmpty && appFrame.intersects(frame) && keyboard.isHittable
         }, object: app)
         guard XCTWaiter.wait(for: [keyboardReady], timeout: 15) == .completed else {
             diagnose("keyboard-focus-unavailable", app: app)
