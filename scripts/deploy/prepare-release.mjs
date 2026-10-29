@@ -48,8 +48,9 @@ try {
   let manifest;
   try { manifest = JSON.parse(git('show', `${sha}:backend/release.json`)); }
   catch { throw new Error('Selected commit has no supported release manifest.'); }
-  if (manifest.format !== 1 || manifest.profile !== 'controlled-http' || ![1, 2, 3].includes(manifest.dataVersion)
-    || manifest.minDataVersion !== manifest.dataVersion || manifest.maxDataVersion !== manifest.dataVersion) {
+  if (manifest.format !== 1 || manifest.profile !== 'controlled-http' || ![1, 2, 3, 4].includes(manifest.dataVersion)
+    || manifest.minDataVersion !== manifest.dataVersion || manifest.maxDataVersion !== manifest.dataVersion
+    || (manifest.dataVersion === 4 && manifest.modelRuntime !== 'outfit-transformer-labse-v1')) {
     throw new Error('Selected release is not supported by this deployment workflow.');
   }
   if (profile === 'live' && !manifest.profiles?.includes('live')) throw new Error('Selected release does not support the selected profile.');

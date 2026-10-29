@@ -1,9 +1,13 @@
 {
   "format": 1,
-  "dataVersion": 3,
-  "minDataVersion": 3,
-  "maxDataVersion": 3,
+  "dataVersion": 4,
+  "minDataVersion": 4,
+  "maxDataVersion": 4,
   "profile": "controlled-http",
   "providerConfig": "photoroom-jev-1.14.0-taxonomy-1",
-  "profiles": ["controlled-http", "live"]
+  "profiles": [
+    "controlled-http",
+    "live"
+  ],
+  "modelRuntime": "outfit-transformer-labse-v1"
 }

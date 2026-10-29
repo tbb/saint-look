@@ -17,7 +17,7 @@ DESCRIPTOR = {
     'textEncoderSHA256': '77d8e1f2dbab6eb5d3c261ce9d3dbf1e3c69e02938c95f934f94f42c22dfa31f',
     'textOutput': 'BertModel.pooler_output (no SentenceTransformer dense layer)',
     'preprocessing': 'exif-transpose-rgb-resize224-bilinear-imagenet-v1',
-    'textFormat': 'type-id-spaces-colors-sorted-v1',
+    'textFormat': 'type-id-spaces-colors-sorted-v2-empty-colors-omitted',
     'precision': 'float32',
     'runtime': 'torch2.6.0-torchvision0.21.0-transformers4.49.0-pillow11.1.0',
     'dimensions': 128,
@@ -31,10 +31,12 @@ SPACE_ID = hashlib.sha256(json.dumps(DESCRIPTOR, sort_keys=True, separators=(','
 def canonical_text(item_type, colors):
     if not isinstance(item_type, str) or not re.fullmatch(r'[a-z][a-z_]{0,63}', item_type):
         raise ValueError('invalid_type')
-    if not isinstance(colors, list) or not colors or len(colors) > 20:
+    if not isinstance(colors, list) or len(colors) > 20:
         raise ValueError('invalid_colors')
     if any(not isinstance(c, str) or not re.fullmatch(r'[a-z][a-z_]{0,63}', c) for c in colors):
         raise ValueError('invalid_colors')
+    if not colors:
+        return item_type.replace('_', ' ') + '.'
     return item_type.replace('_', ' ') + '. Colors: ' + ', '.join(sorted(set(colors))) + '.'
 
 

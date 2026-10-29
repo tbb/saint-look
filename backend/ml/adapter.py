@@ -40,6 +40,10 @@ class OutfitAdapter:
                     raise ValueError('asset_checksum_mismatch')
             self.verified.add(name)
 
+    def verify_assets(self):
+        for name in self.manifest:
+            self._verify(name)
+
     def _load_encoders(self):
         if self.resnet is not None:
             return

@@ -1,10 +1,11 @@
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import sharp from 'sharp';
+import { modelFixture } from './model.mjs';
 
 // The fixture implements external HTTP boundaries, never production fallback.
 export async function illustrationFixture(t, handlers = {}) {
-  const calls = { preparation: [], attributes: [], generation: [], finalization: [] };
+  const calls = { preparation: [], attributes: [], generation: [], finalization: [], model: [] };
   const result = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: '#00000000' } })
     .composite([{ input: await sharp({ create: { width: 120, height: 160, channels: 4, background: '#dd3322ff' } }).png().toBuffer(), left: 452, top: 260 }]).png().toBuffer();
   let url;
@@ -12,6 +13,7 @@ export async function illustrationFixture(t, handlers = {}) {
     try {
       const chunks = []; for await (const chunk of request) chunks.push(chunk);
       const body = Buffer.concat(chunks);
+      if (await modelFixture(request, response, body, handlers, calls.model)) return;
       if (request.url === '/fal-ai/nano-banana-pro/requests/fixture-1/status') {
         if (handlers.status) { await handlers.status(request, response); return; }
         response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ status: 'COMPLETED' })); return;
@@ -57,6 +59,7 @@ export async function illustrationFixture(t, handlers = {}) {
   url = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
   return { calls, result, env: { NODE_ENV: 'test', SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true', SAINT_LOOK_ILLUSTRATION_TEST_ORIGIN: url,
+    ...(!handlers.modelDisabled ? { SAINT_LOOK_TEST_MODEL_ORIGIN: url } : {}),
     PHOTOROOM_SANDBOX_API_KEY: 'sandbox_fixture', TYPESAFE_API_KEY: 'fixture', FAL_KEY: 'fixture',
     SAINT_LOOK_ILLUSTRATION_TIMEOUT_MS: '2000', SAINT_LOOK_ILLUSTRATION_POLL_MS: '1' } };
 }

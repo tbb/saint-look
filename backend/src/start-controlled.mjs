@@ -47,6 +47,8 @@ const env = {
 };
 delete env.SAINT_LOOK_TEST_CLOCK_FILE;
 delete env.SAINT_LOOK_TEST_PROVIDER_ORIGIN;
+delete env.SAINT_LOOK_TEST_MODEL_ORIGIN;
+env.SAINT_LOOK_MODEL_PROFILE = 'disabled';
 const fixture = start('../test/providers/ui-server.mjs', env, 'pipe');
 const startupTimeout = setTimeout(() => { console.error('Controlled provider startup timed out.'); stop(1); }, 10000);
 startupTimeout.unref();
@@ -58,6 +60,6 @@ lines.once('line', line => {
     const origin = new URL(JSON.parse(line).url);
     if (origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1' || !origin.port
       || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) throw new Error();
-    start('./server.mjs', { ...env, SAINT_LOOK_TEST_PROVIDER_ORIGIN: origin.origin });
+    start('./server.mjs', { ...env, SAINT_LOOK_TEST_PROVIDER_ORIGIN: origin.origin, SAINT_LOOK_TEST_MODEL_ORIGIN: origin.origin });
   } catch { console.error('Controlled provider did not announce a valid loopback address.'); stop(1); }
 });

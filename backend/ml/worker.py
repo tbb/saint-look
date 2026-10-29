@@ -28,6 +28,7 @@ def main():
                 raise ValueError('invalid_request')
             operation = request.get('operation')
             if operation == 'describe':
+                adapter.verify_assets()
                 result = {'spaceID': SPACE_ID, 'descriptor': DESCRIPTOR}
             elif operation == 'prepare':
                 result = adapter.prepare(request['imagePath'], request['photoVersionID'],

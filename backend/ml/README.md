@@ -51,6 +51,10 @@ Worker не открывает HTTP-порт. Доверенный backend за�
 Фото — настоящий исходник, EXIF transpose → RGB → bilinear resize224×224 →
 ImageNet normalization. Вырезка и иллюстрация не нужны encoder. Текст:
 `type.replace('_', ' ') + '. Colors: ' + sorted(unique(colors)).join(', ') + '.'`.
+Если colors пуст, текст — только тип с точкой, например `shirt.`. Это textFormat
+v2-empty-colors-omitted, spaceID `5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b`.
+Непустые входы сохранили прежние байты; результаты исходного benchmark относятся
+к прежнему v1 space и не переписываются задним числом.
 Нового JEV-вызова нет. LaBSE используется через `BertModel.pooler_output`, как в
 опубликованном коде; не через SentenceTransformer Dense/Normalize.
 
@@ -182,3 +186,32 @@ run_memory_case 2g 2G 2048
 на другом хосте не ожидаются. Сумма RSS повторно считает shared pages и не равна
 `memory.current`. При лимите1GiB допускается ошибка/OOM — это результат измерения,
 а не повод повторять до успешного исхода.
+
+
+## Opt-in проверка интеграции HTTP с настоящим checkpoint
+
+Обычный `npm test` не загружает веса и использует управляемую ML-границу.
+Отдельный тест использует существующий HTTP backend и те же image-provider
+fixtures: настоящая публичная фотография → illustration (controlled) → real
+worker preparation → полный ack → повтор квитанции. Тест также проверяет
+валидный пустой набор цветов. Он не доказывает качество изображения/вкуса.
+
+Из корня проекта, после установки assets/runtime и получения публичного набора:
+
+```sh
+SAINT_LOOK_REAL_MODEL_TEST=1 \
+SAINT_LOOK_REAL_MODEL_PHOTO=/tmp/saint-look-public/images/white-tee.jpg \
+SAINT_LOOK_MODEL_PYTHON=/opt/saint-look-ml/bin/python \
+SAINT_LOOK_MODEL_ASSETS=/opt/saint-look-model \
+node --test backend/test/real-preparation.mjs
+```
+
+В образе backend находится в `/app/backend`: команда оттуда —
+`node --test test/real-preparation.mjs`. Фото монтируется отдельно; тест работает
+с `--network none` (loopback fixtures), не скачивает данные и не использует API keys.
+JSON evidence печатает SHA исходного файла/encoder input, spaceID, hash/размер
+representation, время POST preparation→ready и `committed:true`.
+Локальная проверка 29 октября 2026: white-tee public SHA
+`3aa6d547cca9a7cd3bd2782e98485dbadfd892a35b8d99c31d8134379e5ba49f`,
+6 891 ms preparation, 2 864 bytes representation, full commit/replay успешны.
+Это один cold CPU/1-thread вызов, не измерение рекомендаций на 300 вещах.

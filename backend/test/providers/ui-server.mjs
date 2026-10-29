@@ -1,6 +1,7 @@
 // Controlled external HTTP providers for Simulator and the isolated dev profile; never live AI.
 import { createServer } from 'node:http';
 import sharp from 'sharp';
+import { modelFixture } from './model.mjs';
 import { jevAnswer, validateJevRequest } from './jev.mjs';
 import { demoResult } from '../../src/demo-provider.mjs';
 
@@ -59,6 +60,7 @@ const server = createServer(async (request, response) => {
     }
     if (request.method !== 'POST') return reply(response, 404, { error: 'not_found' });
     const body = await bodyOf(request, 16 * 1024 * 1024);
+    if (await modelFixture(request, response, body)) return;
     if (request.url === '/fal-ai/nano-banana-pro/edit') {
       illustrationGenerationCalls++;
       if (illustrationMode === 'unknown') { response.destroy(); return; }

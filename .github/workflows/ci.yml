@@ -94,6 +94,7 @@ jobs:
       - run: npm --prefix backend ci --ignore-scripts
       - run: npm --prefix backend run check
       - run: npm --prefix backend test
+      - run: PYTHONPATH=backend/ml python3 -m unittest backend/ml/test_contract.py
 
   ios:
     name: ${{ matrix.suite == 'wardrobe' && 'ios' || format('ios-{0}', matrix.label) }}
@@ -135,6 +136,7 @@ jobs:
           SAINT_LOOK_TEST_PROVIDER_ORIGIN: http://127.0.0.1:8789
           # Fixture capability is off until a focused test opts in through provider control.
           SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true'
+          SAINT_LOOK_TEST_MODEL_ORIGIN: http://127.0.0.1:8789
           SAINT_LOOK_ILLUSTRATION_TEST_ORIGIN: http://127.0.0.1:8789
           SAINT_LOOK_ILLUSTRATION_TEST_CONTROLLED: 'true'
           PHOTOROOM_SANDBOX_API_KEY: sandbox_fixture

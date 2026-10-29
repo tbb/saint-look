@@ -8,13 +8,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const command = resolve('scripts/deploy/probe.mjs');
 const revision = 'a'.repeat(40);
-async function fixture(t, health, smoke = false) {
+async function fixture(t, health, smoke = false, config = null) {
   let item; let acknowledged = false;
   const requests = [];
   const server = createServer(async (request, response) => {
     requests.push({ url: request.url, method: request.method, authorization: request.headers.authorization });
     response.setHeader('Content-Type', 'application/json');
     if (request.url === '/health') response.end(JSON.stringify(health));
+    else if (request.url === '/v1/recommendations/config' && config) {
+      assert.equal(request.headers.authorization, 'Bearer fixture-owner-token-000000000000000000');
+      response.end(JSON.stringify(config));
+    }
     else if (smoke) {
       assert.equal(request.headers.authorization, 'Bearer fixture-owner-token-000000000000000000');
       if (request.method === 'DELETE') { response.statusCode = 204; response.end(); }
@@ -102,13 +106,32 @@ test('live readiness checks only health and refuses a synthetic smoke', async t 
   assert.ok(f.requests.every(r => r.url === '/health' && r.method === 'GET'));
 });
 
-test('illustration release readiness requires its exact selected data version without uploading', async t => {
+test('encoder-ready release readiness requires its exact selected data version without uploading', async t => {
   const health = { status: 'ok', mode: 'live', revision, dataVersion: 1, deploymentId: 'deployment-new' };
   const f = await fixture(t, health);
-  const selected = { SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', SAINT_LOOK_EXPECTED_DATA_VERSION: '3' };
+  const selected = { SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', SAINT_LOOK_EXPECTED_DATA_VERSION: '4' };
   assert.equal((await f.run(selected, ['health'])).code, 1);
-  health.dataVersion = 3;
+  health.dataVersion = 4;
   const result = await f.run(selected, ['health']);
   assert.equal(result.code, 0, result.stderr);
   assert.ok(f.requests.every(r => r.url === '/health' && r.method === 'GET' && !r.authorization));
+});
+
+
+test('real-model release probe verifies authenticated real mode and active space without AI calls', async t => {
+  const health = { status: 'ok', mode: 'live', revision, dataVersion: 4, deploymentId: 'deployment-new', encoderAvailable: false };
+  const config = { encoder: { available: true, mode: 'controlled', activeSpaceID: 'controlled' } };
+  const f = await fixture(t, health, false, config);
+  const selected = { SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', SAINT_LOOK_EXPECTED_DATA_VERSION: '4', SAINT_LOOK_EXPECTED_MODEL_PROFILE: 'outfit-transformer-labse-v1' };
+  assert.equal((await f.run(selected, ['health'])).code, 1);
+  health.encoderAvailable = true;
+  assert.equal((await f.run(selected, ['health'])).code, 1);
+  config.encoder.mode = 'real'; config.encoder.activeSpaceID = '';
+  assert.equal((await f.run(selected, ['health'])).code, 1);
+  config.encoder.activeSpaceID = 'validated-space';
+  const result = await f.run(selected, ['health']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).modelProfile, 'outfit-transformer-labse-v1');
+  assert.ok(f.requests.every(r => r.method === 'GET' && ['/health', '/v1/recommendations/config'].includes(r.url)));
+  assert.ok(f.requests.filter(r => r.url === '/health').every(r => !r.authorization));
 });

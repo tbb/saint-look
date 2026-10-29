@@ -22,8 +22,11 @@ try {
   const base = origin();
   const revision = env.SAINT_LOOK_EXPECTED_REVISION;
   const deploymentId = env.SAINT_LOOK_EXPECTED_DEPLOYMENT_ID;
+  const modelProfile = env.SAINT_LOOK_EXPECTED_MODEL_PROFILE || 'disabled';
+  if (!['disabled', 'outfit-transformer-labse-v1'].includes(modelProfile)) throw new Error('Unsupported expected model profile.');
+  const expectsModel = modelProfile === 'outfit-transformer-labse-v1';
   const dataVersion = Number(env.SAINT_LOOK_EXPECTED_DATA_VERSION || 1);
-  if (![1, 2, 3].includes(dataVersion)) throw new Error('Unsupported expected data version.');
+  if (![1, 2, 3, 4].includes(dataVersion)) throw new Error('Unsupported expected data version.');
   if (!/^[a-f0-9]{40}$/.test(revision || '') || !deploymentId) throw new Error('Expected release identity is incomplete.');
   const timeout = env.NODE_ENV === 'test' ? Number(env.SAINT_LOOK_PROBE_TIMEOUT_MS || 10000) : 600000;
   if (!Number.isSafeInteger(timeout) || timeout < 50 || timeout > 600000) throw new Error('Invalid probe timeout.');
@@ -33,15 +36,22 @@ try {
     try {
       const response = await fetch(base + '/health', { redirect: 'error', signal: AbortSignal.timeout(5000) });
       const health = response.ok ? await response.json() : null;
-      if (health?.status === 'ok' && health.mode === expectedMode && health.revision === revision && health.dataVersion === dataVersion && health.deploymentId === deploymentId) {
+      if (health?.status === 'ok' && health.mode === expectedMode && health.revision === revision && health.dataVersion === dataVersion && health.deploymentId === deploymentId
+        && (!expectsModel || health.encoderAvailable === true)) {
         ready = true; break;
       }
     } catch { /* The existing Machine may restart while the new version is deployed. */ }
     await pause(env.NODE_ENV === 'test' ? 20 : 2000);
   } while (Date.now() < deadline);
   if (!ready) throw new Error('Selected deployment did not become ready.');
-  if (mode === 'health') { console.log(JSON.stringify({ revision, deploymentId, mode: expectedMode, ready: true })); process.exit(0); }
-  if (!env.SAINT_LOOK_DEV_OWNER_TOKEN || env.SAINT_LOOK_DEV_OWNER_TOKEN.length < 32) throw new Error('Owner token is missing or too short.');
+  if ((expectsModel || mode !== 'health') && (!env.SAINT_LOOK_DEV_OWNER_TOKEN || env.SAINT_LOOK_DEV_OWNER_TOKEN.length < 32)) throw new Error('Owner token is missing or too short.');
+  if (expectsModel) {
+    const response = await api('/v1/recommendations/config');
+    let config; try { config = JSON.parse(response.data); } catch { throw new Error('Invalid encoder configuration response.'); }
+    if (response.status !== 200 || config.encoder?.available !== true || config.encoder.mode !== 'real'
+      || typeof config.encoder.activeSpaceID !== 'string' || !config.encoder.activeSpaceID.length) throw new Error('Selected real encoder did not become ready.');
+  }
+  if (mode === 'health') { console.log(JSON.stringify({ revision, deploymentId, mode: expectedMode, ready: true, ...(expectsModel ? { modelProfile } : {}) })); process.exit(0); }
   async function api(path, method = 'GET', body) {
     const response = await fetch(base + path, {
       method, redirect: 'error', signal: AbortSignal.timeout(15000),

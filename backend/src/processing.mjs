@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { ProviderError } from './providers.mjs';
 
 export function initializeProcessing(database) {
@@ -9,7 +10,7 @@ export function initializeProcessing(database) {
   database.exec("UPDATE items SET attributes_state='done',cutout_state='done' WHERE status='ready'");
 }
 
-export function createWorker(database, provider, env, retention) {
+export function createWorker(database, provider, env, retention, budget) {
   if (env.SAINT_LOOK_DEPLOYMENT_PROFILE && database.prepare("SELECT 1 FROM items WHERE status='pending' AND provider_id != ? LIMIT 1").get(provider.id)) {
     throw new Error('Pending work belongs to another provider profile. Finish or delete it before switching.');
   }
@@ -33,6 +34,7 @@ export function createWorker(database, provider, env, retention) {
       if (row.provider_id !== provider.id) throw new ProviderError('provider_configuration_changed');
       provider.preflight(Buffer.from(row.source));
       database.prepare(`UPDATE items SET ${stage}_state='in_flight' WHERE item_id=? AND operation_id=? AND retention_state='active'`).run(itemId, operationId);
+      if (provider.id !== 'demo') budget.reserve(stage === 'attributes' ? 'jev' : 'photoroom', `${operationId}:ingestion:${stage}:${row.photo_version_id}`);
       const result = await provider[stage](Buffer.from(row.source), abort.signal);
       if (closing) return;
       retention.sweep();
@@ -43,6 +45,9 @@ export function createWorker(database, provider, env, retention) {
         const attributes = JSON.parse(row.attributes);
         database.prepare("UPDATE items SET cutout_state='done',status='ready',result=?,type=?,colors=? WHERE item_id=? AND operation_id=? AND retention_state='active'")
           .run(result, attributes.type, JSON.stringify(attributes.colors), itemId, operationId);
+        database.prepare(`UPDATE operation_receipts SET result_digest=?,result_mode=? WHERE operation_id=? AND EXISTS
+          (SELECT 1 FROM items WHERE item_id=? AND operation_id=? AND retention_state='active' AND status='ready')`)
+          .run(createHash('sha256').update(result).digest('hex'), row.mode, operationId, itemId, operationId);
       }
     } catch (error) {
       if (closing) return;
