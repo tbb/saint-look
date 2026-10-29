@@ -555,13 +555,13 @@ struct OutfitCoreChecks {
         // A v3 ready illustration whose old cutout receipt has no hash must
         // upload its actual legacy packet after v4 refuses bodyless acknowledgement.
         var uncommittedLegacy = migratedPublication
-        uncommittedLegacy.items[0].manualType = completed.manualType
-        uncommittedLegacy.items[0].manualColors = completed.manualColors
         uncommittedLegacy.items[0].illustration = completed
         try uncommittedLegacy.reconcileLegacyPublication(legacyAck, committed: false, requiresPreparation: true)
         try file.save(uncommittedLegacy)
         uncommittedLegacy = try file.load()
         let historicalCandidate = uncommittedLegacy.items[0].downloadedIllustration!
+        precondition(historicalCandidate.canPrepare(for: uncommittedLegacy.items[0]),
+                     "CPU migration of visible legacy A preserves a newer manual draft")
         precondition(historicalCandidate.preparationMode == .legacyImport,
                      "An uncommitted historical packet must import actual final artifacts, not rely on unavailable old receipt hashes")
         precondition(uncommittedLegacy.items[0].pendingPublication == nil)
@@ -572,13 +572,54 @@ struct OutfitCoreChecks {
         precondition(historicalIntent.request.operationID == legacyAck.operationID)
         precondition(historicalIntent.cutoutOperationID == migratedPublication.items[0].operationID)
         try uncommittedLegacy.beginPreparation(for: shirtID, intent: historicalIntent)
+        try file.save(uncommittedLegacy)
+        uncommittedLegacy = try file.load()
+        precondition(uncommittedLegacy.items[0].preparation?.manualType == "Куртка")
+        var newerDraft = uncommittedLegacy
+        try newerDraft.editAttributes(for: shirtID, type: "Пальто", colors: nil, taxonomy: taxonomy)
+        precondition(!historicalIntent.matches(newerDraft.items[0]))
+        do {
+            try newerDraft.savePreparation(for: shirtID, intent: historicalIntent)
+            fatalError("A late legacy preparation must not overwrite a later manual edit")
+        } catch is CancellationError { }
+        var newerIllustration = uncommittedLegacy
+        newerIllustration.items[0].illustration = migratedPublication.items[0].illustration
+        precondition(!historicalCandidate.canPrepare(for: newerIllustration.items[0]))
+        precondition(!historicalIntent.matches(newerIllustration.items[0]))
+        do {
+            let supersedingIntent = try preparationIntent(item: newerIllustration.items[0], candidate: historicalCandidate,
+                                                         mode: historicalCandidate.preparationMode)
+            try newerIllustration.beginPreparation(for: shirtID, intent: supersedingIntent)
+            fatalError("Historical A must not replace a newer illustration B intent")
+        } catch is CancellationError { }
+        var ordinaryCandidate = historicalCandidate
+        ordinaryCandidate.legacyReconciliation = nil
+        precondition(!ordinaryCandidate.canPrepare(for: uncommittedLegacy.items[0]),
+                     "A new pipeline result still requires its exact manual snapshot")
         let historicalResponse = preparationResponse(item: uncommittedLegacy.items[0], intent: historicalIntent)
+        do {
+            try newerIllustration.stagePreparation(for: shirtID, response: historicalResponse,
+                representationFilename: "late-historical.json", representationDigest: historicalResponse.representationSHA256!,
+                actualArtifacts: historicalIntent.artifacts, actualSourceDigest: historicalIntent.sourceSHA256)
+            fatalError("A late encoder result for A must not stage over newer B with the same draft")
+        } catch is CancellationError { }
         try uncommittedLegacy.stagePreparation(for: shirtID, response: historicalResponse, representationFilename: "historical-representation.json",
             representationDigest: historicalResponse.representationSHA256!, actualArtifacts: historicalIntent.artifacts,
             actualSourceDigest: historicalIntent.sourceSHA256)
         precondition(!uncommittedLegacy.items[0].hasPreparedVersion)
+        var lateHistoricalAck = uncommittedLegacy
+        lateHistoricalAck.items[0].illustration = migratedPublication.items[0].illustration
+        do {
+            try lateHistoricalAck.confirmPublication(for: shirtID, operationID: legacyAck.operationID)
+            fatalError("A late commit for A must not overwrite newer B")
+        } catch is CancellationError { }
+        precondition(lateHistoricalAck.items[0].illustration?.operationID == migratedPublication.items[0].illustration?.operationID)
         try uncommittedLegacy.confirmPublication(for: shirtID, operationID: legacyAck.operationID)
         precondition(uncommittedLegacy.items[0].hasPreparedVersion && uncommittedLegacy.items[0].photosLocked)
+        precondition(uncommittedLegacy.items[0].editedType == "Куртка")
+        precondition(uncommittedLegacy.items[0].displayedType == "Худи")
+        precondition(uncommittedLegacy.items[0].illustrationIsStale,
+                     "Full commit of legacy A must not pretend the newer draft was applied")
         precondition(uncommittedLegacy.outfits == [outfit])
         print("PASS: historical uncommitted illustration imports final artifacts and requires full preparation commit")
         var rejectedLegacy = migratedPublication
