@@ -11,18 +11,25 @@ func addressedNativeDialogAction(_ identifier: String, in app: XCUIApplication) 
         throw NativeDialogActionFailure.missing(identifier)
     }
     if matches.count == 1 { return matches.element }
-    let parents = matches.containing(.button, identifier: identifier)
-    guard matches.count == 2, parents.count == 1 else {
-        throw NativeDialogActionFailure.ambiguous(identifier)
+    let candidates = matches.allElementsBoundByIndex
+    guard candidates.count == 2 else {
+        throw NativeDialogActionFailure.ambiguous("\(identifier): \(candidates.count) matching buttons")
     }
-    let action = parents.element
-    let children = action.descendants(matching: .button).matching(identifier: identifier)
-    guard children.count == 1 else { throw NativeDialogActionFailure.ambiguous(identifier) }
+    // The recorded native hierarchy is a direct Button → Button pair. Inspect
+    // each bound element: the query-wide containing filter is not unique here.
+    let childCounts = candidates.map { $0.children(matching: .button).matching(identifier: identifier).count }
+    guard childCounts.sorted() == [0, 1], let parentIndex = childCounts.firstIndex(of: 1) else {
+        throw NativeDialogActionFailure.ambiguous("\(identifier): direct child counts \(childCounts)")
+    }
+    let action = candidates[parentIndex]
+    let children = action.children(matching: .button).matching(identifier: identifier)
     let child = children.element
+    let other = candidates[1 - parentIndex]
     let frame = action.frame
     let label = action.label
-    guard action.identifier == identifier, child.identifier == identifier,
-          !frame.isEmpty, frame == child.frame, !label.isEmpty, label == child.label else {
+    guard action.identifier == identifier, child.identifier == identifier, other.identifier == identifier,
+          !frame.isEmpty, frame == child.frame, frame == other.frame,
+          !label.isEmpty, label == child.label, label == other.label else {
         throw NativeDialogActionFailure.ambiguous(identifier)
     }
     return action
