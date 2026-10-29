@@ -67,10 +67,11 @@ ImageNet normalization. Вырезка и иллюстрация не нужны
 
 ```sh
 python3 -m unittest discover -s backend/ml -p test_contract.py
+/tmp/saint-look-ml/bin/python backend/ml/fetch_public_dataset.py /tmp/saint-look-public
 /tmp/saint-look-ml/bin/python backend/ml/validate_real.py \
   --assets /tmp/saint-look-weights --threads 1 \
-  --dataset /path/to/public/manifest.json \
-  --reference-source /path/to/pinned/model.py \
+  --dataset /tmp/saint-look-public/manifest.json \
+  --reference-source /tmp/saint-look-public/reference-model.py \
   --output /tmp/real-model-validation.json
 ```
 
@@ -80,3 +81,8 @@ Reference source проверяется по SHA-256 до исполнения. 
 Источник закреплённого model.py — HF revision7eaf8d9 из отчёта. Никаких private
 фото, ключей и оплачиваемых AI-вызовов. Проверки HTTP с управляемым ML адаптером
 остаются основной автоматической границей продуктового поведения.
+
+`fetch_public_dataset.py` воспроизводит16 изображений по опубликованным URL,
+проверяет SHA-256 исходников и каждого преобразованного JPEG, сохраняет точный
+manifest и проверенный reference-model.py. Проверено с Pillow11.1.0 и13.0.0.
+При изменении источника или обработки команда останавливается, не меняя хеши.
