@@ -112,7 +112,8 @@ SQLite dataVersion=4 мигрирует 1/2/3 аддитивно. Старые a
 хеши из сохранившихся bytes; очищенным historical receipts выдуманные хеши не
 присваиваются. Возврат к binary формата3 запрещён: он обходил бы обязательный
 encoder. Понижать user_version вручную нельзя. Receipt хранит только identities,
-версии/digests/mode; временные фото/признаки/representations очищаются после
+версии/digests/mode; full commit также подтверждает связанный ingestion cutout
+(не затрагивая более новую ingestion attempt). Временные фото/признаки/representations очищаются после
 commit, DELETE или семидневного TTL.
 
 ## Legacy import: осознанная граница доверия
@@ -125,15 +126,21 @@ immutable originals; один boolean ready или filename недостаточ
 
 Legacy содержит cutout `{imageBase64,mode}`, illustration
 `{imageBase64,response:<сохранённый полный IllustrationResponse>}` и
-preparedPhotos — по каждой фотографии `{photoId,sourceSHA256,preparedSHA256,
+preparedPhotos — по каждому имеющемуся промежуточному PNG `{photoId,sourceSHA256,preparedSHA256,
 versions:{modelVersion,templateVersion,geometryVersion}}`. Клиент до отправки
-проверяет actual файлы/хеши. Сервер сверяет prepared metadata с прежними
+проверяет actual файлы/хеши. Prepared source PNG — промежуточный cache генерации,
+не конечный артефакт и не вход encoder. Для legacy/reuse его отсутствие не
+блокирует подготовку: preparedPhotos содержит только имеющийся проверенный
+cache, включая пустой массив. Каждый переданный metadata проверяется строго. Сервер сверяет prepared metadata с прежними
 receipts, UUID/source-set/версии/режим/PNG/геометрию иллюстрации и согласованность
 признаков, выполняет настоящий encoder и создаёт новые digests.
 
 Legacy controlled/test результат сохраняет режим и provenance legacyImport;
-он не становится live. Если обязательного локального файла нет, вещь остаётся
-legacy, пока отсутствующий этап не будет выполнен. Неизменные платные этапы
+он не становится live. Если конечного cutout/illustration или original нет, вещь остаётся
+legacy, пока отсутствующий этап не будет выполнен. При будущей смене признаков
+POST illustrations передаёт preparedBase64 только имеющихся проверенных PNG;
+существующий pipeline восполняет только missing cache перед новой генерацией,
+а reuseObserved сохраняет исходный результат JEV. Неизменные платные этапы
 не повторяются ради исторически отсутствовавшего хеша.
 
 ## Ручное обновление признаков

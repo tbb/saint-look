@@ -59,6 +59,7 @@ test('full preparation binds source, features and artifacts; commit freezes phot
   const ack = { publicationProtocol: 'prepared-item-v1', preparationOperationId: operation.input.operationId };
   assert.equal((await post(server, state.path + '/ack', ack)).status, 204);
   assert.equal((await server.request(operation.path)).status, 410);
+  assert.equal((await server.request(state.cutout.resultPath)).status, 410);
   await server.stop(); const restarted = await state.env.launch(state.fixture.env);
   assert.equal((await post(restarted, state.path + '/ack', ack)).status, 204);
   const replacement = await photoRequest();
@@ -135,7 +136,7 @@ test('new source/traits and incompatible space cannot be admitted using an old a
   assert.equal(state.fixture.calls.model.length, 0);
 });
 
-test('historical delivered artifacts import explicitly and become a digest-bound prepared receipt', async t => {
+test('historical delivered final artifacts import without missing intermediate cache or repeated image calls', async t => {
   const { DatabaseSync } = await import('node:sqlite');
   const { join } = await import('node:path');
   const state = await illustrated(t), { photo, result } = state;
@@ -154,9 +155,10 @@ test('historical delivered artifacts import explicitly and become a digest-bound
   const legacy = { cutout: { imageBase64: cutoutBytes.toString('base64'), mode: state.cutout.mode },
     illustration: { imageBase64: illustrationBytes.toString('base64'), response: result },
     preparedPhotos: result.preparedSources.map(({ photoId, sourceSHA256, preparedSHA256, versions }) => ({ photoId, sourceSHA256, preparedSHA256, versions })) };
-  const bad = await prepare(state, { mode: 'legacyImport', legacy: { ...legacy, preparedPhotos: [] } });
+  const bad = await prepare(state, { mode: 'legacyImport', legacy: { ...legacy, preparedPhotos: [{ ...legacy.preparedPhotos[0], preparedSHA256: '0'.repeat(64) }] } });
   assert.equal(bad.response.status, 409);
-  const operation = await prepare(state, { mode: 'legacyImport', legacy });
+  // Original and final files survived locally; the intermediate cache did not.
+  const operation = await prepare(state, { mode: 'legacyImport', legacy: { ...legacy, preparedPhotos: [] } });
   assert.equal(operation.response.status, 202, JSON.stringify(await operation.response.json()));
   const prepared = await ready(state.server, operation.path);
   assert.equal(prepared.provenance, 'legacyImport'); assert.equal(prepared.imageMode, 'test');
