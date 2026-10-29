@@ -1,0 +1,171 @@
+{
+  "cgroup": "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/saint-look-model68-pipeline2g.service",
+  "memory": {
+    "memory.current": "893497344",
+    "memory.peak": "1081884672",
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "2147483648",
+    "memory.swap.max": "0"
+  },
+  "summedProcessPeakRSSKiB": 1420268,
+  "elapsedSeconds": 31.881710928864777,
+  "prepares": [
+    {
+      "id": "white-tee",
+      "seconds": 14.177560443989933
+    },
+    {
+      "id": "blue-jeans",
+      "seconds": 0.2513422481715679
+    },
+    {
+      "id": "light-polo",
+      "seconds": 0.2605062471702695
+    },
+    {
+      "id": "pub-01",
+      "seconds": 0.30692027881741524
+    },
+    {
+      "id": "pub-03",
+      "seconds": 0.2882720432244241
+    },
+    {
+      "id": "pub-13",
+      "seconds": 0.2874106699600816
+    },
+    {
+      "id": "pub-15",
+      "seconds": 0.23790004709735513
+    },
+    {
+      "id": "pub-22",
+      "seconds": 0.2420820500701666
+    },
+    {
+      "id": "pub-25",
+      "seconds": 0.2358673973940313
+    },
+    {
+      "id": "pub-27",
+      "seconds": 0.22673769807443023
+    },
+    {
+      "id": "pub-29",
+      "seconds": 0.21687854919582605
+    },
+    {
+      "id": "pub-30",
+      "seconds": 0.2642768663354218
+    },
+    {
+      "id": "pub-31",
+      "seconds": 0.24306848691776395
+    },
+    {
+      "id": "olive-cargo",
+      "seconds": 0.23951086960732937
+    },
+    {
+      "id": "black-jeans",
+      "seconds": 0.2610665773972869
+    },
+    {
+      "id": "creepers",
+      "seconds": 0.2639097790233791
+    }
+  ],
+  "http": [
+    {
+      "id": "white-tee",
+      "seconds": 2.758019097149372,
+      "illustrationBytes": 24145
+    },
+    {
+      "id": "blue-jeans",
+      "seconds": 1.8793478920124471,
+      "illustrationBytes": 24145
+    },
+    {
+      "id": "light-polo",
+      "seconds": 2.7330062156543136,
+      "illustrationBytes": 24145
+    },
+    {
+      "id": "pub-01",
+      "seconds": 1.884223227854818,
+      "illustrationBytes": 24145
+    },
+    {
+      "id": "pub-03",
+      "seconds": 1.4320521391928196,
+      "illustrationBytes": 24145
+    },
+    {
+      "id": "pub-13",
+      "seconds": 1.4234668309800327,
+      "illustrationBytes": 24145
+    },
+    {
+      "id": "pub-15",
+      "seconds": 1.7964653549715877,
+      "illustrationBytes": 24145
+    },
+    {
+      "id": "pub-22",
+      "seconds": 2.5373087939806283,
+      "illustrationBytes": 24145
+    },
+    {
+      "id": "pub-25",
+      "seconds": 2.1419946341775358,
+      "illustrationBytes": 24145
+    },
+    {
+      "id": "pub-27",
+      "seconds": 2.502133424859494,
+      "illustrationBytes": 24145
+    },
+    {
+      "id": "pub-29",
+      "seconds": 2.2116916477680206,
+      "illustrationBytes": 24145
+    },
+    {
+      "id": "pub-30",
+      "seconds": 2.2776605179533362,
+      "illustrationBytes": 24145
+    },
+    {
+      "id": "pub-31",
+      "seconds": 2.378678185865283,
+      "illustrationBytes": 24145
+    },
+    {
+      "id": "olive-cargo",
+      "seconds": 2.2186838597990572,
+      "illustrationBytes": 24145
+    },
+    {
+      "id": "black-jeans",
+      "seconds": 2.0451398459263146,
+      "illustrationBytes": 24145
+    },
+    {
+      "id": "creepers",
+      "seconds": 2.0837345751933753,
+      "illustrationBytes": 24145
+    }
+  ],
+  "backendAlive": true,
+  "workerAlive": true,
+  "fixtureCounters": {
+    "attributesCalls": 16,
+    "cutoutCalls": 16,
+    "illustrationPreparationCalls": 16,
+    "illustrationAttributesCalls": 16,
+    "illustrationGenerationCalls": 16,
+    "illustrationFinalizationCalls": 0
+  },
+  "conditions": "1torch thread; real16encoder; two concurrent HTTP ingestion+illustration pipelines on controlled providers; reused asset files/pages; local not Fly; no paid APIs"
+}
