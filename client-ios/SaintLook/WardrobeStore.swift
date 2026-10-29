@@ -57,7 +57,7 @@ final class WardrobeStore: ObservableObject {
                     guard item.status == .ready, let filename = item.resultFilename,
                           UIImage(contentsOfFile: root.appendingPathComponent(item.directoryName).appendingPathComponent(filename).path) != nil else { return nil }
                     return ResultAcknowledgement(itemID: item.id, operationID: item.operationID)
-                })
+                }).union(saved.legacyPublicationAcknowledgements)
                 // A legacy ready card is acknowledged only when its local image is usable,
                 // and only after the inferred delivery intent itself has been saved.
                 try persist(items, pendingAcknowledgements: acknowledgements)
@@ -101,20 +101,10 @@ final class WardrobeStore: ObservableObject {
     }
 
     func saveEdits(for id: UUID, type: String?, colors: [String]?) throws {
-        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        if let type, !WardrobeTaxonomy.shared.contains(type: type) { throw ClientError.invalidAttributes }
-        if let colors, !WardrobeTaxonomy.shared.contains(colors: colors) { throw ClientError.invalidAttributes }
-        var updated = items
-        if let type { updated[index].manualType = type }
-        if let colors { updated[index].manualColors = colors }
-        if updated[index].manualType != items[index].manualType || updated[index].manualColors != items[index].manualColors {
-            if updated[index].illustration?.status == .pending {
-                updated[index].illustration?.status = .failed
-                updated[index].illustration?.error = "source_changed"
-            }
-        }
-        try persist(updated)
-        items = updated
+        var updated = catalog
+        try updated.editAttributes(for: id, type: type, colors: colors, taxonomy: .shared)
+        try persist(updated.items)
+        items = updated.items
     }
 
     func deleteItem(_ id: UUID) {
@@ -158,6 +148,14 @@ final class WardrobeStore: ObservableObject {
         guard let directory, storageAvailable,
               let index = items.firstIndex(where: { $0.id == id }) else { return }
         var item = items[index]
+        guard item.pendingPublication == nil else {
+            notice = ClientError.publicationInProgress.localizedDescription
+            return
+        }
+        guard original == nil || !item.photosLocked else {
+            notice = ClientError.photosLocked.localizedDescription
+            return
+        }
         guard original != nil || item.status != .pending else { return }
         guard item.revision < 9_007_199_254_740_991 else {
             notice = "Не удалось создать новую попытку обработки. Текущая карточка сохранена."
@@ -210,7 +208,7 @@ final class WardrobeStore: ObservableObject {
 
     func displayImage(for item: WardrobeItem) -> UIImage? {
         guard let directory else { return nil }
-        let filename = item.resultFilename ?? item.uploadFilename
+        let filename = item.displayedCutoutFilename ?? item.uploadFilename
         let path = directory.appendingPathComponent(item.directoryName).appendingPathComponent(filename)
         return UIImage(contentsOfFile: path.path)
     }
@@ -222,7 +220,7 @@ final class WardrobeStore: ObservableObject {
 
     func outfitCandidates(for zone: OutfitZone, excluding selectedIDs: Set<UUID>) -> [WardrobeItem] {
         items.filter {
-            $0.status == .ready && $0.resultFilename != nil && !selectedIDs.contains($0.id)
+            $0.hasUsableImageVersion && $0.displayedCutoutFilename != nil && !selectedIDs.contains($0.id)
                 && zone.accepts($0, taxonomy: .shared) && displayImage(for: $0) != nil
         }.sorted { $0.id.uuidString < $1.id.uuidString }
     }
@@ -248,7 +246,7 @@ final class WardrobeStore: ObservableObject {
         var updated = catalog
         let selectedIDs = draft.selectedIDs
         let cutouts = Set(items.filter {
-            selectedIDs.contains($0.id) && $0.resultFilename != nil && displayImage(for: $0) != nil
+            selectedIDs.contains($0.id) && $0.displayedCutoutFilename != nil && displayImage(for: $0) != nil
         }.map(\.id))
         try updated.saveOutfit(draft, taxonomy: .shared, availableCutouts: cutouts)
         return updated
@@ -261,7 +259,7 @@ final class WardrobeStore: ObservableObject {
         for id in pendingDeletionIDs { startDeletion(id) }
         for acknowledgement in pendingAcknowledgements { startAcknowledgement(acknowledgement) }
         for item in items where item.status == .pending { start(item.id) }
-        for item in items where item.illustration?.status == .pending { startIllustration(item.id) }
+        for item in items where !item.isReconcilingLegacyPublication && (item.illustration?.status == .pending || item.pendingPublication != nil) { startIllustration(item.id) }
     }
 
     func stopObserving() {
@@ -373,14 +371,54 @@ final class WardrobeStore: ObservableObject {
                 try await BackendClient(settings: settings).acknowledge(acknowledgement)
                 try Task.checkCancellation()
                 guard pendingAcknowledgements.contains(acknowledgement) else { return }
-                var remaining = pendingAcknowledgements
+                var updated = catalog
+                try updated.reconcileLegacyPublication(acknowledgement, committed: true)
+                var remaining = updated.pendingAcknowledgements ?? pendingAcknowledgements
                 remaining.remove(acknowledgement)
-                // Keep edits, replacements and other commands made during the request.
-                try persist(items, pendingAcknowledgements: remaining)
+                // Reconcile only the migrated snapshot; preserve newer manual inputs,
+                // in-flight requests, other commands and saved outfit references.
+                try persist(updated.items, pendingAcknowledgements: remaining)
+                items = updated.items
                 pendingAcknowledgements = remaining
+                if observing, items.first(where: { $0.id == acknowledgement.itemID })?.illustration?.status == .pending {
+                    startIllustration(acknowledgement.itemID)
+                }
                 return
             } catch {
                 guard !Task.isCancelled else { return }
+                let refused: Bool
+                if case ClientError.resultUnavailable(let code) = error {
+                    refused = ["operation_superseded", "item_deleted", "result_expired"].contains(code)
+                } else if case ClientError.server(404) = error { refused = true }
+                else { refused = false }
+                if let index = items.firstIndex(where: { $0.id == acknowledgement.itemID }),
+                   items[index].pendingPublication?.legacyReconciliation == true,
+                   items[index].pendingPublication?.request.operationID == acknowledgement.operationID {
+                    do {
+                        var updated = catalog
+                        if refused { try updated.reconcileLegacyPublication(acknowledgement, committed: false) }
+                        else { updated.items[index].pendingPublication?.error = error is URLError ? "offline" : "confirmation_failed" }
+                        try persist(updated.items, pendingAcknowledgements: updated.pendingAcknowledgements ?? [])
+                        items = updated.items
+                        pendingAcknowledgements = updated.pendingAcknowledgements ?? []
+                    } catch { notice = "Не удалось сохранить подтверждение старой версии вещи."; return }
+                    if refused {
+                        // Reconciliation held back the newer persisted intent during
+                        // startup. Resume that operation after either terminal outcome.
+                        if observing, items.first(where: { $0.id == acknowledgement.itemID })?.illustration?.status == .pending {
+                            startIllustration(acknowledgement.itemID)
+                        }
+                        return
+                    }
+                } else if acknowledgement.illustration == true && refused {
+                    // An obsolete legacy receipt may coexist with a newer one. Its
+                    // authoritative refusal must not leave an endless background retry.
+                    var remaining = pendingAcknowledgements
+                    remaining.remove(acknowledgement)
+                    do { try persist(items, pendingAcknowledgements: remaining); pendingAcknowledgements = remaining }
+                    catch { notice = "Не удалось сохранить состояние доставки." }
+                    return
+                }
                 do { try await Task.sleep(nanoseconds: retrySeconds * 1_000_000_000) }
                 catch { return }
                 retrySeconds = min(retrySeconds * 2, 10)
@@ -403,6 +441,10 @@ final class WardrobeStore: ObservableObject {
         updated[index].automaticallyIllustrate = items[index].automaticallyIllustrate
         updated[index].additionalPhotos = items[index].additionalPhotos
         updated[index].preparedPhotos = items[index].preparedPhotos
+        updated[index].pendingPublication = items[index].pendingPublication
+        updated[index].publishedVersion = items[index].publishedVersion
+        updated[index].photosLocked = items[index].photosLocked
+        updated[index].publishIngestion()
         var acknowledgements = pendingAcknowledgements
         if let acknowledgement { acknowledgements.insert(acknowledgement) }
         try persist(updated, pendingAcknowledgements: acknowledgements)
@@ -526,13 +568,14 @@ extension WardrobeStore {
     }
 
     func illustrationURL(for item: WardrobeItem) -> URL? {
-        guard let directory, let result = item.illustrationResult else { return nil }
+        guard let directory, let result = item.displayedIllustration else { return nil }
         let url = directory.appendingPathComponent(item.directoryName).appendingPathComponent(result.filename)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     func requestIllustration(_ id: UUID) {
         guard storageAvailable, let index = items.firstIndex(where: { $0.id == id }),
+              !items[index].isReconcilingLegacyPublication,
               items[index].status == .ready, items[index].illustration?.status != .pending else { return }
         var updated = items
         let item = updated[index]
@@ -575,7 +618,8 @@ extension WardrobeStore {
 
     private func startIllustration(_ id: UUID) {
         guard illustrationTasks[id] == nil,
-              let operationID = items.first(where: { $0.id == id })?.illustration?.operationID else { return }
+              let item = items.first(where: { $0.id == id }), !item.isReconcilingLegacyPublication,
+              let operationID = item.illustration?.operationID else { return }
         let generation = UUID()
         let task = Task { [weak self] in
             guard let self else { return }
@@ -591,22 +635,35 @@ extension WardrobeStore {
             && $0.manualType == request.manualType && $0.manualColors == request.manualColors }
     }
 
-    private func saveIllustration(_ id: UUID, request: IllustrationRequest,
-                                  result: IllustrationResult? = nil, preparedPhotos: [IllustrationPreparedPhoto]? = nil,
-                                  acknowledge: Bool = false) throws {
+    private func saveIllustration(_ id: UUID, request: IllustrationRequest, discardCandidate: Bool = false) throws {
         guard let index = items.firstIndex(where: { $0.id == id }),
               illustrationIsCurrent(items[index], request: request) else { throw CancellationError() }
         var updated = items
         updated[index].illustration = request
-        if let result { updated[index].illustrationResult = result }
-        if let preparedPhotos { updated[index].preparedPhotos = preparedPhotos }
-        var acknowledgements = pendingAcknowledgements
-        let acknowledgement = ResultAcknowledgement(itemID: id, operationID: request.operationID, illustration: true)
-        if acknowledge { acknowledgements.insert(acknowledgement) }
-        try persist(updated, pendingAcknowledgements: acknowledgements)
+        if discardCandidate { updated[index].pendingPublication = nil }
+        try persist(updated)
         items = updated
-        pendingAcknowledgements = acknowledgements
-        if acknowledge && observing { startAcknowledgement(acknowledgement) }
+    }
+
+    private func commitPublication(_ item: WardrobeItem, client: BackendClient, directory: URL) async throws {
+        guard let candidate = item.pendingPublication else { throw CancellationError() }
+        // Artifacts and candidate are durable first. The server atomically fixes the
+        // source set and acknowledges delivery before this version becomes visible.
+        try await client.acknowledge(ResultAcknowledgement(itemID: item.id,
+            operationID: candidate.request.operationID, illustration: true))
+        try Task.checkCancellation()
+        var updated = catalog
+        try updated.confirmPublication(for: item.id, operationID: candidate.request.operationID)
+        try persist(updated.items)
+        items = updated.items
+        let folder = directory.appendingPathComponent(item.directoryName)
+        for cached in item.preparedPhotos where !candidate.preparedPhotos.contains(where: { $0.filename == cached.filename }) {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(cached.filename))
+        }
+        if let previous = item.illustrationResult?.filename,
+           previous != candidate.publication.illustration?.filename {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(previous))
+        }
     }
 
     private func processIllustration(_ id: UUID, operationID: UUID) async {
@@ -614,10 +671,14 @@ extension WardrobeStore {
         var retrySeconds: UInt64 = 1
         while observing && !Task.isCancelled {
             guard let item = items.first(where: { $0.id == id }), var intent = item.illustration,
-                  intent.operationID == operationID, intent.status == .pending else { return }
+                  intent.operationID == operationID, (intent.status == .pending || item.pendingPublication != nil) else { return }
             guard illustrationIsCurrent(item, request: intent) else { return }
             do {
                 let client = BackendClient(settings: settings)
+                if item.pendingPublication != nil {
+                    try await commitPublication(item, client: client, directory: directory)
+                    return
+                }
                 let response: IllustrationResponse
                 if intent.submitted {
                     do { response = try await client.illustrationStatus(item, request: intent) }
@@ -650,19 +711,15 @@ extension WardrobeStore {
                     guard illustrationIsCurrent(item, request: intent) else { return }
                     let filename = "illustration-\(operationID.uuidString.lowercased()).png"
                     try data.write(to: directory.appendingPathComponent(item.directoryName).appendingPathComponent(filename), options: .atomic)
-                    let previous = items.first(where: { $0.id == id })
-                    let previousFilename = previous?.illustrationResult?.filename
                     var completed = intent
                     completed.status = .ready
                     completed.readyForDelivery = false
-                    try saveIllustration(id, request: completed, result: IllustrationResult(filename: filename, response: response), preparedPhotos: prepared, acknowledge: true)
-                    for cached in previous?.preparedPhotos ?? [] where !prepared.contains(where: { $0.filename == cached.filename }) {
-                        try? FileManager.default.removeItem(at: directory.appendingPathComponent(item.directoryName).appendingPathComponent(cached.filename))
-                    }
-                    if let previousFilename, previousFilename != filename {
-                        try? FileManager.default.removeItem(at: directory.appendingPathComponent(item.directoryName).appendingPathComponent(previousFilename))
-                    }
-                    return
+                    var updated = catalog
+                    try updated.stageIllustration(for: id, request: completed,
+                        result: IllustrationResult(filename: filename, response: response), preparedPhotos: prepared)
+                    try persist(updated.items)
+                    items = updated.items
+                    continue
                 }
                 try saveIllustration(id, request: intent)
                 if intent.status == .failed { return }
@@ -684,7 +741,13 @@ extension WardrobeStore {
                 }
                 else if case ClientError.oversizedPhoto = error { intent.error = "image_too_large" }
                 else { intent.error = retryable ? "offline" : "invalid_provider_response" }
-                do { try saveIllustration(id, request: intent) }
+                var discardCandidate = false
+                if item.pendingPublication != nil {
+                    if case ClientError.resultUnavailable(let code) = error {
+                        discardCandidate = ["operation_superseded", "item_deleted", "result_expired"].contains(code)
+                    } else if case ClientError.server(404) = error { discardCandidate = true }
+                }
+                do { try saveIllustration(id, request: intent, discardCandidate: discardCandidate) }
                 catch { notice = "Не удалось сохранить состояние иллюстрации."; return }
                 guard retryable else { return }
                 do { try await Task.sleep(nanoseconds: retrySeconds * 1_000_000_000) } catch { return }
@@ -762,6 +825,8 @@ extension WardrobeStore {
     func saveAdditionalPhotos(_ drafts: [IllustrationPhotoDraft], for id: UUID, primaryVersion: UUID) throws {
         guard let directory, storageAvailable, let index = items.firstIndex(where: { $0.id == id }),
               items[index].photoVersionID == primaryVersion else { throw ClientError.invalidPhoto }
+        guard items[index].pendingPublication == nil else { throw ClientError.publicationInProgress }
+        guard !items[index].photosLocked else { throw ClientError.photosLocked }
         guard drafts.count <= 2, Set(drafts.map(\.id)).count == drafts.count,
               drafts.allSatisfy({ ["back", "detail"].contains($0.role) }) else { throw ClientError.invalidPhoto }
         let previous = items[index].additionalPhotos

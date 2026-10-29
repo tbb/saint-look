@@ -4,11 +4,11 @@ export const release = JSON.parse(readFileSync(new URL('../release.json', import
 
 export function initializeDataVersion(database) {
   const version = database.prepare('PRAGMA user_version').get().user_version;
-  // v2 owns illustration artifacts as well as ingestion artifacts. v1 cannot
-  // clean those on delete/expiry, so the marker intentionally prevents rollback.
+  // v3 enforces immutable published photos. Older code cannot enforce this
+  // receipt, so rolling back code after publication is deliberately rejected.
   // The additive schema is initialized idempotently by the corresponding modules.
-  if (version === 1 && release.dataVersion === 2) {
-    database.exec('PRAGMA user_version=2');
+  if ([1, 2].includes(version) && release.dataVersion === 3) {
+    database.exec('PRAGMA user_version=3');
     return;
   }
   if (version !== 0 && (version < release.minDataVersion || version > release.maxDataVersion)) {

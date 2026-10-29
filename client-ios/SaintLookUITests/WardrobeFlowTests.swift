@@ -230,8 +230,9 @@ final class WardrobeFlowTests: XCTestCase {
         app.buttons["add-demo-photo"].tap()
         await waitForSummary(app, ready: 1, pending: 0)
         try openFirstItem(in: app)
-        XCTAssertTrue(app.staticTexts["illustration-saved"].waitForExistence(timeout: 30))
-        try tapVisibleButton("show-illustration", in: app)
+        let staged = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS[c] %@", "сохранени"), object: app.staticTexts["illustration-status"])
+        await fulfillment(of: [staged], timeout: 30)
+        XCTAssertFalse(app.buttons["show-illustration"].isEnabled, "Unconfirmed first publication is not visible")
         let before = try await transportState()
         let path = try XCTUnwrap(before["lastIllustrationPath"] as? String)
         XCTAssertEqual(before["illustrationOperations"] as? Int, 1)
@@ -242,7 +243,7 @@ final class WardrobeFlowTests: XCTestCase {
         let restored = launch(reset: false, baseURL: testURL)
         await waitForSummary(restored, ready: 1, pending: 0)
         try openFirstItem(in: restored)
-        try tapVisibleButton("show-illustration", in: restored)
+        XCTAssertFalse(restored.buttons["show-illustration"].isEnabled, "Restart must preserve the unconfirmed candidate without publishing it")
         XCTAssertTrue(restored.images["item-photo"].firstMatch.exists)
         try await control(mode: "drop-next-ack-response")
         let acknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 1, timeout: 30)
@@ -251,6 +252,22 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertEqual(cleaned.status, 410)
         let after = try await transportState()
         XCTAssertEqual(after["illustrationOperations"] as? Int, 1, "Restart and acknowledgement never regenerate")
+        XCTAssertTrue(restored.staticTexts["illustration-saved"].waitForExistence(timeout: 30),
+                      "A successful replay must publish the durable candidate locally")
+        XCTAssertTrue(restored.buttons["show-illustration"].isEnabled)
+        try tapVisibleButton("show-illustration", in: restored)
+        XCTAssertTrue(restored.images["item-photo"].firstMatch.exists)
+        try await control(mode: "offline")
+        restored.terminate()
+        let committed = launch(reset: false, baseURL: testURL)
+        await waitForSummary(committed, ready: 1, pending: 0)
+        try openFirstItem(in: committed)
+        XCTAssertTrue(committed.buttons["show-illustration"].isEnabled,
+                      "The committed illustration remains available after an offline restart")
+        try tapVisibleButton("show-illustration", in: committed)
+        XCTAssertTrue(committed.images["item-photo"].firstMatch.exists)
+        let finalState = try await transportState()
+        XCTAssertEqual(finalState["illustrationOperations"] as? Int, 1)
     }
 
     @MainActor
@@ -348,14 +365,13 @@ final class WardrobeFlowTests: XCTestCase {
         let reused = try await providerControl()
         XCTAssertEqual(reused["illustrationPreparationCalls"] as? Int, 1, "Manual edits reuse the prepared source even after server ack cleanup and app restart")
 
-        try tapVisibleButton("illustration-sources", in: restored)
-        restored.buttons["add-demo-detail-photo"].tap()
-        restored.buttons["save-illustration-sources"].tap()
-        try tapVisibleButton("generate-illustration", in: restored)
-        let thirdAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 4, timeout: 30)
-        XCTAssertTrue(thirdAcknowledged)
-        let added = try await providerControl()
-        XCTAssertEqual(added["illustrationPreparationCalls"] as? Int, 2, "Only the added photo needs preparation")
+        XCTAssertTrue(restored.staticTexts["photos-locked"].exists)
+        XCTAssertFalse(restored.buttons["illustration-sources"].exists)
+        restored.buttons["item-actions"].tap()
+        XCTAssertFalse(restored.buttons["replace-photo"].exists)
+        XCTAssertFalse(restored.buttons["replace-demo-photo"].exists)
+        XCTAssertEqual(reused["illustrationGenerationCalls"] as? Int, 3,
+                       "Attribute updates preserve the fixed photographs and reuse their preparation")
     }
 
     @MainActor

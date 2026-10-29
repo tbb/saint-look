@@ -108,6 +108,12 @@ enum VisualFixtures {
                 geometryVersion: "fitting-square-1024-v1",
                 resultPath: "/v1/items/\(item.id.uuidString.lowercased())/illustrations/\(operation.uuidString.lowercased())/result", error: nil)
             item.illustrationResult = IllustrationResult(filename: filename, response: response)
+            // This isolated scenario depicts an already committed test publication,
+            // not a v2 catalog awaiting a real server receipt.
+            item.publishedVersion = ItemPublication(versionID: operation, photoVersionID: item.photoVersionID,
+                sourceSetVersionID: item.sourceSetVersionID, cutoutFilename: filename, cutoutMode: .demo,
+                illustration: item.illustrationResult, type: type, colors: [color], completeness: .illustrated)
+            item.photosLocked = true
             let folder = root.appendingPathComponent(item.directoryName, isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try FileManager.default.copyItem(at: resources.appendingPathComponent("VisualFixtures").appendingPathComponent(filename),

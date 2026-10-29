@@ -312,8 +312,13 @@ final class VisualAcceptanceTests: XCTestCase {
             // Inspect the result of the final bounded drag before declaring it unreachable.
             if attempt == 7 { break }
             let direction: CGFloat = element.exists ? (frame.midY < viewport.midY ? 1 : -1) : (towardTop ? 1 : -1)
-            let distance = min(viewport.height * 0.65, element.exists ? max(40, abs(viewport.midY - frame.midY)) : viewport.height * 0.65)
-            let y = direction < 0 ? viewport.maxY - 12 : viewport.minY + 12
+            // ScrollView's AX frame includes the sheet's bottom safe area. Starting
+            // 12pt from that edge can hit Home's gesture region instead of scrolling.
+            // Keep both endpoints inside content, including at maximum Dynamic Type.
+            let gestureInset = min(80, viewport.height * 0.2)
+            let distance = min(viewport.height - 2 * gestureInset,
+                               min(viewport.height * 0.65, element.exists ? max(40, abs(viewport.midY - frame.midY)) : viewport.height * 0.65))
+            let y = direction < 0 ? viewport.maxY - gestureInset : viewport.minY + gestureInset
             let start = container.coordinate(withNormalizedOffset: .zero)
                 .withOffset(CGVector(dx: viewport.midX - container.frame.minX, dy: y - container.frame.minY))
             let end = start.withOffset(CGVector(dx: 0, dy: direction * distance))
