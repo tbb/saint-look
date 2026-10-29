@@ -3,7 +3,7 @@ import Foundation
 
 /// Initial data only. After loading, all edits, selection and persistence use the normal store.
 enum VisualFixtures {
-    enum Scenario: String { case ready = "ready-four", legacy = "legacy-four", fitting = "fitting-ready", empty, mixed = "mixed-offline", unreadable = "unreadable-catalog" }
+    enum Scenario: String { case ready = "ready-four", legacy = "legacy-four", legacyLabels = "legacy-labels", fitting = "fitting-ready", empty, mixed = "mixed-offline", unreadable = "unreadable-catalog" }
     enum FixtureError: Error { case invalidConfiguration, missingTaxonomy }
 
     static func prepare(environment: [String: String], support: URL, resources: URL,
@@ -38,7 +38,7 @@ enum VisualFixtures {
                 ("TrialPhotos", "photo-3.jpg", "polo", ["white", "black"]),
                 ("VisualFixtures", "shoes.png", "shoes", ["black", "white", "brown"])
             ]
-            for (index, input) in inputs.enumerated() {
+            for (index, input) in inputs.prefix(scenario == .legacyLabels ? 1 : inputs.count).enumerated() {
                 guard let type = taxonomy.types.first(where: { $0.id == input.2 })?.label else { throw FixtureError.missingTaxonomy }
                 let colors = try input.3.map { id -> String in
                     guard let label = taxonomy.colors.first(where: { $0.id == id })?.label else { throw FixtureError.missingTaxonomy }
@@ -51,6 +51,11 @@ enum VisualFixtures {
                 item.status = .ready
                 item.type = type
                 item.colors = colors
+                if scenario == .legacyLabels {
+                    // Historical local labels, not an unvalidated new provider response.
+                    item.type = "Накидка"
+                    item.colors = ["Сиреневый"]
+                }
                 item.mode = .demo
                 item.resultMode = .demo
                 item.originalFilename = input.1

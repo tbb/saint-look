@@ -63,13 +63,14 @@ final class WardrobeFlowTests: XCTestCase {
         await fulfillment(of: [XCTNSPredicateExpectation(predicate: predicate, object: app)], timeout: timeout)
     }
 
-    private func launch(reset: Bool, baseURL: String, trialIndex: Int? = nil, cameraProblem: String? = nil) -> XCUIApplication {
+    private func launch(reset: Bool, baseURL: String, trialIndex: Int? = nil, cameraProblem: String? = nil, visualScenario: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["SAINT_LOOK_BASE_URL"] = baseURL
         app.launchEnvironment["SAINT_LOOK_OWNER_TOKEN"] = testToken
         app.launchEnvironment["SAINT_LOOK_UI_TESTING"] = "1"
         app.launchEnvironment["SAINT_LOOK_RESET_DATA"] = reset ? "1" : "0"
         if let cameraProblem { app.launchEnvironment["SAINT_LOOK_CAMERA_TEST_PROBLEM"] = cameraProblem }
+        if let visualScenario { app.launchEnvironment["SAINT_LOOK_VISUAL_SCENARIO"] = visualScenario }
         if let trialIndex {
             app.launchEnvironment["SAINT_LOOK_LIVE_TRIAL"] = "1"
             app.launchEnvironment["SAINT_LOOK_TRIAL_PHOTO_INDEX"] = String(trialIndex)
@@ -907,10 +908,11 @@ final class WardrobeFlowTests: XCTestCase {
 
     @MainActor
     func testLegacyLabelsSurviveUntouchedSaveAndExplicitSelectionReplacesOnlyEditedField() async throws {
-        try await control(mode: "legacy-attributes")
-        let app = launch(reset: true, baseURL: testURL)
-        app.buttons["add-demo-photo"].tap()
+        // Legacy labels enter through the persisted catalog, not a corrupted new
+        // provider response that current finite-taxonomy validation must reject.
+        let app = launch(reset: true, baseURL: testURL, visualScenario: "legacy-labels")
         await waitForSummary(app, ready: 1, pending: 0)
+        XCTAssertTrue(app.staticTexts["preparation-status"].exists, "A historical cutout is not a fully prepared item")
         try await control(mode: "offline")
         try tapVisibleButton("edit-item", in: app)
         try tapVisibleButton("choose-colors", in: app)
@@ -919,7 +921,7 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Накидка"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Сиреневый"].exists)
         app.terminate()
-        let restored = launch(reset: false, baseURL: testURL)
+        let restored = launch(reset: false, baseURL: testURL, visualScenario: "legacy-labels")
         restored.swipeUp()
         XCTAssertTrue(restored.staticTexts["Накидка"].waitForExistence(timeout: 5))
         XCTAssertTrue(restored.staticTexts["Сиреневый"].exists)
@@ -935,7 +937,7 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertFalse(restored.staticTexts["Сиреневый"].exists)
         XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
         let state = try await transportState()
-        XCTAssertEqual(state["forwardedUploads"] as? Int, 1)
+        XCTAssertEqual(state["forwardedUploads"] as? Int, 0, "Loading and editing historical local data must not upload a new item")
     }
 
     @MainActor
