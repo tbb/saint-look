@@ -608,7 +608,7 @@ final class VisualAcceptanceTests: XCTestCase {
         try capture("05-multilayer-editor")
         try tap(app.buttons["outfit-slot-menu-\(secondID)"], in: app)
         try tapMenuAction("remove-body-layer-\(secondID)", in: app)
-        try require(!(second.exists))
+        try expectGone(second, "Removing the addressed body layer must finish before saving the outfit")
         try nativeTap(app.buttons["save-outfit"], in: app)
         let outfit = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).firstMatch
         try require(outfit.waitForExistence(timeout: 5))
