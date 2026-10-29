@@ -419,11 +419,11 @@ final class WardrobeStore: ObservableObject {
                     do {
                         var updated = catalog
                         if refused {
-                            let legacy = updated.items[index].pendingPublication
-                            try updated.reconcileLegacyPublication(acknowledgement, committed: false)
-                            if case ClientError.resultUnavailable("preparation_required") = error {
-                                updated.items[index].downloadedIllustration = legacy
-                            }
+                            let requiresPreparation: Bool
+                            if case ClientError.resultUnavailable("preparation_required") = error { requiresPreparation = true }
+                            else { requiresPreparation = false }
+                            try updated.reconcileLegacyPublication(acknowledgement, committed: false,
+                                                                   requiresPreparation: requiresPreparation)
                         }
                         else { updated.items[index].pendingPublication?.error = error is URLError ? "offline" : "confirmation_failed" }
                         try persist(updated.items, pendingAcknowledgements: updated.pendingAcknowledgements ?? [])
@@ -1032,7 +1032,7 @@ extension WardrobeStore {
             publication = downloaded.publication; request = downloaded.request; prepared = downloaded.preparedPhotos
             guard item.illustration?.operationID == request.operationID,
                   item.manualType == request.manualType, item.manualColors == request.manualColors else { throw CancellationError() }
-            mode = .fromIllustration
+            mode = downloaded.preparationMode
         } else {
             guard let previous = item.publishedVersion, let result = previous.illustration,
                   result.response.photoVersionId == item.photoVersionID,
