@@ -1,5 +1,5 @@
 import { RequestError } from './upload.mjs';
-import { sha256, featureDigest, canonicalText } from './publication-contract.mjs';
+import { sha256, featureDigest, canonicalText, canonicalFeatures, canonicalJSON, validateObserved } from './publication-contract.mjs';
 
 export function incompatible(activeSpaceID) {
   const error = new RequestError(409, 'incompatible_representations');
@@ -41,6 +41,14 @@ export function createPreparedSnapshots(database, model) {
           if (input.sourceSHA256 !== receipt.source_digest || input.textSHA256 !== sha256(canonicalText(item.features))) throw new Error();
           representation = model.readRepresentation(item.representationJSON, { spaceID: receipt.space_id, photoVersionID: item.photoVersionId, ...input });
         } catch { throw new RequestError(400, 'invalid_prepared_item'); }
+        if (item.effectiveFeatures != null) {
+          try {
+            validateObserved(item.effectiveFeatures);
+            const artifacts = JSON.parse(receipt.artifacts);
+            if (featureDigest(item.effectiveFeatures) !== artifacts.effectiveFeaturesSHA256
+              || canonicalJSON(canonicalFeatures(item.effectiveFeatures, true)) !== canonicalJSON(item.features)) throw new Error();
+          } catch { throw new RequestError(400, 'invalid_prepared_item'); }
+        }
         prepared.set(item.itemId, { ...item, representation });
       }
       for (const reference of references) if (reference.itemId && !prepared.has(reference.itemId)) current(reference.itemId, reference.publishedVersionId, true);

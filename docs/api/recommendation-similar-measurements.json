@@ -1,0 +1,125 @@
+{
+  "evidence": "public-photo-two-intentions-real-context",
+  "spaceID": "5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b",
+  "modelRevision": "7eaf8d92beb709db20498614b1bc04e43f08136a",
+  "modelThreads": 1,
+  "source": "white-tee",
+  "context": [
+    "blue-jeans"
+  ],
+  "inputs": [
+    {
+      "id": "white-tee",
+      "photoSHA256": "3aa6d547cca9a7cd3bd2782e98485dbadfd892a35b8d99c31d8134379e5ba49f",
+      "type": "t_shirt",
+      "colors": [
+        "white"
+      ],
+      "reviewedTraits": {}
+    },
+    {
+      "id": "blue-jeans",
+      "photoSHA256": "b8af41665c6d3b1aa712cccb839ec4661cadbe488c2baa0ec426d4061dda463e",
+      "type": "jeans",
+      "colors": [
+        "blue"
+      ],
+      "reviewedTraits": {}
+    },
+    {
+      "id": "light-polo",
+      "photoSHA256": "6da9f10e4d54475d0c2bf15f80cfe5b3ecca13dc735bc21c9fbf84a60b90eeb5",
+      "type": "polo",
+      "colors": [
+        "black",
+        "white"
+      ],
+      "reviewedTraits": {
+        "silhouette": "straight",
+        "pattern": "graphic"
+      }
+    },
+    {
+      "id": "pub-03",
+      "photoSHA256": "c860d7bfda63bf70d6919c66ff061a705b50804568767fcadd470b96f9ba988c",
+      "type": "shirt",
+      "colors": [
+        "blue"
+      ],
+      "reviewedTraits": {
+        "silhouette": "straight",
+        "pattern": "plain"
+      }
+    },
+    {
+      "id": "pub-13",
+      "photoSHA256": "818efe57781f4abc0d92286c590553b1cc1f8b8f0f3ec3c20db91d3de8f855fc",
+      "type": "sweater",
+      "colors": [
+        "white"
+      ],
+      "reviewedTraits": {
+        "silhouette": "straight",
+        "pattern": "plain"
+      }
+    },
+    {
+      "id": "pub-22",
+      "photoSHA256": "7ca043d7d96f8d8bf83794ba891735348797a4d549ab12625a6d1ba230e9c68b",
+      "type": "cardigan",
+      "colors": [
+        "red"
+      ],
+      "reviewedTraits": {
+        "silhouette": "fitted",
+        "pattern": "plain"
+      }
+    }
+  ],
+  "diagnosticScores": [
+    {
+      "id": "light-polo",
+      "contextCosine": 0.12800708413124084,
+      "style": 0.25,
+      "combined": 0.4070017710328102
+    },
+    {
+      "id": "pub-03",
+      "contextCosine": 0.12525613605976105,
+      "style": 0,
+      "combined": 0.28131403401494026
+    },
+    {
+      "id": "pub-13",
+      "contextCosine": 0.12362191081047058,
+      "style": 0.5,
+      "combined": 0.5309054777026176
+    },
+    {
+      "id": "pub-22",
+      "contextCosine": 0.0818605050444603,
+      "style": 0,
+      "combined": 0.2704651262611151
+    }
+  ],
+  "results": [
+    {
+      "intent": "complement",
+      "selected": "light-polo",
+      "elapsedMilliseconds": 56
+    },
+    {
+      "intent": "similar",
+      "selected": "pub-13",
+      "elapsedMilliseconds": 31.46
+    }
+  ],
+  "imageProviderCalls": 0,
+  "limitations": [
+    "Effective traits are manually specified input fixtures after agent visual inspection, not actual JEV extraction.",
+    "Receipt fixtures do not prove live full item preparation or iOS acceptance.",
+    "No second t_shirt exists: any selected candidate is a permitted imperfect analogue.",
+    "Outcomes may match across intentions; neither score is a human taste rating.",
+    "Local HTTP timing excludes network to device and first displayed frame."
+  ]
+}
