@@ -1223,3 +1223,30 @@ extension WardrobeStore {
         return try await client.submitPreparation(item, intent: intent, original: original, legacyCutout: cutout, legacyIllustration: illustration)
     }
 }
+
+
+extension WardrobeStore {
+    /// Read only the small persisted representation; image bytes and encoders are
+    /// not part of recommendation requests. Final image availability is still required.
+    func recommendationItems(excluding targetItemID: UUID? = nil) throws -> [RecommendationItem] {
+        guard let directory, storageAvailable else { throw RecommendationError.preparationRequired }
+        return try items.compactMap { item in
+            guard item.id != targetItemID, item.hasPreparedVersion, let publication = item.publishedVersion,
+                  let illustration = publication.illustration, let stored = publication.representation else { return nil }
+            let folder = directory.appendingPathComponent(item.directoryName)
+            guard [item.uploadFilename, publication.cutoutFilename, illustration.filename, stored.filename].allSatisfy({
+                FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path)
+            }) else { return nil }
+            let url = folder.appendingPathComponent(stored.filename)
+            guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 8 * 1024 else {
+                throw RecommendationError.preparationRequired
+            }
+            let bytes = try Data(contentsOf: url)
+            guard photoDigest(bytes) == stored.response.representationSHA256,
+                  let json = String(data: bytes, encoding: .utf8), Data(json.utf8) == bytes else {
+                throw RecommendationError.preparationRequired
+            }
+            return try RecommendationItem(item: item, representationJSON: json)
+        }
+    }
+}

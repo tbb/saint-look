@@ -1,12 +1,11 @@
 import { acknowledge as acknowledgeCutout } from './retention.mjs';
 import { RequestError, uuid } from './upload.mjs';
 import { requireNotDeleted } from './deletion.mjs';
-import { createModelBridge } from './model-bridge.mjs';
 import { publicationProtocol, sha256, canonicalJSON, canonicalFeatures, featureDigest, validateObserved, readJSON, decodePNG } from './publication-contract.mjs';
 
 const mib = 1024 * 1024, parse = text => text == null ? null : JSON.parse(text);
 const cleared = 'source=NULL,features=NULL,representation=NULL';
-export function createPreparations(database, env, retention, illustrations, directory) {
+export function createPreparations(database, env, retention, illustrations, model) {
   database.exec(`CREATE TABLE IF NOT EXISTS preparations (
     operation_id TEXT PRIMARY KEY,item_id TEXT NOT NULL,photo_version_id TEXT NOT NULL,source_set_version_id TEXT NOT NULL,
     illustration_operation_id TEXT NOT NULL,cutout_operation_id TEXT NOT NULL,revision INTEGER NOT NULL,fingerprint TEXT NOT NULL,
@@ -15,7 +14,6 @@ export function createPreparations(database, env, retention, illustrations, dire
     status TEXT NOT NULL DEFAULT 'pending',representation TEXT,representation_digest TEXT,input TEXT,error TEXT,
     retention_state TEXT NOT NULL DEFAULT 'active',expires_at INTEGER NOT NULL,UNIQUE(item_id,revision));
     CREATE INDEX IF NOT EXISTS preparation_expiry ON preparations(retention_state,expires_at);`);
-  const model = createModelBridge(env, directory);
   let closing = false, running = false, admitting = false;
   const get = id => database.prepare('SELECT * FROM preparations WHERE operation_id=?').get(id);
   const latest = id => database.prepare('SELECT * FROM preparations WHERE item_id=? ORDER BY revision DESC LIMIT 1').get(id);
@@ -205,5 +203,5 @@ export function createPreparations(database, env, retention, illustrations, dire
   sweep(); void processQueue();
   const cleanup = setInterval(sweep, 1000);
   return { config, sweep, accept, acknowledge, read: (item, operation) => response(readable(item, operation)),
-    close() { closing = true; clearInterval(cleanup); model.close(); } };
+    close() { closing = true; clearInterval(cleanup); } };
 }
