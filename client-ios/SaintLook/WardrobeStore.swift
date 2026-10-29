@@ -402,7 +402,14 @@ final class WardrobeStore: ObservableObject {
                         items = updated.items
                         pendingAcknowledgements = updated.pendingAcknowledgements ?? []
                     } catch { notice = "Не удалось сохранить подтверждение старой версии вещи."; return }
-                    if refused { return }
+                    if refused {
+                        // Reconciliation held back the newer persisted intent during
+                        // startup. Resume that operation after either terminal outcome.
+                        if observing, items.first(where: { $0.id == acknowledgement.itemID })?.illustration?.status == .pending {
+                            startIllustration(acknowledgement.itemID)
+                        }
+                        return
+                    }
                 } else if acknowledgement.illustration == true && refused {
                     // An obsolete legacy receipt may coexist with a newer one. Its
                     // authoritative refusal must not leave an endless background retry.

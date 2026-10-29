@@ -418,6 +418,14 @@ struct OutfitCoreChecks {
         precondition(reconciledLegacy.pendingAcknowledgements?.contains(legacyAck) == false)
         var rejectedLegacy = migratedPublication
         try rejectedLegacy.reconcileLegacyPublication(legacyAck, committed: false)
+        try file.save(rejectedLegacy)
+        rejectedLegacy = try file.load()
+        precondition(rejectedLegacy.items[0].pendingPublication == nil)
+        precondition(!rejectedLegacy.items[0].isReconcilingLegacyPublication)
+        precondition(rejectedLegacy.items[0].illustration?.operationID == legacyPublication.items[0].illustration?.operationID)
+        precondition(rejectedLegacy.items[0].illustration?.status == .pending)
+        precondition(rejectedLegacy.items[0].illustration?.submitted == true,
+                     "Refusing the old receipt retains the existing submitted operation for resumption")
         try rejectedLegacy.editAttributes(for: shirtID, type: "Пальто", colors: nil, taxonomy: taxonomy)
         precondition(!rejectedLegacy.items[0].photosLocked)
         precondition(rejectedLegacy.items[0].publishedVersion?.completeness == .legacyIllustration)
