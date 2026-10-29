@@ -446,11 +446,27 @@ final class VisualAcceptanceTests: XCTestCase {
         // accessibility when scrolled into view, so reveal it before counting.
         try reveal(layers.firstMatch, in: app)
         try requireEqual(layers.count, 2)
-        try tap(layers.element(boundBy: 0), in: app)
-        try require(layers.element(boundBy: 0).isSelected)
-        try tap(layers.element(boundBy: 1), in: app)
-        try require(layers.element(boundBy: 1).isSelected)
-        let outerID = String(layers.element(boundBy: 1).identifier.dropFirst("fitting-layer-".count))
+        let layerIDs = (0..<2).map { layers.element(boundBy: $0).identifier }
+        let activeLayer = app.buttons["fitting-choose-active"]
+        for (index, identifier) in layerIDs.enumerated() {
+            let layer = app.buttons[identifier]
+            let expectedTitle = "Тело · слой \(index + 1)"
+            try tap(layer, in: app)
+            // One native tap; observe the resulting state with the same bounded
+            // transition timeout as waitVisible, rather than retrying the action.
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                layer.exists && layer.isSelected && activeLayer.exists && activeLayer.label.contains(expectedTitle)
+            }, object: layer)
+            guard XCTWaiter.wait(for: [selected], timeout: 10) == .completed else {
+                diagnose("layer-selection-not-observed", app: app,
+                         detail: "Expected selected \(identifier), active title \(expectedTitle); active label: \(activeLayer.exists ? activeLayer.label : "missing")")
+                try require(false, "The tapped layer must become selected and active after one native tap")
+                return
+            }
+            try require(layer.isSelected)
+            try require(activeLayer.label.contains(expectedTitle))
+        }
+        let outerID = String(layerIDs[1].dropFirst("fitting-layer-".count))
         let pin = app.buttons["pin-slot-\(outerID)"]
         try tap(pin, in: app)
         try require(pin.isSelected)
