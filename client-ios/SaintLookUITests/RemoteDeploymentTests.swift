@@ -140,6 +140,8 @@ final class LiveTrialTests: XCTestCase {
             let add = app.buttons["add-trial-photo"]
             XCTAssertTrue(add.waitForExistence(timeout: 5))
             XCTAssertFalse(app.buttons["add-demo-photo"].exists)
+            let cards = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'wardrobe-item-'"))
+            let previousCardIDs = Set(cards.allElementsBoundByIndex.map(\.identifier))
             // Exactly one upload action per selected photo. Never retry a failed provider result.
             add.tap()
             // The summary counts verified complete local publications, including
@@ -147,7 +149,12 @@ final class LiveTrialTests: XCTestCase {
             let expected = "Всего: \(index + 1). Готово: \(index + 1). Ожидают: 0."
             let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", expected), object: app.staticTexts["wardrobe-summary"])
             await fulfillment(of: [ready], timeout: 180)
-            let preparedCard = readyCard(in: app)
+            let newCards = cards.allElementsBoundByIndex.filter { !previousCardIDs.contains($0.identifier) }
+            guard newCards.count == 1 else {
+                XCTFail("One photo import must create exactly one new wardrobe card.")
+                return
+            }
+            let preparedCard = try XCTUnwrap(newCards.first)
             XCTAssertEqual(preparedCard.value as? String, "Готово")
             let cardIdentifier = preparedCard.identifier
             XCTAssertFalse(app.staticTexts["Тестовая вырезка"].exists, "Real provider results must not be demo fixtures")
