@@ -12,7 +12,8 @@ publicationProtocol=`prepared-item-v1`, preparationRequired=true,
 representationEncoding=`opaque-json-string-v1`, encoder (available, mode,
 activeSpaceID, supportedSpaceIDs, reason), newItemPreparation, encoderRefresh,
 recommendations. У двух последних capability-объектов available/reason;
-recommendations остаётся false/not_enabled до #69.
+recommendations описывается в [контракте single recommendation](recommendation-single.md);
+после #69 available зависит от worker, независимо от генерации изображений.
 
 Encoder mode: real, controlled или disabled. NewItemPreparation требует и
 иллюстрации, и encoder. EncoderRefresh не зависит от доступности генерации.

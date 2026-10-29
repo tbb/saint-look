@@ -13,6 +13,8 @@ import { initializeDataVersion, release } from './data-version.mjs';
 import { readRevision } from './revision.mjs';
 import { createProviderBudget, ProviderBudgetError } from './provider-budget.mjs';
 import { ProviderError } from './providers.mjs';
+import { createModelBridge } from './model-bridge.mjs';
+import { createSingleRecommendations } from './recommendations-single.mjs';
 import { createPreparations } from './preparations.mjs';
 import { publicationProtocol } from './publication-contract.mjs';
 import { createIllustrations } from './illustrations.mjs';
@@ -51,7 +53,9 @@ const budget = { available: providerBudget.available, reserve(providerName, oper
 } };
 const worker = createWorker(database, provider, process.env, retention, budget);
 const illustrations = createIllustrations(database, process.env, retention, budget);
-const preparations = createPreparations(database, process.env, retention, illustrations, directory);
+const model = createModelBridge(process.env, directory);
+const preparations = createPreparations(database, process.env, retention, illustrations, model);
+const recommendations = createSingleRecommendations(database, model);
 
 function itemResponse(row) {
   return { itemId: row.item_id, operationId: row.operation_id, photoVersionId: row.photo_version_id,
@@ -70,7 +74,11 @@ const server = createServer(async (request, response) => {
     if (!authorized(request)) return send(response, 401, { error: 'unauthorized' });
     retention.sweep();
     illustrations.sweep(); preparations.sweep();
-    if (request.method === 'GET' && path === '/v1/recommendations/config') return send(response, 200, await preparations.config());
+    if (request.method === 'GET' && path === '/v1/recommendations/config') {
+      const configuration = await preparations.config();
+      return send(response, 200, { ...configuration, recommendations: recommendations.capability(configuration.encoder) });
+    }
+    if (request.method === 'POST' && path === '/v1/recommendations/single') return send(response, 200, await recommendations.recommend(request));
     const preparation = path.match(/^\/v1\/items\/([^/]+)\/preparations(?:\/([^/]+))?$/);
     if (preparation) {
       const itemId = preparation[1].toLowerCase(), operationId = preparation[2]?.toLowerCase();
@@ -131,7 +139,8 @@ const server = createServer(async (request, response) => {
     send(response, 404, { error: 'not_found' });
   } catch (error) {
     if (!response.destroyed && !response.headersSent) {
-      send(response, error instanceof RequestError ? error.status : 400, { error: error instanceof RequestError ? error.code : 'invalid_request' });
+      send(response, error instanceof RequestError ? error.status : 400, { error: error instanceof RequestError ? error.code : 'invalid_request',
+        ...(error instanceof RequestError && error.code === 'incompatible_representations' ? { activeSpaceID: error.activeSpaceID } : {}) });
     }
   }
 });
@@ -142,6 +151,7 @@ process.on('SIGTERM', () => {
   worker.close();
   illustrations.close();
   preparations.close();
+  model.close();
   retention.close();
   server.close(() => { database.close(); process.exit(0); });
   server.closeIdleConnections();

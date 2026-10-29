@@ -5,7 +5,7 @@ import { modelFixture } from './model.mjs';
 
 // The fixture implements external HTTP boundaries, never production fallback.
 export async function illustrationFixture(t, handlers = {}) {
-  const calls = { preparation: [], attributes: [], generation: [], finalization: [], model: [] };
+  const calls = { preparation: [], attributes: [], generation: [], finalization: [], model: [], rank: [] };
   const result = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: '#00000000' } })
     .composite([{ input: await sharp({ create: { width: 120, height: 160, channels: 4, background: '#dd3322ff' } }).png().toBuffer(), left: 452, top: 260 }]).png().toBuffer();
   let url;
@@ -13,7 +13,7 @@ export async function illustrationFixture(t, handlers = {}) {
     try {
       const chunks = []; for await (const chunk of request) chunks.push(chunk);
       const body = Buffer.concat(chunks);
-      if (await modelFixture(request, response, body, handlers, calls.model)) return;
+      if (await modelFixture(request, response, body, handlers, calls.model, calls.rank)) return;
       if (request.url === '/fal-ai/nano-banana-pro/requests/fixture-1/status') {
         if (handlers.status) { await handlers.status(request, response); return; }
         response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ status: 'COMPLETED' })); return;
