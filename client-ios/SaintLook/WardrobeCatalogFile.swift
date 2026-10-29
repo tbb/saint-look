@@ -73,6 +73,8 @@ extension WardrobeCatalog {
         if let type { item.manualType = type }
         if let colors { item.manualColors = colors }
         if item.manualType != oldType || item.manualColors != oldColors {
+            item.preparation = nil
+            item.downloadedIllustration = nil
             if item.illustration?.status == .pending {
                 item.illustration?.status = .failed
                 item.illustration?.error = "source_changed"
@@ -100,11 +102,12 @@ extension WardrobeCatalog {
         }
         let publication = ItemPublication(versionID: request.operationID, photoVersionID: item.photoVersionID,
             sourceSetVersionID: item.sourceSetVersionID, cutoutFilename: filename, cutoutMode: item.resultMode,
-            illustration: result, type: features.type, colors: features.colors, completeness: .illustrated)
-        item.pendingPublication = PendingItemPublication(publication: publication, request: request, preparedPhotos: preparedPhotos)
+            illustration: result, type: features.type, colors: features.colors, completeness: .illustrated,
+            cutoutOperationID: item.operationID)
+        item.downloadedIllustration = PendingItemPublication(publication: publication, request: request, preparedPhotos: preparedPhotos)
         item.illustration = request
-        item.illustration?.status = .pending
-        item.illustration?.readyForDelivery = true
+        item.illustration?.status = .ready
+        item.illustration?.readyForDelivery = false
         items[index] = item
     }
 
@@ -119,9 +122,13 @@ extension WardrobeCatalog {
             // The old result may precede newer editable inputs or another request.
             // Reconciliation owns only its old snapshot, never those newer intents.
         } else {
-            guard items[index].illustration?.operationID == operationID,
-                  items[index].manualType == candidate.request.manualType,
-                  items[index].manualColors == candidate.request.manualColors else { throw CancellationError() }
+            if let representation = candidate.publication.representation {
+                guard candidate.publication.completeness == .prepared,
+                      let intent = items[index].preparation, intent.matches(items[index]),
+                      intent.operationID == representation.response.operationId else { throw CancellationError() }
+            } else {
+                throw ClientError.resultUnavailable("preparation_required")
+            }
             items[index].illustration = candidate.request
             items[index].illustration?.status = .ready
             items[index].illustration?.readyForDelivery = false
@@ -131,6 +138,8 @@ extension WardrobeCatalog {
         items[index].publishedVersion = candidate.publication
         items[index].photosLocked = true
         items[index].pendingPublication = nil
+        items[index].preparation = nil
+        items[index].downloadedIllustration = nil
     }
 
 }
@@ -150,5 +159,50 @@ struct WardrobeCatalogFile {
 
     func save(_ catalog: WardrobeCatalog) throws {
         try JSONEncoder().encode(catalog).write(to: url, options: .atomic)
+    }
+}
+
+extension WardrobeCatalog {
+    mutating func beginPreparation(for id: UUID, intent: ItemPreparation) throws {
+        guard let index = items.firstIndex(where: { $0.id == id }), intent.matches(items[index]),
+              items[index].pendingPublication == nil, intent.revision > items[index].preparationRevision else { throw CancellationError() }
+        guard let illustration = intent.publication.illustration,
+              illustration.response.observedFeatures?.isValid == true,
+              illustration.response.effectiveFeatures?.isValid == true,
+              illustration.response.effectiveFeatures?.type == intent.publication.type,
+              illustration.response.effectiveFeatures?.colors == intent.publication.colors,
+              intent.preparedPhotos.count == items[index].additionalPhotos.count + 1,
+              Set(intent.preparedPhotos.map(\.photoID)) == Set([items[index].photoVersionID] + items[index].additionalPhotos.map(\.id)),
+              intent.sourceSHA256.count == 64, intent.artifacts.cutoutSHA256.count == 64,
+              intent.artifacts.illustrationSHA256.count == 64 else { throw ClientError.invalidResponse }
+        items[index].preparation = intent
+        items[index].preparationRevision = intent.revision
+    }
+
+    mutating func savePreparation(for id: UUID, intent: ItemPreparation) throws {
+        guard let index = items.firstIndex(where: { $0.id == id }), intent.matches(items[index]),
+              items[index].preparation?.operationID == intent.operationID else { throw CancellationError() }
+        items[index].preparation = intent
+    }
+
+    mutating func stagePreparation(for id: UUID, response: PreparationResponse, representationFilename: String,
+                                   representationDigest: String, actualArtifacts: PreparationArtifacts,
+                                   actualSourceDigest: String) throws {
+        guard let index = items.firstIndex(where: { $0.id == id }), let intent = items[index].preparation,
+              intent.matches(items[index]), items[index].pendingPublication == nil else { throw CancellationError() }
+        try response.validate(for: id, intent: intent)
+        guard response.status == .ready, actualArtifacts == intent.artifacts,
+              representationDigest == response.representationSHA256, actualSourceDigest == intent.sourceSHA256 else {
+            throw ClientError.invalidResponse
+        }
+        var publication = ItemPublication(versionID: intent.operationID,
+            photoVersionID: intent.publication.photoVersionID, sourceSetVersionID: intent.publication.sourceSetVersionID,
+            cutoutFilename: intent.publication.cutoutFilename, cutoutMode: intent.publication.cutoutMode,
+            illustration: intent.publication.illustration, type: intent.publication.type, colors: intent.publication.colors,
+            completeness: .prepared, cutoutOperationID: intent.cutoutOperationID)
+        publication.representation = StoredRepresentation(filename: representationFilename, response: response)
+        items[index].pendingPublication = PendingItemPublication(publication: publication, request: intent.request,
+            preparedPhotos: intent.preparedPhotos)
+        items[index].preparation?.status = .ready
     }
 }

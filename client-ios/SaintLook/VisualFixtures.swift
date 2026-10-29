@@ -3,7 +3,7 @@ import Foundation
 
 /// Initial data only. After loading, all edits, selection and persistence use the normal store.
 enum VisualFixtures {
-    enum Scenario: String { case ready = "ready-four", fitting = "fitting-ready", empty, mixed = "mixed-offline", unreadable = "unreadable-catalog" }
+    enum Scenario: String { case ready = "ready-four", legacy = "legacy-four", fitting = "fitting-ready", empty, mixed = "mixed-offline", unreadable = "unreadable-catalog" }
     enum FixtureError: Error { case invalidConfiguration, missingTaxonomy }
 
     static func prepare(environment: [String: String], support: URL, resources: URL,
@@ -24,6 +24,11 @@ enum VisualFixtures {
         if scenario == .fitting {
             try prepareFitting(root: root, resources: resources, taxonomy: taxonomy)
             return root
+        }
+        var preparedSeeds: [WardrobeItem] = []
+        if scenario == .ready {
+            try prepareFitting(root: root, resources: resources, taxonomy: taxonomy)
+            preparedSeeds = try WardrobeCatalogFile(directory: root).load().items
         }
         var items: [WardrobeItem] = []
         if scenario != .empty {
@@ -64,6 +69,10 @@ enum VisualFixtures {
                     }
                     if index == 3 { item.status = .pending; item.action = .replace; item.revision = 1 }
                 }
+                if scenario == .ready {
+                    item = try preparePublicFixture(item, seed: preparedSeeds[index], key: ["tee", "jeans", "jacket", "shoes"][index],
+                        root: root, resources: resources, taxonomy: taxonomy)
+                }
                 items.append(item)
             }
         }
@@ -71,7 +80,16 @@ enum VisualFixtures {
         return root
     }
 
+    private struct Metadata: Decodable {
+        let imageSHA256: String
+        let representationSHA256: String
+        let representationFilename: String
+    }
+
     private static func prepareFitting(root: URL, resources: URL, taxonomy: WardrobeTaxonomy) throws {
+        let fixtures = resources.appendingPathComponent("VisualFixtures")
+        let metadata = try JSONDecoder().decode([String: Metadata].self,
+            from: Data(contentsOf: fixtures.appendingPathComponent("prepared-manifest.json")))
         let inputs = [("tee", "t_shirt", "beige"), ("jeans", "jeans", "blue"),
                       ("jacket", "jacket", "burgundy"), ("shoes", "shoes", "black")]
         var items: [WardrobeItem] = []
@@ -113,11 +131,33 @@ enum VisualFixtures {
             item.publishedVersion = ItemPublication(versionID: operation, photoVersionID: item.photoVersionID,
                 sourceSetVersionID: item.sourceSetVersionID, cutoutFilename: filename, cutoutMode: .demo,
                 illustration: item.illustrationResult, type: type, colors: [color], completeness: .illustrated)
+            guard let hashes = metadata[input.0] else { throw FixtureError.invalidConfiguration }
+            let representationJSON = try String(contentsOf: fixtures.appendingPathComponent(hashes.representationFilename), encoding: .utf8)
+            let preparationID = UUID(uuidString: "36000005-0000-0000-0000-\(suffix)")!
+            let preparation = PreparationResponse(itemId: item.id, operationId: preparationID, revision: 1,
+                photoVersionId: item.photoVersionID, sourceSetVersionId: item.sourceSetVersionID,
+                illustrationOperationId: operation, cutoutOperationId: item.operationID,
+                spaceID: "visual-fixture-only", status: .ready, mode: "controlled", imageMode: "test", provenance: "pipeline",
+                effectiveFeatures: CanonicalItemFeatures(type: input.1, colors: [input.2]),
+                representationJSON: representationJSON, representationSHA256: hashes.representationSHA256,
+                input: .init(sourceSHA256: hashes.imageSHA256, textSHA256: String(repeating: "0", count: 64)),
+                artifacts: .init(cutoutSHA256: hashes.imageSHA256, illustrationSHA256: hashes.imageSHA256,
+                    observedFeaturesSHA256: String(repeating: "0", count: 64), effectiveFeaturesSHA256: String(repeating: "0", count: 64)), error: nil)
+            item.publishedVersion = ItemPublication(versionID: preparationID, photoVersionID: item.photoVersionID,
+                sourceSetVersionID: item.sourceSetVersionID, cutoutFilename: filename, cutoutMode: .demo,
+                illustration: item.illustrationResult, type: type, colors: [color], completeness: .prepared,
+                representation: StoredRepresentation(filename: hashes.representationFilename, response: preparation), cutoutOperationID: item.operationID)
+            item.preparationRevision = 1
+            item.preparedPhotos = [IllustrationPreparedPhoto(photoID: item.photoVersionID, filename: filename,
+                sourceDigest: hashes.imageSHA256, preparedDigest: hashes.imageSHA256, modelVersion: response.modelVersion,
+                templateVersion: response.templateVersion, geometryVersion: response.geometryVersion)]
             item.photosLocked = true
             let folder = root.appendingPathComponent(item.directoryName, isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try FileManager.default.copyItem(at: resources.appendingPathComponent("VisualFixtures").appendingPathComponent(filename),
                                             to: folder.appendingPathComponent(filename))
+            try FileManager.default.copyItem(at: fixtures.appendingPathComponent(hashes.representationFilename),
+                to: folder.appendingPathComponent(hashes.representationFilename))
             items.append(item)
         }
         var outfit = Outfit(id: UUID(uuidString: "36000004-0000-0000-0000-000000000001")!, name: "Тестовые слои · без генерации")
@@ -128,5 +168,47 @@ enum VisualFixtures {
         outfit.selectItem(items[2].id, for: outer)
         try WardrobeCatalogFile(directory: root).save(WardrobeCatalog(items: items, pendingAcknowledgements: [], outfits: [outfit]))
     }
+    private static func preparePublicFixture(_ input: WardrobeItem, seed: WardrobeItem, key: String,
+                                             root: URL, resources: URL, taxonomy: WardrobeTaxonomy) throws -> WardrobeItem {
+        var item = input
+        let fixtures = resources.appendingPathComponent("VisualFixtures")
+        let metadata = try JSONDecoder().decode([String: Metadata].self,
+            from: Data(contentsOf: fixtures.appendingPathComponent("prepared-manifest.json")))
+        guard let hashes = metadata["public-" + key], let imageHashes = metadata[key],
+              let old = seed.illustrationResult, let seedRepresentation = seed.publishedVersion?.representation else { throw FixtureError.invalidConfiguration }
+        let features = IllustrationFeatures(version: old.response.effectiveFeatures!.version,
+            type: item.type!, colors: item.colors, traits: old.response.effectiveFeatures!.traits)
+        let response = IllustrationResponse(itemId: item.id, operationId: old.response.operationId,
+            photoVersionId: item.photoVersionID, sourceSetVersionId: item.sourceSetVersionID, revision: 1,
+            status: .ready, mode: "test", processing: [:], observedFeatures: features, effectiveFeatures: features,
+            manualType: nil, manualColors: nil, modelVersion: old.response.modelVersion,
+            templateVersion: old.response.templateVersion, geometryVersion: old.response.geometryVersion,
+            resultPath: nil, error: nil)
+        item.illustration = seed.illustration
+        item.illustrationResult = IllustrationResult(filename: old.filename, response: response)
+        let representationJSON = try String(contentsOf: fixtures.appendingPathComponent(hashes.representationFilename), encoding: .utf8)
+        let preparation = PreparationResponse(itemId: item.id, operationId: seedRepresentation.response.operationId, revision: 1,
+            photoVersionId: item.photoVersionID, sourceSetVersionId: item.sourceSetVersionID,
+            illustrationOperationId: response.operationId, cutoutOperationId: item.operationID,
+            spaceID: "visual-fixture-only", status: .ready, mode: "controlled", imageMode: "test", provenance: "pipeline",
+            effectiveFeatures: try CanonicalItemFeatures(displayType: item.type, colors: item.colors, taxonomy: taxonomy),
+            representationJSON: representationJSON, representationSHA256: hashes.representationSHA256,
+            input: .init(sourceSHA256: hashes.imageSHA256, textSHA256: String(repeating: "0", count: 64)),
+            artifacts: .init(cutoutSHA256: hashes.imageSHA256, illustrationSHA256: imageHashes.imageSHA256,
+                observedFeaturesSHA256: String(repeating: "0", count: 64), effectiveFeaturesSHA256: String(repeating: "0", count: 64)), error: nil)
+        item.publishedVersion = ItemPublication(versionID: preparation.operationId, photoVersionID: item.photoVersionID,
+            sourceSetVersionID: item.sourceSetVersionID, cutoutFilename: item.resultFilename!, cutoutMode: .demo,
+            illustration: item.illustrationResult, type: item.type, colors: item.colors, completeness: .prepared,
+            representation: StoredRepresentation(filename: hashes.representationFilename, response: preparation), cutoutOperationID: item.operationID)
+        item.preparedPhotos = [IllustrationPreparedPhoto(photoID: item.photoVersionID, filename: old.filename,
+            sourceDigest: hashes.imageSHA256, preparedDigest: imageHashes.imageSHA256, modelVersion: response.modelVersion,
+            templateVersion: response.templateVersion, geometryVersion: response.geometryVersion)]
+        item.photosLocked = true
+        item.preparationRevision = 1
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent(hashes.representationFilename),
+            to: root.appendingPathComponent(item.directoryName).appendingPathComponent(hashes.representationFilename))
+        return item
+    }
+
 }
 #endif

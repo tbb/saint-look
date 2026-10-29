@@ -476,17 +476,11 @@ final class VisualAcceptanceTests: XCTestCase {
         try capture("fitting-05-prepared-offline-restart")
         offline.terminate()
 
-        let fallback = try launch("ready-four")
+        let fallback = try launch("legacy-four")
         try selectTab("Луки", in: fallback)
-        try createFirstOutfit(in: fallback)
-        try tap(slot("body", in: fallback), in: fallback)
-        try choose(0, in: fallback)
-        let explanation = fallback.staticTexts["fitting-missing-illustration"]
-        try reveal(explanation, in: fallback)
-        try capture("fitting-06-honest-photo-fallback")
-        try require((try canvas(in: fallback)).label.contains("без иллюстрации"))
-        try nativeTap(fallback.buttons["cancel-outfit"], in: fallback)
-        try nativeTap(fallback.alerts.buttons.matching(identifier: "discard-outfit-changes").firstMatch, in: fallback)
+        try require(fallback.buttons["open-wardrobe"].waitForExistence(timeout: 5))
+        try require(!fallback.buttons["create-first-outfit"].exists, "Incomplete legacy cutouts cannot enter a new look")
+        try capture("fitting-06-incomplete-legacy-admission")
         fallback.terminate()
         let evidence = try JSONSerialization.data(withJSONObject: ["providersBefore": before, "providersAfter": afterOnline,
             "illustrationsBefore": illustrationsBefore, "illustrationsAfter": illustrationsAfter], options: [.sortedKeys, .prettyPrinted])

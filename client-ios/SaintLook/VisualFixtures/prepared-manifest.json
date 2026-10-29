@@ -1,0 +1,42 @@
+{
+  "tee": {
+    "imageSHA256": "887c3191613d5a764e4324a31ff0e5833e7422ee8e83ad4fd4e4744af2cf1fc5",
+    "representationSHA256": "17c95b2641001b701a269d53ac5e048a895962dade7faa221880d0949a07c2dc",
+    "representationFilename": "representation-tee.json"
+  },
+  "jeans": {
+    "imageSHA256": "eecfd484115f767cb774e3440e1d55e58c0f9681c9c344591109e9f07f154330",
+    "representationSHA256": "b66045202f79e35fee6ed550a92b02e9447d47e4cfa34172da82943f23474b48",
+    "representationFilename": "representation-jeans.json"
+  },
+  "jacket": {
+    "imageSHA256": "185aabc8c42a90a8a88a6eb0408a380cf4aee0434659ac2458c87d3fd58856c0",
+    "representationSHA256": "5e66749d41f7c0c8627784d61f5ab8e200736d802dbea85c8d04c673d6ad1356",
+    "representationFilename": "representation-jacket.json"
+  },
+  "shoes": {
+    "imageSHA256": "fcbb99453b5b366727a0b072783ebf234b3609604d28467e9ca04eafcf065ad9",
+    "representationSHA256": "123803c939ac68fc320244812e578849af166e736a44c5fbab6f5ac9ed949166",
+    "representationFilename": "representation-shoes.json"
+  },
+  "public-tee": {
+    "imageSHA256": "fbc6e902898915c554187d961515c7db2505954c4e46d4a090528de4348cdb50",
+    "representationSHA256": "c1cc3332a44cee370fe6f5662967585a3ff85e8f1a47cc1bdb751b14297e7594",
+    "representationFilename": "public-representation-tee.json"
+  },
+  "public-jeans": {
+    "imageSHA256": "b316902ad85e8ff46b164ceb7f2c38d3c1424c9d789703e0267e3dfce68fbe1c",
+    "representationSHA256": "558778d82bd10e1e7d1667fccc3742f7bf4b8914fc591b2fe455b6cfdbd19e1a",
+    "representationFilename": "public-representation-jeans.json"
+  },
+  "public-jacket": {
+    "imageSHA256": "609a842b50d1d15c7ca1800143649769ad817c3b6929e31ee283ef024784b0e2",
+    "representationSHA256": "23ad19894e96c13de27d68b0be77eb2ebf1adf3cfe47fc185266f441e55d6ac5",
+    "representationFilename": "public-representation-jacket.json"
+  },
+  "public-shoes": {
+    "imageSHA256": "df7642e0879b5a13a35cd46ca4da37173e95a6b32520f3c3c5975cebc75bd229",
+    "representationSHA256": "debd244f749bb9d7288c66effe4c58fb148f46521c47e39f39d199154d25db77",
+    "representationFilename": "public-representation-shoes.json"
+  }
+}

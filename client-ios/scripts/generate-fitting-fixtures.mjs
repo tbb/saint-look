@@ -2,7 +2,8 @@
 // Run manually with the repository's installed backend sharp dependency.
 import { createRequire } from 'node:module';
 const sharp = createRequire(new URL('../../backend/package.json', import.meta.url))('sharp');
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 const output = new URL('../SaintLook/VisualFixtures/', import.meta.url);
 const shapes = {
   tee: '<path fill="#f3dfaf" stroke="#b19b6c" stroke-width="2" d="M147 144 L164 136 Q180 151 196 136 L216 145 L232 186 L214 198 L207 179 L214 280 Q180 289 144 280 L151 179 L143 198 L126 185 Z"/><path fill="none" stroke="#b19b6c" stroke-width="2" d="M164 136 Q180 160 196 136"/><rect x="166" y="179" width="28" height="17" rx="3" fill="#797e56"/>',
@@ -16,3 +17,24 @@ for (const [name, body] of Object.entries(shapes)) {
   await writeFile(new URL(`fitting-${name}.svg`, output), svg + '\n');
   await sharp(Buffer.from(svg)).png().toFile(new URL(`fitting-${name}.png`, output).pathname);
 }
+
+// Complete isolated visual packets use real fixture bytes and opaque, explicitly
+// controlled vectors. They are not outputs from the production checkpoint.
+const manifest = {};
+const inputs = [['tee', 'TrialPhotos/photo-1.png'], ['jeans', 'TrialPhotos/photo-2.jpg'],
+  ['jacket', 'TrialPhotos/photo-3.jpg'], ['shoes', 'VisualFixtures/shoes.png']];
+const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+for (const [index, [name, publicPath]] of inputs.entries()) {
+  for (const publicPhoto of [false, true]) {
+    const key = (publicPhoto ? 'public-' : '') + name;
+    const bytes = await readFile(publicPhoto ? new URL('../SaintLook/' + publicPath, import.meta.url) : new URL(`fitting-${name}.png`, output));
+    const imageSHA256 = digest(bytes);
+    const representationJSON = JSON.stringify({schemaVersion: 1, spaceID: 'visual-fixture-only',
+      photoVersionID: `36000002-0000-0000-0000-${String(index + 1).padStart(12, '0')}`,
+      sourceSHA256: imageSHA256, textSHA256: '0'.repeat(64), vector: [1, ...Array(127).fill(0)]});
+    const representationFilename = `${publicPhoto ? 'public-' : ''}representation-${name}.json`;
+    await writeFile(new URL(representationFilename, output), representationJSON);
+    manifest[key] = {imageSHA256, representationSHA256: digest(representationJSON), representationFilename};
+  }
+}
+await writeFile(new URL('prepared-manifest.json', output), JSON.stringify(manifest, null, 2) + '\n');

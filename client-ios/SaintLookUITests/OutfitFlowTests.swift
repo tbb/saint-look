@@ -8,6 +8,13 @@ final class OutfitFlowTests: XCTestCase {
     override func setUp() async throws {
         continueAfterFailure = false
         try await control("online", reset: true)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:8789/__control")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer saint-look-ui-provider-control-token-00000001", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["reset": true, "illustrationMode": "success"])
+        let (_, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
     }
 
     private func control(_ mode: String, reset: Bool = false) async throws {
@@ -160,6 +167,15 @@ final class OutfitFlowTests: XCTestCase {
     @MainActor
     private func button(prefix: String, in app: XCUIApplication) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix)).firstMatch
+    }
+
+    @MainActor
+    private func publishEditedItem(_ app: XCUIApplication) async {
+        let saved = app.staticTexts["illustration-saved"]
+        guard saved.label.contains("предыдущая") else { return }
+        tap(app.buttons["generate-illustration"], in: app)
+        let updated = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Иллюстрация сохранена на устройстве."), object: saved)
+        await fulfillment(of: [updated], timeout: 40)
     }
 
     @MainActor
@@ -404,6 +420,7 @@ final class OutfitFlowTests: XCTestCase {
             tap(app.buttons["choose-type"], in: app)
             tap(app.buttons["type-\(type)"], in: app)
             app.buttons["save-item-edits"].tap()
+        await publishEditedItem(app)
             await summary(app, ready: index + 1, pending: 0)
         }
         let before = try await activityCounts()
@@ -508,6 +525,7 @@ final class OutfitFlowTests: XCTestCase {
         tap(app.buttons["choose-type"], in: app)
         tap(app.buttons["type-trousers"], in: app)
         app.buttons["save-item-edits"].tap()
+        await publishEditedItem(app)
         await summary(app, ready: 2, pending: 0)
 
         // The pending photo must finish after the new outfit is saved.
@@ -601,6 +619,7 @@ final class OutfitFlowTests: XCTestCase {
             tap(app.buttons["type-\(type)"], in: app)
             XCTAssertTrue(app.buttons["save-item-edits"].waitForExistence(timeout: 5), "Choosing a visible type must return to the editor")
             app.buttons["save-item-edits"].tap()
+        await publishEditedItem(app)
             await summary(app, ready: index + 1, pending: 0)
         }
         app.tabBars.buttons["Луки"].tap()
@@ -775,6 +794,7 @@ final class OutfitFlowTests: XCTestCase {
             tap(app.buttons["type-\(type)"], in: app)
             XCTAssertTrue(app.buttons["save-item-edits"].waitForExistence(timeout: 5), "Choosing a visible type must return to the editor")
             app.buttons["save-item-edits"].tap()
+        await publishEditedItem(app)
             await summary(app, ready: index + 1, pending: 0)
         }
         try await control("offline")

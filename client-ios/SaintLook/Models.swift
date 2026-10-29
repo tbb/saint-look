@@ -34,6 +34,10 @@ struct WardrobeItem: Codable, Identifiable {
     var publishedVersion: ItemPublication?
     var pendingPublication: PendingItemPublication?
     var photosLocked = false
+    var downloadedIllustration: PendingItemPublication?
+    var preparation: ItemPreparation?
+    var preparationRevision = 0
+    var resultSHA256: String?
 
     init(id: UUID, operationID: UUID, photoVersionID: UUID) {
         self.id = id
@@ -46,7 +50,7 @@ struct WardrobeItem: Codable, Identifiable {
         case id, operationID, photoVersionID, status, uploadStarted, type, colors, errorMessage, mode, manualType, manualColors
         case revision, action, originalFilename, uploadFilename, resultFilename, resultMode, errorCode
         case sourceSetVersionID, illustration, illustrationResult, automaticallyIllustrate, additionalPhotos, preparedPhotos
-        case publishedVersion, pendingPublication, photosLocked
+        case publishedVersion, pendingPublication, photosLocked, preparation, preparationRevision, resultSHA256, downloadedIllustration
     }
 
     init(from decoder: Decoder) throws {
@@ -82,6 +86,10 @@ struct WardrobeItem: Codable, Identifiable {
         publishedVersion = try values.decodeIfPresent(ItemPublication.self, forKey: .publishedVersion)
         pendingPublication = try values.decodeIfPresent(PendingItemPublication.self, forKey: .pendingPublication)
         photosLocked = try values.decodeIfPresent(Bool.self, forKey: .photosLocked) ?? false
+        downloadedIllustration = try values.decodeIfPresent(PendingItemPublication.self, forKey: .downloadedIllustration)
+        preparation = try values.decodeIfPresent(ItemPreparation.self, forKey: .preparation)
+        preparationRevision = try values.decodeIfPresent(Int.self, forKey: .preparationRevision) ?? 0
+        resultSHA256 = try values.decodeIfPresent(String.self, forKey: .resultSHA256)
         if publishedVersion == nil, let filename = resultFilename {
             // Migration preserves the actual image/feature pairing. A stale legacy
             // illustration cannot describe a newly replaced photograph.
@@ -109,9 +117,31 @@ struct WardrobeItem: Codable, Identifiable {
                     preparedPhotos: preparedPhotos, legacyReconciliation: true)
             }
         }
-        photosLocked = photosLocked || publishedVersion?.completeness == .illustrated
+        if let candidate = pendingPublication, candidate.legacyReconciliation != true,
+           candidate.publication.completeness != .prepared {
+            downloadedIllustration = candidate
+            pendingPublication = nil
+            illustration = candidate.request
+        }
+        photosLocked = photosLocked || publishedVersion?.completeness == .illustrated || publishedVersion?.completeness == .prepared
     }
 
+    var hasPreparedVersion: Bool {
+        guard let publication = publishedVersion, publication.completeness == .prepared,
+              let illustration = publication.illustration, let representation = publication.representation,
+              let features = try? CanonicalItemFeatures(displayType: publication.type, colors: publication.colors),
+              illustration.response.effectiveFeatures?.isValid == true,
+              illustration.response.observedFeatures?.isValid == true,
+              illustration.response.effectiveFeatures?.type == publication.type,
+              illustration.response.effectiveFeatures?.colors == publication.colors else { return false }
+        let response = representation.response
+        return response.status == .ready && response.operationId == publication.versionID
+            && response.photoVersionId == publication.photoVersionID && response.sourceSetVersionId == publication.sourceSetVersionID
+            && response.illustrationOperationId == illustration.response.operationId && response.effectiveFeatures == features
+            && response.representationJSON?.isEmpty == false && response.representationSHA256?.count == 64
+            && response.artifacts != nil && response.input != nil
+    }
+    var isPreparing: Bool { status == .pending || illustration?.status == .pending || preparation?.status == .pending || pendingPublication != nil || (downloadedIllustration != nil && preparation == nil) }
     var isReconcilingLegacyPublication: Bool { pendingPublication?.legacyReconciliation == true }
     var canEditPhotos: Bool { !photosLocked && pendingPublication == nil }
     var canEditAttributes: Bool { pendingPublication == nil }
@@ -128,7 +158,8 @@ struct WardrobeItem: Codable, Identifiable {
               publishedVersion?.illustration == nil else { return }
         publishedVersion = ItemPublication(versionID: operationID, photoVersionID: photoVersionID,
             sourceSetVersionID: sourceSetVersionID, cutoutFilename: filename, cutoutMode: resultMode,
-            illustration: nil, type: manualType ?? type, colors: manualColors ?? colors, completeness: .legacyImage)
+            illustration: nil, type: manualType ?? type, colors: manualColors ?? colors, completeness: .legacyImage,
+            cutoutOperationID: operationID)
     }
     var directoryName: String { id.uuidString.lowercased() }
 }
@@ -136,7 +167,7 @@ struct WardrobeItem: Codable, Identifiable {
 /// A single publication is the consumer boundary. Neither legacy image data nor
 /// an illustrated package proves encoder readiness; #68 adds that required result here.
 struct ItemPublication: Codable {
-    enum Completeness: String, Codable { case legacyImage, legacyIllustration, illustrated }
+    enum Completeness: String, Codable { case legacyImage, legacyIllustration, illustrated, prepared }
     let versionID: UUID
     let photoVersionID: UUID
     let sourceSetVersionID: UUID
@@ -146,12 +177,14 @@ struct ItemPublication: Codable {
     let type: String?
     let colors: [String]
     var completeness: Completeness
+    var representation: StoredRepresentation? = nil
+    var cutoutOperationID: UUID? = nil
 }
 
 /// Durable candidate saved before the server publication commit. It remains hidden
 /// until that same operation's acknowledgement succeeds, including after restart.
 struct PendingItemPublication: Codable {
-    let publication: ItemPublication
+    var publication: ItemPublication
     let request: IllustrationRequest
     let preparedPhotos: [IllustrationPreparedPhoto]
     var legacyReconciliation: Bool? = nil
@@ -163,6 +196,7 @@ struct ResultAcknowledgement: Codable, Hashable {
     let operationID: UUID
     // Optional preserves legacy acknowledgements without migrating old items.
     var illustration: Bool? = nil
+    var preparationOperationID: UUID? = nil
 }
 
 struct ItemResponse: Decodable {
@@ -176,6 +210,7 @@ struct ItemResponse: Decodable {
     let colors: [String]
     let resultPath: String?
     let error: String?
+    var resultSHA256: String? = nil
 
     func validate(for item: WardrobeItem) throws {
         guard itemId == item.id, operationId == item.operationID,
@@ -302,6 +337,9 @@ struct IllustrationResponse: Codable {
     let resultPath: String?
     let error: String?
     var preparedSources: [IllustrationPreparedSource]? = nil
+    var resultSHA256: String? = nil
+    var observedFeaturesSHA256: String? = nil
+    var effectiveFeaturesSHA256: String? = nil
 
     func validate(for item: WardrobeItem, request: IllustrationRequest) throws {
         guard itemId == item.id, operationId == request.operationID,
@@ -337,6 +375,12 @@ extension WardrobeItem {
     }
 
     var illustrationStatusMessage: String? {
+        if pendingPublication == nil, let preparation {
+            if let error = preparation.error { return PreparationFailure.message(for: error) }
+            if preparation.status == .pending {
+                return hasPreparedVersion ? "Обновляем вещь. В луках пока используется предыдущая версия." : "Завершаем подготовку вещи…"
+            }
+        }
         if pendingPublication?.error == "confirmation_failed" {
             return "Не удалось подтвердить сохранение. Проверьте подключение к серверу. Изображение и луки сохранены."
         }
@@ -357,7 +401,7 @@ extension WardrobeItem {
             return photosLocked ? "Не удалось обновить вещь. Предыдущая версия сохранена. " + detail : detail
         }
         if illustrationIsStale { return "Признаки изменились. Обновите иллюстрацию, чтобы использовать их в луках. Пока используется предыдущая версия." }
-        return illustrationResult == nil ? "Иллюстрация ещё не создана." : nil
+        return hasPreparedVersion ? nil : "Нужно завершить подготовку. Фото и сохранённые луки доступны на устройстве."
     }
 }
 
@@ -405,4 +449,137 @@ struct IllustrationPreparedPhoto: Codable {
     let modelVersion: String
     let templateVersion: String
     let geometryVersion: String
+}
+
+struct RecommendationConfiguration: Decodable {
+    struct Availability: Decodable { let available: Bool; let reason: String? }
+    struct Encoder: Decodable {
+        let available: Bool
+        let mode: String
+        let activeSpaceID: String?
+        let supportedSpaceIDs: [String]
+        let reason: String?
+    }
+    let protocolVersion: Int
+    let publicationProtocol: String
+    let preparationRequired: Bool
+    let representationEncoding: String
+    let encoder: Encoder
+    let newItemPreparation: Availability
+    let encoderRefresh: Availability
+}
+
+struct CanonicalItemFeatures: Codable, Equatable {
+    let type: String
+    let colors: [String]
+
+    init(type: String, colors: [String]) { self.type = type; self.colors = colors.sorted() }
+    init(displayType: String?, colors: [String], taxonomy: WardrobeTaxonomy = .shared) throws {
+        guard let type = taxonomy.types.first(where: { $0.label == displayType })?.id,
+              colors.count <= 5, Set(colors).count == colors.count else { throw ClientError.invalidAttributes }
+        self.type = type
+        self.colors = try colors.map { label in
+            guard let id = taxonomy.colors.first(where: { $0.label == label })?.id else { throw ClientError.invalidAttributes }
+            return id
+        }.sorted()
+    }
+}
+
+struct PreparationArtifacts: Codable, Equatable {
+    let cutoutSHA256: String
+    let illustrationSHA256: String
+    let observedFeaturesSHA256: String
+    let effectiveFeaturesSHA256: String
+}
+
+struct PreparationResponse: Codable {
+    struct Input: Codable { let sourceSHA256: String; let textSHA256: String }
+    let itemId: UUID
+    let operationId: UUID
+    let revision: Int
+    let photoVersionId: UUID
+    let sourceSetVersionId: UUID
+    let illustrationOperationId: UUID
+    let cutoutOperationId: UUID
+    let spaceID: String
+    let status: WardrobeItem.Status
+    let mode: String
+    let imageMode: String?
+    let provenance: String?
+    let effectiveFeatures: CanonicalItemFeatures?
+    let representationJSON: String?
+    let representationSHA256: String?
+    let input: Input?
+    let artifacts: PreparationArtifacts?
+    let error: String?
+
+    func validate(for itemID: UUID, intent: ItemPreparation) throws {
+        guard itemId == itemID, operationId == intent.operationID, revision == intent.revision,
+              photoVersionId == intent.publication.photoVersionID,
+              sourceSetVersionId == intent.publication.sourceSetVersionID,
+              illustrationOperationId == intent.request.operationID, cutoutOperationId == intent.cutoutOperationID, spaceID == intent.spaceID,
+              ["real", "controlled", "disabled"].contains(mode) else { throw ClientError.invalidResponse }
+        if status == .ready {
+            guard mode != "disabled", effectiveFeatures == intent.features,
+                  let representationJSON, !representationJSON.isEmpty, representationJSON.utf8.count <= 64 * 1024,
+                  representationSHA256?.count == 64, input?.sourceSHA256 == intent.sourceSHA256,
+                  input?.textSHA256.count == 64, let artifacts,
+                  artifacts.cutoutSHA256 == intent.artifacts.cutoutSHA256,
+                  artifacts.illustrationSHA256 == intent.artifacts.illustrationSHA256,
+                  artifacts.observedFeaturesSHA256.count == 64, artifacts.effectiveFeaturesSHA256.count == 64,
+                  intent.artifacts.observedFeaturesSHA256.isEmpty || artifacts.observedFeaturesSHA256 == intent.artifacts.observedFeaturesSHA256,
+                  intent.artifacts.effectiveFeaturesSHA256.isEmpty || artifacts.effectiveFeaturesSHA256 == intent.artifacts.effectiveFeaturesSHA256,
+                  imageMode == intent.publication.illustration?.response.mode,
+                  provenance == (intent.mode == .legacyImport ? "legacyImport" : intent.provenance) else {
+                throw ClientError.invalidResponse
+            }
+        }
+    }
+}
+
+struct StoredRepresentation: Codable {
+    let filename: String
+    let response: PreparationResponse
+}
+
+/// Downloaded artifacts and immutable request identity survive process/network loss.
+/// This is not a publication: source/trait edits may still supersede it before staging.
+struct ItemPreparation: Codable {
+    enum Mode: String, Codable { case fromIllustration, reusePublication, legacyImport }
+    let operationID: UUID
+    let revision: Int
+    let spaceID: String
+    let mode: Mode
+    let cutoutOperationID: UUID
+    let publication: ItemPublication
+    let request: IllustrationRequest
+    let preparedPhotos: [IllustrationPreparedPhoto]
+    let features: CanonicalItemFeatures
+    let sourceSHA256: String
+    let artifacts: PreparationArtifacts
+    let provenance: String
+    let manualType: String?
+    let manualColors: [String]?
+    var status: WardrobeItem.Status = .pending
+    var submitted = false
+    var error: String? = nil
+
+    func matches(_ item: WardrobeItem) -> Bool {
+        item.photoVersionID == publication.photoVersionID && item.sourceSetVersionID == publication.sourceSetVersionID
+            && item.manualType == manualType && item.manualColors == manualColors
+            && (mode != .fromIllustration || item.illustration?.operationID == request.operationID)
+    }
+}
+
+enum PreparationFailure {
+    static func message(for code: String) -> String {
+        switch code {
+        case "offline": return "Нет связи. Подготовка продолжится при подключении. Предыдущая версия сохранена."
+        case "encoder_unavailable", "preparation_required": return "Подготовка вещей пока недоступна на сервере. Фото и предыдущая версия сохранены."
+        case "incompatible_representations": return "Для подбора нужно обновить вещь. Предыдущая версия доступна в ручных луках."
+        case "prepared_source_missing", "local_artifact_missing": return "Не удалось прочитать сохранённый результат. Исходники и луки сохранены; нужна повторная подготовка недостающего результата."
+        case "encoder_failed": return "Не удалось завершить подготовку. Предыдущая версия сохранена. Попробуйте ещё раз."
+        default: return "Не удалось завершить подготовку. Фото и предыдущая версия сохранены."
+        }
+    }
 }

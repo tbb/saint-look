@@ -16,7 +16,7 @@ import Foundation
         precondition(Set(catalog.items.compactMap(\.type)) == Set(["Футболка", "Джинсы", "Поло", "Туфли"]))
         precondition(catalog.pendingAcknowledgements == [] && catalog.pendingDeletionIDs.isEmpty)
         for item in catalog.items {
-            precondition(item.status == .ready)
+            precondition(item.status == .ready && item.hasPreparedVersion, "Public-photo visual fixtures explicitly include controlled complete packets")
             let bytes = try Data(contentsOf: root.appendingPathComponent(item.directoryName).appendingPathComponent(item.resultFilename!))
             precondition(!bytes.isEmpty)
         }
@@ -57,6 +57,12 @@ import Foundation
         precondition(fitting.outfits[0].slots.filter { $0.zone == .body }.count == 2)
         precondition(fitting.outfits[0].selectedIDs == Set(fitting.items.map(\.id)))
         for item in fitting.items {
+            precondition(item.hasPreparedVersion)
+            let representation = item.publishedVersion!.representation!
+            precondition(representation.response.mode == "controlled" && representation.response.spaceID == "visual-fixture-only")
+            let representationBytes = try Data(contentsOf: root.appendingPathComponent(item.directoryName).appendingPathComponent(representation.filename))
+            precondition(representationBytes == Data(representation.response.representationJSON!.utf8))
+            precondition(item.preparedPhotos.count == 1)
             let result = item.illustrationResult!
             precondition(result.response.mode == "test" && result.response.status == .ready)
             precondition(result.response.itemId == item.id && result.response.photoVersionId == item.photoVersionID)

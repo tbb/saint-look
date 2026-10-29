@@ -11,4 +11,5 @@ trap 'rm -rf "$work"' EXIT
   "$root/client-ios/SaintLook/VisualFixtures.swift" \
   "$root/client-ios/scripts/tests/visual-fixtures.swift" \
   -o "$work/visual-fixture-checks"
+cp "$root/shared/wardrobe-taxonomy.json" "$work/wardrobe-taxonomy.json"
 "$work/visual-fixture-checks" "$root/client-ios/SaintLook" "$root/shared/wardrobe-taxonomy.json"
