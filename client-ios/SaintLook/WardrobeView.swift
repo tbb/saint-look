@@ -444,12 +444,16 @@ private struct ItemEditView: View {
                         TypeSelectionView(selection: $type)
                     } label: {
                         LabeledContent("Тип вещи", value: type.isEmpty ? "Выбрать" : type)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                     }
                     .accessibilityIdentifier("choose-type")
                     NavigationLink {
                         ColorSelectionView(selection: $colors, originalSelection: item.editedColors)
                     } label: {
                         LabeledContent("Цвета", value: colors.isEmpty ? "Выбрать" : colors.joined(separator: ", "))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                     }
                     .accessibilityIdentifier("choose-colors")
                 } footer: {
