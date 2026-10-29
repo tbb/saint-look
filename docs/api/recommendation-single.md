@@ -137,3 +137,42 @@ HTTP-тесты создают реальные публикации backend с 
 является live-ready гардеробом. Настоящий rank по публичным подготовленным
 представлениям измеряется отдельно; backend roundtrip не равен времени первого
 отрисованного предложения в iOS. Ручная приёмка #69/#73 остаётся отдельной.
+
+### Opt-in проверка настоящего HTTP rank
+
+Из `backend` при уже установленных pinned assets (см. `backend/ml/README.md`):
+
+```sh
+SAINT_LOOK_REAL_MODEL_TEST=1 \
+SAINT_LOOK_REAL_MODEL_PHOTOS_DIR=/path/to/client-ios/SaintLook/TrialPhotos \
+SAINT_LOOK_MODEL_PYTHON=/path/to/venv/bin/python \
+SAINT_LOOK_MODEL_ASSETS=/path/to/model-assets \
+SAINT_LOOK_RANK_EVIDENCE=/tmp/single-rank.json \
+node --test test/real-recommendation.mjs
+```
+
+Требуются `manifest.json`, `photo-1.png`, `photo-2.jpg`, `photo-3.jpg` из
+закоммиченного TrialPhotos, без скачивания и API-ключей. Проверяются исходные SHA,
+реальные фото преобразуются в PNG не более1024px как вход encoder. Один настоящий
+worker подготавливает футболку/джинсы/поло и завершается. Delivered receipts явно
+вводятся fixture-ом в существующую SQLite-схему остановленного тестового backend;
+это не утверждение о прохождении paid image pipeline. Новый backend использует
+настоящий worker и тот же публичный HTTP endpoint: джинсы в контексте, футболка
+и поло — две допустимые альтернативы пустого body. Проверяются успешное предложение
+и стабильный выбор при повторе, затем300 пакетов с повторёнными двумя векторами.
+
+JSON evidence раздельно показывает подготовку, process listening/model-ready,
+первый rank свежего worker при уже прогретом файловом кеше, повторный rank,
+объём JSON и synthetic300. Замер HTTP включает сериализацию/upload/validation/
+rank/response по loopback. Память — sampled sum RSS дерева процессов каждые25ms,
+не cgroup peak. CPU/OS/Node фиксируются; threads=1. Проверка не измеряет WAN,
+первую отрисовку на iPhone, разнообразие300 настоящих вещей или оценку вкуса.
+
+Локальный прогон2026-10-29: [полный JSON](recommendation-single-measurements.json).
+Xeon Cascadelake, один model thread: первый HTTP rank51.30ms, повтор22.76ms;
+synthetic300 —152.58ms, payload980915B. Fresh backend model-ready9.807s отдельно
+от запроса. Подготовка трёх фотографий17.821s, включая startup10.966s;
+первый encoder5.929s, следующие0.245/0.313s. Sampled RSS backend+rank worker
+310.86MiB; offline preparation test-runner+encoder973.85MiB. Выбрана футболка
+из футболки/поло при контексте джинсов; наблюдение не заменяет пользовательскую
+оценку вкуса. Эти числа относятся к локальному Linux, не к Fly или iPhone.

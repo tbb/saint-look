@@ -35,7 +35,7 @@ export async function environment(t) {
         once(process, 'exit').then(([code]) => { throw new Error(`Backend exited ${code}: ${errors}`); }),
       ]);
       return {
-        url: ready.url,
+        url: ready.url, pid: process.pid,
         async stop(signal = 'SIGTERM') {
           if (process.exitCode === null) { process.kill(signal); await once(process, 'exit'); }
           processes.delete(process);
