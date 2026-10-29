@@ -101,20 +101,10 @@ final class WardrobeStore: ObservableObject {
     }
 
     func saveEdits(for id: UUID, type: String?, colors: [String]?) throws {
-        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        if let type, !WardrobeTaxonomy.shared.contains(type: type) { throw ClientError.invalidAttributes }
-        if let colors, !WardrobeTaxonomy.shared.contains(colors: colors) { throw ClientError.invalidAttributes }
-        var updated = items
-        if let type { updated[index].manualType = type }
-        if let colors { updated[index].manualColors = colors }
-        if updated[index].manualType != items[index].manualType || updated[index].manualColors != items[index].manualColors {
-            if updated[index].illustration?.status == .pending {
-                updated[index].illustration?.status = .failed
-                updated[index].illustration?.error = "source_changed"
-            }
-        }
-        try persist(updated)
-        items = updated
+        var updated = catalog
+        try updated.editAttributes(for: id, type: type, colors: colors, taxonomy: .shared)
+        try persist(updated.items)
+        items = updated.items
     }
 
     func deleteItem(_ id: UUID) {
@@ -158,6 +148,10 @@ final class WardrobeStore: ObservableObject {
         guard let directory, storageAvailable,
               let index = items.firstIndex(where: { $0.id == id }) else { return }
         var item = items[index]
+        guard original == nil || !item.photosLocked else {
+            notice = ClientError.photosLocked.localizedDescription
+            return
+        }
         guard original != nil || item.status != .pending else { return }
         guard item.revision < 9_007_199_254_740_991 else {
             notice = "Не удалось создать новую попытку обработки. Текущая карточка сохранена."
@@ -210,7 +204,7 @@ final class WardrobeStore: ObservableObject {
 
     func displayImage(for item: WardrobeItem) -> UIImage? {
         guard let directory else { return nil }
-        let filename = item.resultFilename ?? item.uploadFilename
+        let filename = item.displayedCutoutFilename ?? item.uploadFilename
         let path = directory.appendingPathComponent(item.directoryName).appendingPathComponent(filename)
         return UIImage(contentsOfFile: path.path)
     }
@@ -222,7 +216,7 @@ final class WardrobeStore: ObservableObject {
 
     func outfitCandidates(for zone: OutfitZone, excluding selectedIDs: Set<UUID>) -> [WardrobeItem] {
         items.filter {
-            $0.status == .ready && $0.resultFilename != nil && !selectedIDs.contains($0.id)
+            $0.hasUsableImageVersion && $0.displayedCutoutFilename != nil && !selectedIDs.contains($0.id)
                 && zone.accepts($0, taxonomy: .shared) && displayImage(for: $0) != nil
         }.sorted { $0.id.uuidString < $1.id.uuidString }
     }
@@ -248,7 +242,7 @@ final class WardrobeStore: ObservableObject {
         var updated = catalog
         let selectedIDs = draft.selectedIDs
         let cutouts = Set(items.filter {
-            selectedIDs.contains($0.id) && $0.resultFilename != nil && displayImage(for: $0) != nil
+            selectedIDs.contains($0.id) && $0.displayedCutoutFilename != nil && displayImage(for: $0) != nil
         }.map(\.id))
         try updated.saveOutfit(draft, taxonomy: .shared, availableCutouts: cutouts)
         return updated
@@ -403,6 +397,9 @@ final class WardrobeStore: ObservableObject {
         updated[index].automaticallyIllustrate = items[index].automaticallyIllustrate
         updated[index].additionalPhotos = items[index].additionalPhotos
         updated[index].preparedPhotos = items[index].preparedPhotos
+        updated[index].publishedVersion = items[index].publishedVersion
+        updated[index].photosLocked = items[index].photosLocked
+        updated[index].publishIngestion()
         var acknowledgements = pendingAcknowledgements
         if let acknowledgement { acknowledgements.insert(acknowledgement) }
         try persist(updated, pendingAcknowledgements: acknowledgements)
@@ -526,7 +523,7 @@ extension WardrobeStore {
     }
 
     func illustrationURL(for item: WardrobeItem) -> URL? {
-        guard let directory, let result = item.illustrationResult else { return nil }
+        guard let directory, let result = item.displayedIllustration else { return nil }
         let url = directory.appendingPathComponent(item.directoryName).appendingPathComponent(result.filename)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
@@ -598,8 +595,11 @@ extension WardrobeStore {
               illustrationIsCurrent(items[index], request: request) else { throw CancellationError() }
         var updated = items
         updated[index].illustration = request
-        if let result { updated[index].illustrationResult = result }
-        if let preparedPhotos { updated[index].preparedPhotos = preparedPhotos }
+        if let result, let preparedPhotos {
+            var publishing = catalog
+            try publishing.publishIllustration(for: id, request: request, result: result, preparedPhotos: preparedPhotos)
+            updated[index] = publishing.items[index]
+        }
         var acknowledgements = pendingAcknowledgements
         let acknowledgement = ResultAcknowledgement(itemID: id, operationID: request.operationID, illustration: true)
         if acknowledge { acknowledgements.insert(acknowledgement) }
@@ -762,6 +762,7 @@ extension WardrobeStore {
     func saveAdditionalPhotos(_ drafts: [IllustrationPhotoDraft], for id: UUID, primaryVersion: UUID) throws {
         guard let directory, storageAvailable, let index = items.firstIndex(where: { $0.id == id }),
               items[index].photoVersionID == primaryVersion else { throw ClientError.invalidPhoto }
+        guard !items[index].photosLocked else { throw ClientError.photosLocked }
         guard drafts.count <= 2, Set(drafts.map(\.id)).count == drafts.count,
               drafts.allSatisfy({ ["back", "detail"].contains($0.role) }) else { throw ClientError.invalidPhoto }
         let previous = items[index].additionalPhotos

@@ -74,12 +74,14 @@ test('single photo produces a separate transparent illustration with observed tr
 test('multiple views preserve manual type and colors, reuse prepared photos, and reject mutated identities', async t => {
   const fixture = await illustrationFixture(t), env = await environment(t), server = await env.launch(fixture.env);
   const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
-  const initial = illustration(photo);
+  const detail = await photoRequest();
+  const initial = illustration(photo, { photos: [
+    { id: photo.photoVersionId, role: 'front', imageBase64: photo.imageBase64 },
+    { id: detail.photoVersionId, role: 'detail', imageBase64: detail.imageBase64 }] });
   await requestIllustration(server, photo.itemId, initial);
   await waitForIllustration(server, photo.itemId, initial.operationId);
-  const detail = await photoRequest();
-  const update = illustration(photo, { revision: 2, manualType: 'Худи', manualColors: ['Чёрный'],
-    photos: [...initial.photos, { id: detail.photoVersionId, role: 'detail', imageBase64: detail.imageBase64 }] });
+  const update = illustration(photo, { revision: 2, sourceSetVersionId: initial.sourceSetVersionId, manualType: 'Худи', manualColors: ['Чёрный'],
+    photos: initial.photos });
   assert.equal((await requestIllustration(server, photo.itemId, update)).status, 202);
   const ready = await waitForIllustration(server, photo.itemId, update.operationId);
   assert.equal(ready.observedFeatures.type, 'Футболка');
@@ -92,10 +94,10 @@ test('multiple views preserve manual type and colors, reuse prepared photos, and
   assert.ok(JSON.parse(fixture.calls.generation.at(-1).body).prompt.includes('Худи'));
   assert.equal((await requestIllustration(server, photo.itemId, update)).status, 200);
   assert.equal((await requestIllustration(server, photo.itemId, { ...update, manualColors: ['Белый'] })).status, 409);
-  const changedSet = { ...update, operationId: randomUUID(), revision: 3, photos: initial.photos };
+  const changedSet = { ...update, operationId: randomUUID(), revision: 3, photos: initial.photos.slice(0, 1) };
   const conflict = await requestIllustration(server, photo.itemId, changedSet);
   assert.equal(conflict.status, 409);
-  assert.equal((await conflict.json()).error, 'identity_conflict');
+  assert.equal((await conflict.json()).error, 'photos_locked');
 });
 
 test('replacing the primary photo supersedes a pending illustration and late provider data cannot block the new photo', async t => {
@@ -293,4 +295,36 @@ test('locally saved prepared sources survive acknowledgement and avoid sandbox c
   const bad = { ...refresh, operationId: randomUUID(), revision: 3, photos: [{ ...input.photos[0], preparedBase64: input.photos[0].imageBase64 }] };
   assert.equal((await requestIllustration(server, photo.itemId, bad)).status, 409);
   assert.equal(fixture.calls.preparation.length, 1);
+});
+
+test('a completed source set stays immutable after delivery and restart, while attribute updates retain its identity', async t => {
+  const fixture = await illustrationFixture(t), env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const initial = illustration(photo);
+  await requestIllustration(server, photo.itemId, initial);
+  await waitForIllustration(server, photo.itemId, initial.operationId);
+  await server.request(`/v1/items/${photo.itemId}/illustrations/${initial.operationId}/ack`, { method: 'POST' });
+  await server.stop();
+  const restarted = await env.launch(fixture.env);
+  for (const action of ['replace', 'retry']) {
+    const replacement = { ...await photoRequest(), itemId: photo.itemId, revision: 1, action };
+    const denied = await restarted.request(`/v1/items/${photo.itemId}/attempts`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(replacement) });
+    assert.equal(denied.status, 409);
+    assert.equal((await denied.json()).error, 'photos_locked');
+  }
+  const detail = await photoRequest();
+  const changed = illustration(photo, { revision: 2, photos: [...initial.photos,
+    { id: detail.photoVersionId, role: 'detail', imageBase64: detail.imageBase64 }] });
+  const denied = await requestIllustration(restarted, photo.itemId, changed);
+  assert.equal(denied.status, 409);
+  assert.equal((await denied.json()).error, 'photos_locked');
+  const update = illustration(photo, { sourceSetVersionId: initial.sourceSetVersionId, revision: 2,
+    manualType: 'Худи', manualColors: ['Чёрный'] });
+  assert.equal((await requestIllustration(restarted, photo.itemId, update)).status, 202);
+  const ready = await waitForIllustration(restarted, photo.itemId, update.operationId);
+  assert.equal(ready.effectiveFeatures.type, 'Худи');
+  assert.deepEqual(ready.effectiveFeatures.colors, ['Чёрный']);
+  const newThing = await photoRequest();
+  assert.equal((await upload(restarted, newThing)).status, 202);
 });

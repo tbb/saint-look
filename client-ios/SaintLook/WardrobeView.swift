@@ -305,10 +305,16 @@ private struct ItemDetailView: View {
     private func illustrationControls(_ item: WardrobeItem) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Для примерочной").font(.headline)
-            Button { editingSources = item } label: {
-                Label(item.additionalPhotos.isEmpty ? "Добавить ракурсы" : "Ракурсы: \(item.additionalPhotos.count + 1) из 3", systemImage: "photo.on.rectangle")
+            if item.photosLocked {
+                Text("Фотографии готовой вещи не меняются. Для другого снимка добавьте новую вещь.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("photos-locked")
+            } else {
+                Button { editingSources = item } label: {
+                    Label(item.additionalPhotos.isEmpty ? "Добавить ракурсы" : "Ракурсы: \(item.additionalPhotos.count + 1) из 3", systemImage: "photo.on.rectangle")
+                }
+                .accessibilityIdentifier("illustration-sources")
             }
-            .accessibilityIdentifier("illustration-sources")
             if store.illustrationAvailable == false {
                 Text("Создание иллюстраций пока недоступно. Фото и вырезка сохранены.")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -340,8 +346,10 @@ private struct ItemDetailView: View {
 
     private func actions(for item: WardrobeItem) -> some View {
         Menu {
-            Button("Заменить фото", systemImage: "photo") { showingPhotoSource = true }
-                .accessibilityIdentifier("replace-photo")
+            if !item.photosLocked {
+                Button("Заменить фото", systemImage: "photo") { showingPhotoSource = true }
+                    .accessibilityIdentifier("replace-photo")
+            }
             if item.status == .ready {
                 Button("Проблема с вырезкой", systemImage: "questionmark.circle") { showingRecovery = true }
                     .accessibilityIdentifier("cutout-problem")
@@ -352,7 +360,7 @@ private struct ItemDetailView: View {
             }
             #if DEBUG
             if ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1",
-               ProcessInfo.processInfo.environment["SAINT_LOOK_VISUAL_SCENARIO"] == nil {
+               ProcessInfo.processInfo.environment["SAINT_LOOK_VISUAL_SCENARIO"] == nil, !item.photosLocked {
                 Button("Заменить тестовым фото") { store.replacePhoto(itemID, with: PhotoData.demoPhoto(replacement: true)) }
                     .accessibilityIdentifier("replace-demo-photo")
             }
@@ -376,8 +384,10 @@ private struct ItemDetailView: View {
                 Button("Повторить обработку") { store.retryProcessing(itemID) }
                     .accessibilityIdentifier("retry-processing")
             }
-            Button("Заменить фото") { showingPhotoSource = true }
-                .accessibilityIdentifier("replace-photo")
+            if !item.photosLocked {
+                Button("Заменить фото") { showingPhotoSource = true }
+                    .accessibilityIdentifier("replace-photo")
+            }
         }
         .disabled(importing || !store.storageAvailable)
     }
@@ -394,18 +404,18 @@ private struct ItemEditView: View {
     @State private var confirmingDiscard = false
 
     private var dirty: Bool {
-        type != (item.displayedType ?? "") || Set(colors) != Set(item.displayedColors)
+        type != (item.editedType ?? "") || Set(colors) != Set(item.editedColors)
     }
 
     private var invalidColors: Bool {
-        !paletteIsValid(colors, comparedTo: item.displayedColors)
+        !paletteIsValid(colors, comparedTo: item.editedColors)
     }
 
     init(store: WardrobeStore, item: WardrobeItem) {
         self.store = store
         self.item = item
-        _type = State(initialValue: item.displayedType ?? "")
-        _colors = State(initialValue: item.displayedColors)
+        _type = State(initialValue: item.editedType ?? "")
+        _colors = State(initialValue: item.editedColors)
     }
 
     var body: some View {
@@ -425,7 +435,7 @@ private struct ItemEditView: View {
                     }
                     .accessibilityIdentifier("choose-type")
                     NavigationLink {
-                        ColorSelectionView(selection: $colors, originalSelection: item.displayedColors)
+                        ColorSelectionView(selection: $colors, originalSelection: item.editedColors)
                     } label: {
                         LabeledContent("Цвета", value: colors.isEmpty ? "Выбрать" : colors.joined(separator: ", "))
                     }
@@ -469,9 +479,9 @@ private struct ItemEditView: View {
     private func save() {
         // Untouched fields stay automatic, including when a result arrives with the editor open.
         // Legacy labels are retained until the user explicitly replaces that field.
-        let changedType = type != (item.displayedType ?? "")
-        let changedColors = Set(colors) != Set(item.displayedColors)
-        guard paletteIsValid(colors, comparedTo: item.displayedColors) else {
+        let changedType = type != (item.editedType ?? "")
+        let changedColors = Set(colors) != Set(item.editedColors)
+        guard paletteIsValid(colors, comparedTo: item.editedColors) else {
             error = "Выберите от одного до пяти цветов."
             return
         }

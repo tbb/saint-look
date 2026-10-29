@@ -78,6 +78,23 @@ export function createIllustrations(database, env, retention) {
       state TEXT NOT NULL DEFAULT 'pending', prepared_digest TEXT, prepared_versions TEXT,
       expires_at INTEGER NOT NULL, PRIMARY KEY(item_id,photo_id));
     CREATE INDEX IF NOT EXISTS illustration_expiry ON illustrations(retention_state,expires_at);`);
+  // Identity receipts, not a server wardrobe: no image bytes or attributes survive here.
+  database.exec(`CREATE TABLE IF NOT EXISTS published_sources (
+    item_id TEXT PRIMARY KEY, photo_version_id TEXT NOT NULL,
+    source_set_version_id TEXT NOT NULL, photos TEXT NOT NULL)`);
+  // Delivered operations retain their source identities after their artifacts are cleared.
+  for (const row of database.prepare("SELECT illustrations.* FROM illustrations JOIN items ON items.item_id=illustrations.item_id AND items.photo_version_id=illustrations.photo_version_id WHERE illustrations.status='ready' OR illustrations.retention_state='delivered' ORDER BY illustrations.revision DESC").all()) {
+    lockSources(row);
+  }
+  function lockSources(row) {
+    const photos = parse(row.photos).map(photo => {
+      const primary = photo.id === row.photo_version_id
+        ? database.prepare('SELECT source_digest FROM operation_receipts WHERE item_id=? AND photo_version_id=? LIMIT 1').get(row.item_id, photo.id) : null;
+      return { ...photo, ...(primary ? { normalizedDigest: primary.source_digest } : {}) };
+    });
+    database.prepare('INSERT OR IGNORE INTO published_sources VALUES (?,?,?,?)')
+      .run(row.item_id, row.photo_version_id, row.source_set_version_id, json(photos));
+  }
   const sourceColumns = new Set(database.prepare('PRAGMA table_info(illustration_sources)').all().map(column => column.name));
   for (const column of ['prepared_digest', 'prepared_versions']) if (!sourceColumns.has(column)) database.exec(`ALTER TABLE illustration_sources ADD COLUMN ${column} TEXT`);
   const provider = createIllustrationProvider(env), timers = new Map(), abort = new AbortController();
@@ -191,7 +208,14 @@ export function createIllustrations(database, env, retention) {
         if (!live(operationId)) return;
         setStage(operationId, stage, 'done');
       }
-      if (live(operationId)) database.prepare("UPDATE illustrations SET result=?,status='ready',error=NULL WHERE operation_id=?").run(result, operationId);
+      if (live(operationId)) {
+        database.exec('BEGIN IMMEDIATE');
+        try {
+          database.prepare("UPDATE illustrations SET result=?,status='ready',error=NULL WHERE operation_id=?").run(result, operationId);
+          lockSources(get(operationId));
+          database.exec('COMMIT');
+        } catch (error) { database.exec('ROLLBACK'); throw error; }
+      }
     } catch (error) {
       if (!live(operationId)) return;
       const unknown = !(error instanceof ProviderError) || error.unknown;
@@ -234,6 +258,11 @@ export function createIllustrations(database, env, retention) {
       if (previous?.status === 'pending') throw new RequestError(409, 'processing_in_progress');
       if (previous?.error === 'processing_unknown') throw new RequestError(409, 'processing_unknown');
       const sourceSet = json(input.photos.map(({ id, role, digest }) => ({ id, role, digest })));
+      const locked = database.prepare('SELECT * FROM published_sources WHERE item_id=?').get(input.itemId);
+      if (locked && (locked.photo_version_id !== input.photoVersionId || locked.source_set_version_id !== input.sourceSetVersionId
+        || json(parse(locked.photos).map(({ id, role, digest }) => ({ id, role, digest }))) !== sourceSet)) {
+        throw new RequestError(409, 'photos_locked');
+      }
       const knownSet = database.prepare('SELECT photos FROM illustrations WHERE item_id=? AND source_set_version_id=? LIMIT 1').get(input.itemId, input.sourceSetVersionId);
       if (knownSet && knownSet.photos !== sourceSet) throw new RequestError(409, 'identity_conflict');
       const deadline = retention.deadline();

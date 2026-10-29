@@ -348,14 +348,13 @@ final class WardrobeFlowTests: XCTestCase {
         let reused = try await providerControl()
         XCTAssertEqual(reused["illustrationPreparationCalls"] as? Int, 1, "Manual edits reuse the prepared source even after server ack cleanup and app restart")
 
-        try tapVisibleButton("illustration-sources", in: restored)
-        restored.buttons["add-demo-detail-photo"].tap()
-        restored.buttons["save-illustration-sources"].tap()
-        try tapVisibleButton("generate-illustration", in: restored)
-        let thirdAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 4, timeout: 30)
-        XCTAssertTrue(thirdAcknowledged)
-        let added = try await providerControl()
-        XCTAssertEqual(added["illustrationPreparationCalls"] as? Int, 2, "Only the added photo needs preparation")
+        XCTAssertTrue(restored.staticTexts["photos-locked"].exists)
+        XCTAssertFalse(restored.buttons["illustration-sources"].exists)
+        restored.buttons["item-actions"].tap()
+        XCTAssertFalse(restored.buttons["replace-photo"].exists)
+        XCTAssertFalse(restored.buttons["replace-demo-photo"].exists)
+        XCTAssertEqual(reused["illustrationGenerationCalls"] as? Int, 3,
+                       "Attribute updates preserve the fixed photographs and reuse their preparation")
     }
 
     @MainActor

@@ -31,6 +31,8 @@ struct WardrobeItem: Codable, Identifiable {
     var automaticallyIllustrate = false
     var additionalPhotos: [IllustrationSourcePhoto] = []
     var preparedPhotos: [IllustrationPreparedPhoto] = []
+    var publishedVersion: ItemPublication?
+    var photosLocked = false
 
     init(id: UUID, operationID: UUID, photoVersionID: UUID) {
         self.id = id
@@ -43,6 +45,7 @@ struct WardrobeItem: Codable, Identifiable {
         case id, operationID, photoVersionID, status, uploadStarted, type, colors, errorMessage, mode, manualType, manualColors
         case revision, action, originalFilename, uploadFilename, resultFilename, resultMode, errorCode
         case sourceSetVersionID, illustration, illustrationResult, automaticallyIllustrate, additionalPhotos, preparedPhotos
+        case publishedVersion, photosLocked
     }
 
     init(from decoder: Decoder) throws {
@@ -75,11 +78,55 @@ struct WardrobeItem: Codable, Identifiable {
             ?? (status == .ready ? .demo : nil)
         resultMode = try values.decodeIfPresent(ProcessingMode.self, forKey: .resultMode)
             ?? (resultFilename != nil ? mode : nil)
+        publishedVersion = try values.decodeIfPresent(ItemPublication.self, forKey: .publishedVersion)
+        photosLocked = try values.decodeIfPresent(Bool.self, forKey: .photosLocked) ?? false
+        if publishedVersion == nil, let filename = resultFilename {
+            // Migration preserves the actual image/feature pairing. A stale legacy
+            // illustration cannot describe a newly replaced photograph.
+            let matching = illustrationResult.flatMap { result in
+                result.response.photoVersionId == photoVersionID && result.response.sourceSetVersionId == sourceSetVersionID ? result : nil
+            }
+            publishedVersion = ItemPublication(versionID: matching?.response.operationId ?? operationID,
+                photoVersionID: photoVersionID, sourceSetVersionID: sourceSetVersionID,
+                cutoutFilename: filename, cutoutMode: resultMode, illustration: matching,
+                type: matching?.response.effectiveFeatures?.type ?? manualType ?? type,
+                colors: matching?.response.effectiveFeatures?.colors ?? manualColors ?? colors,
+                completeness: matching == nil ? .legacyImage : .illustrated)
+        }
+        photosLocked = photosLocked || publishedVersion?.completeness == .illustrated
     }
 
-    var displayedType: String? { manualType ?? type }
-    var displayedColors: [String] { manualColors ?? colors }
+    var editedType: String? { manualType ?? publishedVersion?.type ?? type }
+    var editedColors: [String] { manualColors ?? publishedVersion?.colors ?? colors }
+    var displayedType: String? { if let publishedVersion { return publishedVersion.type }; return editedType }
+    var displayedColors: [String] { publishedVersion?.colors ?? editedColors }
+    var displayedCutoutFilename: String? { publishedVersion?.cutoutFilename ?? resultFilename }
+    var displayedIllustration: IllustrationResult? { if let publishedVersion { return publishedVersion.illustration }; return illustrationResult }
+    var hasUsableImageVersion: Bool { publishedVersion != nil || (status == .ready && resultFilename != nil) }
+
+    mutating func publishIngestion() {
+        guard status == .ready, let filename = resultFilename,
+              publishedVersion?.completeness != .illustrated else { return }
+        publishedVersion = ItemPublication(versionID: operationID, photoVersionID: photoVersionID,
+            sourceSetVersionID: sourceSetVersionID, cutoutFilename: filename, cutoutMode: resultMode,
+            illustration: nil, type: manualType ?? type, colors: manualColors ?? colors, completeness: .legacyImage)
+    }
     var directoryName: String { id.uuidString.lowercased() }
+}
+
+/// A single publication is the consumer boundary. Neither legacy image data nor
+/// an illustrated package proves encoder readiness; #68 adds that required result here.
+struct ItemPublication: Codable {
+    enum Completeness: String, Codable { case legacyImage, illustrated }
+    let versionID: UUID
+    let photoVersionID: UUID
+    let sourceSetVersionID: UUID
+    let cutoutFilename: String
+    let cutoutMode: ProcessingMode?
+    let illustration: IllustrationResult?
+    let type: String?
+    let colors: [String]
+    let completeness: Completeness
 }
 
 struct ResultAcknowledgement: Codable, Hashable {
@@ -110,12 +157,13 @@ struct ItemResponse: Decodable {
 }
 
 enum ClientError: LocalizedError {
-    case invalidSettings, invalidAttributes, invalidPhoto, oversizedPhoto, invalidResponse, server(Int), resultUnavailable(String), keychain
+    case invalidSettings, invalidAttributes, invalidPhoto, oversizedPhoto, invalidResponse, photosLocked, server(Int), resultUnavailable(String), keychain
 
     var errorDescription: String? {
         switch self {
         case .invalidSettings: return "Укажите адрес backend и токен владельца в настройках."
         case .invalidAttributes: return "Выберите тип и от одного до пяти цветов из списка."
+        case .photosLocked: return "Фотографии готовой вещи не меняются. Для другого снимка добавьте новую вещь."
         case .invalidPhoto: return "Не удалось прочитать фотографию. Выберите другой снимок."
         case .oversizedPhoto: return "Фотография слишком большая. Выберите снимок до 20 МБ."
         case .invalidResponse: return "Backend вернул неподходящий результат. Исходное фото сохранено."
@@ -135,6 +183,7 @@ enum ProcessingFailure {
 
     static func message(for code: String?) -> String {
         switch code {
+        case "photos_locked": return ClientError.photosLocked.localizedDescription
         case "photo_on_person": return "Вещь нужно сфотографировать отдельно, не на человеке. Исходник сохранён."
         case "photo_multiple_items": return "На фото несколько вещей. Для карточки нужна одна вещь. Исходник сохранён."
         case "photo_no_item": return "На фото не удалось найти вещь. Исходник сохранён."
@@ -257,9 +306,15 @@ extension WardrobeItem {
     }
 
     var illustrationStatusMessage: String? {
-        if illustration?.status == .pending { return "Иллюстрация готовится. Можно продолжать пользоваться гардеробом." }
-        if let error = illustration?.error { return IllustrationFailure.message(for: error) }
-        if illustrationIsStale { return "Фото или признаки изменились. Иллюстрацию можно обновить отдельно." }
+        if illustration?.status == .pending {
+            return photosLocked ? "Обновляем вещь. В луках пока используется предыдущая версия."
+                : "Иллюстрация готовится. Можно продолжать пользоваться гардеробом."
+        }
+        if let error = illustration?.error {
+            let detail = IllustrationFailure.message(for: error)
+            return photosLocked ? "Не удалось обновить вещь. Предыдущая версия сохранена. " + detail : detail
+        }
+        if illustrationIsStale { return "Признаки изменились. Обновите иллюстрацию, чтобы использовать их в луках. Пока используется предыдущая версия." }
         return illustrationResult == nil ? "Иллюстрация ещё не создана." : nil
     }
 }
@@ -269,7 +324,7 @@ enum IllustrationFailure {
         switch code {
         case "illustration_unavailable": return "Создание иллюстраций пока недоступно. Фото и вырезка сохранены."
         case "illustration_payload_too_large": return "Фото вместе с сохранёнными вырезками слишком большие для отправки. Уберите дополнительный ракурс или замените снимок меньшим."
-        case "prepared_source_missing": return "Не удалось прочитать сохранённую вырезку исходного фото. Замените этот снимок и повторите обновление."
+        case "prepared_source_missing": return "Не удалось прочитать сохранённую вырезку исходного фото. Предыдущая версия сохранена; для другого снимка добавьте новую вещь."
         case "processing_in_progress": return "Предыдущая подготовка ещё идёт. Повторите обновление позже."
         case "source_changed": return "Фото или признаки изменились. Создайте иллюстрацию для новой версии."
         case "processing_unknown": return "Исход генерации неизвестен. Автоматический повтор остановлен. Предыдущее изображение сохранено."
