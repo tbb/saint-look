@@ -810,28 +810,28 @@ struct OutfitEditorView: View {
 
     @ViewBuilder
     private func slotActions(_ slot: OutfitSlot) -> some View {
-        Button(slot.itemID == nil ? "Подобрать вещь" : "Другое сочетание", systemImage: "sparkle") {
+        Button(slot.itemID == nil ? "Подобрать вещь" : "Другое сочетание") {
             recommend(slot)
         }
         .disabled(pinnedSlotIDs.contains(slot.id) || recommendation.pending != nil)
         .accessibilityIdentifier("recommend-slot-\(slot.id)")
-        Button("Выбрать вручную", systemImage: "square.grid.2x2") {
+        Button("Выбрать вручную") {
             pendingPickerSlotID = slot.id
             actionSlotID = nil
         }
-        Button("Следующая вещь", systemImage: "chevron.right") { cycle(slot.id, forward: true) }
+        Button("Следующая вещь") { cycle(slot.id, forward: true) }
             .disabled(!canCycle(slot))
             .accessibilityIdentifier("next-slot-\(slot.id)")
-        Button("Предыдущая вещь", systemImage: "chevron.left") { cycle(slot.id, forward: false) }
+        Button("Предыдущая вещь") { cycle(slot.id, forward: false) }
             .disabled(!canCycle(slot))
             .accessibilityIdentifier("previous-slot-\(slot.id)")
         if slot.itemID != nil || slot.needsReplacement {
-            Button("Очистить", systemImage: "xmark") { select(nil, for: slot.id) }
+            Button("Очистить") { select(nil, for: slot.id) }
                 .accessibilityLabel("Очистить: \(outfitSlotTitle(slot, in: draft))")
                 .accessibilityIdentifier("clear-slot-\(slot.id)")
         }
         if slot.zone == .body {
-            Button("Убрать слой", systemImage: "minus") {
+            Button("Убрать слой") {
                 guard draft.slots.contains(where: { $0.id == slot.id && $0.zone == .body }) else { return }
                 cancelRecommendation()
                 let previous = draft
