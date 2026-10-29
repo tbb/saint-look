@@ -1221,6 +1221,15 @@ final class WardrobeFlowTests: XCTestCase {
             if identifier != "edit-item", !visibleAction.exists || !visibleAction.isHittable {
                 app.buttons["item-actions"].tap()
                 let action = app.collectionViews.buttons.matching(identifier: identifier).firstMatch
+                if identifier == "delete-item" {
+                    capturePhotoSource("delete-menu-before-hittability", in: app)
+                    let global = app.buttons.matching(identifier: identifier)
+                    let scoped = app.collectionViews.buttons.matching(identifier: identifier)
+                    let diagnostic = XCTAttachment(string: "Global matches: \(global.count)\n\(global.debugDescription)\nCollection matches: \(scoped.count)\n\(scoped.debugDescription)\nApplication:\n\(app.debugDescription)")
+                    diagnostic.name = "delete-menu-before-hittability-AX"
+                    diagnostic.lifetime = .keepAlways
+                    add(diagnostic)
+                }
                 var previousFrame: CGRect?
                 let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                     guard action.exists, action.isHittable else { previousFrame = nil; return false }
