@@ -32,6 +32,7 @@ struct WardrobeItem: Codable, Identifiable {
     var additionalPhotos: [IllustrationSourcePhoto] = []
     var preparedPhotos: [IllustrationPreparedPhoto] = []
     var publishedVersion: ItemPublication?
+    var pendingPublication: PendingItemPublication?
     var photosLocked = false
 
     init(id: UUID, operationID: UUID, photoVersionID: UUID) {
@@ -45,7 +46,7 @@ struct WardrobeItem: Codable, Identifiable {
         case id, operationID, photoVersionID, status, uploadStarted, type, colors, errorMessage, mode, manualType, manualColors
         case revision, action, originalFilename, uploadFilename, resultFilename, resultMode, errorCode
         case sourceSetVersionID, illustration, illustrationResult, automaticallyIllustrate, additionalPhotos, preparedPhotos
-        case publishedVersion, photosLocked
+        case publishedVersion, pendingPublication, photosLocked
     }
 
     init(from decoder: Decoder) throws {
@@ -79,6 +80,7 @@ struct WardrobeItem: Codable, Identifiable {
         resultMode = try values.decodeIfPresent(ProcessingMode.self, forKey: .resultMode)
             ?? (resultFilename != nil ? mode : nil)
         publishedVersion = try values.decodeIfPresent(ItemPublication.self, forKey: .publishedVersion)
+        pendingPublication = try values.decodeIfPresent(PendingItemPublication.self, forKey: .pendingPublication)
         photosLocked = try values.decodeIfPresent(Bool.self, forKey: .photosLocked) ?? false
         if publishedVersion == nil, let filename = resultFilename {
             // Migration preserves the actual image/feature pairing. A stale legacy
@@ -96,6 +98,8 @@ struct WardrobeItem: Codable, Identifiable {
         photosLocked = photosLocked || publishedVersion?.completeness == .illustrated
     }
 
+    var canEditPhotos: Bool { !photosLocked && pendingPublication == nil }
+    var canEditAttributes: Bool { pendingPublication == nil }
     var editedType: String? { manualType ?? publishedVersion?.type ?? type }
     var editedColors: [String] { manualColors ?? publishedVersion?.colors ?? colors }
     var displayedType: String? { if let publishedVersion { return publishedVersion.type }; return editedType }
@@ -129,6 +133,14 @@ struct ItemPublication: Codable {
     let completeness: Completeness
 }
 
+/// Durable candidate saved before the server publication commit. It remains hidden
+/// until that same operation's acknowledgement succeeds, including after restart.
+struct PendingItemPublication: Codable {
+    let publication: ItemPublication
+    let request: IllustrationRequest
+    let preparedPhotos: [IllustrationPreparedPhoto]
+}
+
 struct ResultAcknowledgement: Codable, Hashable {
     let itemID: UUID
     let operationID: UUID
@@ -157,12 +169,13 @@ struct ItemResponse: Decodable {
 }
 
 enum ClientError: LocalizedError {
-    case invalidSettings, invalidAttributes, invalidPhoto, oversizedPhoto, invalidResponse, photosLocked, server(Int), resultUnavailable(String), keychain
+    case invalidSettings, invalidAttributes, invalidPhoto, oversizedPhoto, invalidResponse, photosLocked, publicationInProgress, server(Int), resultUnavailable(String), keychain
 
     var errorDescription: String? {
         switch self {
         case .invalidSettings: return "Укажите адрес backend и токен владельца в настройках."
         case .invalidAttributes: return "Выберите тип и от одного до пяти цветов из списка."
+        case .publicationInProgress: return "Завершаем сохранение вещи. Изменения будут доступны после подтверждения сервера."
         case .photosLocked: return "Фотографии готовой вещи не меняются. Для другого снимка добавьте новую вещь."
         case .invalidPhoto: return "Не удалось прочитать фотографию. Выберите другой снимок."
         case .oversizedPhoto: return "Фотография слишком большая. Выберите снимок до 20 МБ."
@@ -294,6 +307,7 @@ struct IllustrationResponse: Codable {
 
 extension WardrobeItem {
     var canResumeIllustrationDelivery: Bool {
+        if pendingPublication != nil { return true }
         guard let request = illustration, request.status == .failed, request.readyForDelivery == true else { return false }
         return request.photoVersionID == photoVersionID && request.sourceSetVersionID == sourceSetVersionID
             && request.manualType == manualType && request.manualColors == manualColors
@@ -306,6 +320,11 @@ extension WardrobeItem {
     }
 
     var illustrationStatusMessage: String? {
+        if pendingPublication != nil {
+            let progress = illustration?.error == "offline" ? "Завершаем сохранение. Продолжим при подключении."
+                : "Сохраняем готовую вещь…"
+            return progress + (photosLocked ? " В луках пока используется предыдущая версия." : "")
+        }
         if illustration?.status == .pending {
             return photosLocked ? "Обновляем вещь. В луках пока используется предыдущая версия."
                 : "Иллюстрация готовится. Можно продолжать пользоваться гардеробом."

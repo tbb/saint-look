@@ -23,7 +23,7 @@ struct BackendClient {
         if response.statusCode == 410 || response.statusCode == 503 || response.statusCode == 409 {
             struct Failure: Decodable { let error: String }
             if let failure = try? JSONDecoder().decode(Failure.self, from: data),
-               ["result_expired", "result_delivered", "illustration_unavailable", "processing_in_progress", "photos_locked"].contains(failure.error) {
+               ["result_expired", "result_delivered", "illustration_unavailable", "processing_in_progress", "photos_locked", "operation_superseded", "item_deleted"].contains(failure.error) {
                 throw ClientError.resultUnavailable(failure.error)
             }
         }

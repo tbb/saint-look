@@ -83,7 +83,7 @@ export function createIllustrations(database, env, retention) {
     item_id TEXT PRIMARY KEY, photo_version_id TEXT NOT NULL,
     source_set_version_id TEXT NOT NULL, photos TEXT NOT NULL)`);
   // Delivered operations retain their source identities after their artifacts are cleared.
-  for (const row of database.prepare("SELECT illustrations.* FROM illustrations JOIN items ON items.item_id=illustrations.item_id AND items.photo_version_id=illustrations.photo_version_id WHERE illustrations.status='ready' OR illustrations.retention_state='delivered' ORDER BY illustrations.revision DESC").all()) {
+  for (const row of database.prepare("SELECT illustrations.* FROM illustrations JOIN items ON items.item_id=illustrations.item_id AND items.photo_version_id=illustrations.photo_version_id WHERE illustrations.retention_state='delivered' ORDER BY illustrations.revision DESC").all()) {
     lockSources(row);
   }
   function lockSources(row) {
@@ -208,14 +208,7 @@ export function createIllustrations(database, env, retention) {
         if (!live(operationId)) return;
         setStage(operationId, stage, 'done');
       }
-      if (live(operationId)) {
-        database.exec('BEGIN IMMEDIATE');
-        try {
-          database.prepare("UPDATE illustrations SET result=?,status='ready',error=NULL WHERE operation_id=?").run(result, operationId);
-          lockSources(get(operationId));
-          database.exec('COMMIT');
-        } catch (error) { database.exec('ROLLBACK'); throw error; }
-      }
+      if (live(operationId)) database.prepare("UPDATE illustrations SET result=?,status='ready',error=NULL WHERE operation_id=?").run(result, operationId);
     } catch (error) {
       if (!live(operationId)) return;
       const unknown = !(error instanceof ProviderError) || error.unknown;
@@ -308,17 +301,33 @@ export function createIllustrations(database, env, retention) {
     },
     acknowledge(itemId, operationId) {
       if (!uuid.test(itemId) || !uuid.test(operationId)) throw new RequestError(400, 'invalid_identity');
-      const row = get(operationId);
-      if (!row || row.item_id !== itemId || row.retention_state !== 'active') return;
-      if (row.status !== 'ready') throw new RequestError(409, 'not_ready');
-      database.prepare(`UPDATE illustrations SET retention_state='delivered',status='failed',error='result_delivered',
-        generated=NULL,result=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL,processing=? WHERE operation_id=?`)
-        .run(json(Object.fromEntries(stages.map(stage => [stage, 'cleared']))), operationId);
-      for (const photo of parse(row.photos)) {
-        const used = database.prepare("SELECT photos FROM illustrations WHERE item_id=? AND retention_state='active'").all(itemId)
-          .some(other => parse(other.photos).some(input => input.id === photo.id));
-        if (!used) database.prepare(`UPDATE illustration_sources SET ${cleared} WHERE item_id=? AND photo_id=?`).run(itemId, photo.id);
+      requireNotDeleted(database, itemId);
+      const known = get(operationId);
+      if (!known || known.item_id !== itemId) throw new RequestError(404, 'not_found');
+      // A delivered receipt proves a previous commit even if its response was lost.
+      if (known.retention_state === 'delivered') {
+        const locked = database.prepare('SELECT * FROM published_sources WHERE item_id=?').get(itemId);
+        if (!locked || locked.photo_version_id !== known.photo_version_id || locked.source_set_version_id !== known.source_set_version_id) {
+          throw new RequestError(409, 'operation_superseded');
+        }
+        return;
       }
+      const row = readable(itemId, operationId);
+      if (row.status !== 'ready') throw new RequestError(409, 'not_ready');
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        // This is the publication commit: generated output alone never freezes photos.
+        lockSources(row);
+        database.prepare(`UPDATE illustrations SET retention_state='delivered',status='failed',error='result_delivered',
+          generated=NULL,result=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL,processing=? WHERE operation_id=?`)
+          .run(json(Object.fromEntries(stages.map(stage => [stage, 'cleared']))), operationId);
+        for (const photo of parse(row.photos)) {
+          const used = database.prepare("SELECT photos FROM illustrations WHERE item_id=? AND retention_state='active'").all(itemId)
+            .some(other => parse(other.photos).some(input => input.id === photo.id));
+          if (!used) database.prepare(`UPDATE illustration_sources SET ${cleared} WHERE item_id=? AND photo_id=?`).run(itemId, photo.id);
+        }
+        database.exec('COMMIT');
+      } catch (error) { database.exec('ROLLBACK'); throw error; }
     },
     close() { closing = true; clearInterval(cleanup); for (const timer of timers.values()) clearTimeout(timer); abort.abort(); },
   };

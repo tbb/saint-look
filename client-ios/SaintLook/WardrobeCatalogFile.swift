@@ -35,6 +35,7 @@ extension WardrobeCatalog {
         if let type, !taxonomy.contains(type: type) { throw ClientError.invalidAttributes }
         if let colors, !taxonomy.contains(colors: colors) { throw ClientError.invalidAttributes }
         var item = items[index]
+        guard item.canEditAttributes else { throw ClientError.publicationInProgress }
         let oldType = item.manualType, oldColors = item.manualColors
         // Capture the previous image/attributes before changing the editable input.
         item.publishIngestion()
@@ -52,7 +53,7 @@ extension WardrobeCatalog {
         items[index] = item
     }
 
-    mutating func publishIllustration(for id: UUID, request: IllustrationRequest, result: IllustrationResult,
+    mutating func stageIllustration(for id: UUID, request: IllustrationRequest, result: IllustrationResult,
                                      preparedPhotos: [IllustrationPreparedPhoto]) throws {
         guard let index = items.firstIndex(where: { $0.id == id }) else { throw CancellationError() }
         var item = items[index]
@@ -66,14 +67,33 @@ extension WardrobeCatalog {
               Set(preparedPhotos.map(\.photoID)) == Set([item.photoVersionID] + item.additionalPhotos.map(\.id)) else {
             throw ClientError.invalidResponse
         }
-        item.publishedVersion = ItemPublication(versionID: request.operationID, photoVersionID: item.photoVersionID,
+        let publication = ItemPublication(versionID: request.operationID, photoVersionID: item.photoVersionID,
             sourceSetVersionID: item.sourceSetVersionID, cutoutFilename: filename, cutoutMode: item.resultMode,
             illustration: result, type: features.type, colors: features.colors, completeness: .illustrated)
-        item.photosLocked = true
+        item.pendingPublication = PendingItemPublication(publication: publication, request: request, preparedPhotos: preparedPhotos)
         item.illustration = request
-        item.illustrationResult = result
-        item.preparedPhotos = preparedPhotos
+        item.illustration?.status = .pending
+        item.illustration?.readyForDelivery = true
         items[index] = item
+    }
+
+    mutating func confirmPublication(for id: UUID, operationID: UUID) throws {
+        guard let index = items.firstIndex(where: { $0.id == id }),
+              let candidate = items[index].pendingPublication,
+              candidate.request.operationID == operationID,
+              items[index].illustration?.operationID == operationID,
+              items[index].photoVersionID == candidate.publication.photoVersionID,
+              items[index].sourceSetVersionID == candidate.publication.sourceSetVersionID,
+              items[index].manualType == candidate.request.manualType,
+              items[index].manualColors == candidate.request.manualColors else { throw CancellationError() }
+        items[index].publishedVersion = candidate.publication
+        items[index].photosLocked = true
+        items[index].illustration = candidate.request
+        items[index].illustration?.status = .ready
+        items[index].illustration?.readyForDelivery = false
+        items[index].illustrationResult = candidate.publication.illustration
+        items[index].preparedPhotos = candidate.preparedPhotos
+        items[index].pendingPublication = nil
     }
 }
 

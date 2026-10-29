@@ -307,7 +307,17 @@ struct OutfitCoreChecks {
             sourceDigest: "original-digest", preparedDigest: "prepared-digest", modelVersion: "fal-ai/nano-banana-pro/edit",
             templateVersion: "front-360x560-proposed-v1", geometryVersion: "fitting-square-1024-v1")
         let firstResult = illustrationResult(item: shirt, request: initialRequest, type: "Футболка", filename: "first-illustration.png")
-        try publishing.publishIllustration(for: shirtID, request: initialRequest, result: firstResult, preparedPhotos: [source])
+        try publishing.stageIllustration(for: shirtID, request: initialRequest, result: firstResult, preparedPhotos: [source])
+        precondition(!publishing.items[0].photosLocked, "Downloaded output is not yet a committed publication")
+        precondition(!publishing.items[0].canEditPhotos, "An uncertain commit freezes source editing until reconciliation")
+        try file.save(publishing)
+        publishing = try file.load()
+        precondition(publishing.items[0].pendingPublication != nil)
+        do {
+            try publishing.editAttributes(for: shirtID, type: "Куртка", colors: nil, taxonomy: taxonomy)
+            fatalError("An uncertain publication cannot change its input")
+        } catch ClientError.publicationInProgress { }
+        try publishing.confirmPublication(for: shirtID, operationID: initialRequest.operationID)
         precondition(publishing.items[0].photosLocked)
         precondition(publishing.items[0].publishedVersion?.completeness == .illustrated)
         try publishing.editAttributes(for: shirtID, type: "Худи", colors: ["Чёрный"], taxonomy: taxonomy)
@@ -333,11 +343,15 @@ struct OutfitCoreChecks {
         completed.status = .ready
         let newResult = illustrationResult(item: shirt, request: completed, type: "Худи", filename: "second-illustration.png")
         do {
-            try publishing.publishIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [])
+            try publishing.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [])
             fatalError("A partial package must not publish")
         } catch ClientError.invalidResponse { }
         precondition(publishing.items[0].displayedType == "Футболка")
-        try publishing.publishIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
+        try publishing.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
+        precondition(publishing.items[0].displayedType == "Футболка", "Staging is not visible publication")
+        try file.save(publishing)
+        publishing = try file.load()
+        try publishing.confirmPublication(for: shirtID, operationID: completed.operationID)
         try file.save(publishing)
         let published = try file.load()
         precondition(published.items[0].displayedType == "Худи")
@@ -345,14 +359,25 @@ struct OutfitCoreChecks {
         precondition(published.items[0].displayedIllustration?.filename == "second-illustration.png")
         precondition(published.items[0].publishedVersion?.versionID == completed.operationID)
         precondition(published.outfits == [outfit])
+        var deletingCommit = published
+        try deletingCommit.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
+        deletingCommit.removeItem(shirtID)
+        try file.save(deletingCommit)
+        deletingCommit = try file.load()
+        do {
+            try deletingCommit.confirmPublication(for: shirtID, operationID: completed.operationID)
+            fatalError("A late successful commit response must not restore deletion")
+        } catch is CancellationError { }
+        precondition(deletingCommit.pendingDeletionIDs.contains(shirtID))
+        precondition(deletingCommit.outfits[0].slots.first { $0.zone == .body }?.itemID == nil)
         try publishing.editAttributes(for: shirtID, type: "Куртка", colors: nil, taxonomy: taxonomy)
         do {
-            try publishing.publishIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
+            try publishing.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
             fatalError("A late package must not cancel a newer edit")
         } catch is CancellationError { }
         publishing.removeItem(shirtID)
         do {
-            try publishing.publishIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
+            try publishing.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
             fatalError("A late publication must not restore a deleted thing")
         } catch is CancellationError { }
         precondition(publishing.items.map(\.id) == [jeansID])

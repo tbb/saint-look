@@ -244,7 +244,7 @@ private struct ItemDetailView: View {
                         }
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("edit-item")
-                        .disabled(!store.storageAvailable)
+                        .disabled(!store.storageAvailable || !item.canEditAttributes)
                         ItemProcessingStatus(item: item)
                         illustrationControls(item)
                         if item.status == .failed || showingRecovery { recovery(for: item) }
@@ -309,7 +309,7 @@ private struct ItemDetailView: View {
                 Text("Фотографии готовой вещи не меняются. Для другого снимка добавьте новую вещь.")
                     .font(.footnote).foregroundStyle(.secondary)
                     .accessibilityIdentifier("photos-locked")
-            } else {
+            } else if item.pendingPublication == nil {
                 Button { editingSources = item } label: {
                     Label(item.additionalPhotos.isEmpty ? "Добавить ракурсы" : "Ракурсы: \(item.additionalPhotos.count + 1) из 3", systemImage: "photo.on.rectangle")
                 }
@@ -346,7 +346,7 @@ private struct ItemDetailView: View {
 
     private func actions(for item: WardrobeItem) -> some View {
         Menu {
-            if !item.photosLocked {
+            if item.canEditPhotos {
                 Button("Заменить фото", systemImage: "photo") { showingPhotoSource = true }
                     .accessibilityIdentifier("replace-photo")
             }
@@ -354,13 +354,13 @@ private struct ItemDetailView: View {
                 Button("Проблема с вырезкой", systemImage: "questionmark.circle") { showingRecovery = true }
                     .accessibilityIdentifier("cutout-problem")
             }
-            if item.status != .pending && !ProcessingFailure.needsAnotherPhoto(item.errorCode) {
+            if item.status != .pending && item.pendingPublication == nil && !ProcessingFailure.needsAnotherPhoto(item.errorCode) {
                 Button("Повторить обработку", systemImage: "arrow.clockwise") { store.retryProcessing(itemID) }
                     .accessibilityIdentifier("retry-processing")
             }
             #if DEBUG
             if ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1",
-               ProcessInfo.processInfo.environment["SAINT_LOOK_VISUAL_SCENARIO"] == nil, !item.photosLocked {
+               ProcessInfo.processInfo.environment["SAINT_LOOK_VISUAL_SCENARIO"] == nil, item.canEditPhotos {
                 Button("Заменить тестовым фото") { store.replacePhoto(itemID, with: PhotoData.demoPhoto(replacement: true)) }
                     .accessibilityIdentifier("replace-demo-photo")
             }
@@ -380,11 +380,11 @@ private struct ItemDetailView: View {
                 Text("Замените снимок: на фото должна быть одна вещь вне человека.")
                     .font(.footnote)
                     .accessibilityIdentifier("replace-photo-hint")
-            } else if item.status != .pending {
+            } else if item.status != .pending && item.pendingPublication == nil {
                 Button("Повторить обработку") { store.retryProcessing(itemID) }
                     .accessibilityIdentifier("retry-processing")
             }
-            if !item.photosLocked {
+            if item.canEditPhotos {
                 Button("Заменить фото") { showingPhotoSource = true }
                     .accessibilityIdentifier("replace-photo")
             }

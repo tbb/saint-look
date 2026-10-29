@@ -148,6 +148,10 @@ final class WardrobeStore: ObservableObject {
         guard let directory, storageAvailable,
               let index = items.firstIndex(where: { $0.id == id }) else { return }
         var item = items[index]
+        guard item.pendingPublication == nil else {
+            notice = ClientError.publicationInProgress.localizedDescription
+            return
+        }
         guard original == nil || !item.photosLocked else {
             notice = ClientError.photosLocked.localizedDescription
             return
@@ -255,7 +259,7 @@ final class WardrobeStore: ObservableObject {
         for id in pendingDeletionIDs { startDeletion(id) }
         for acknowledgement in pendingAcknowledgements { startAcknowledgement(acknowledgement) }
         for item in items where item.status == .pending { start(item.id) }
-        for item in items where item.illustration?.status == .pending { startIllustration(item.id) }
+        for item in items where item.illustration?.status == .pending || item.pendingPublication != nil { startIllustration(item.id) }
     }
 
     func stopObserving() {
@@ -397,6 +401,7 @@ final class WardrobeStore: ObservableObject {
         updated[index].automaticallyIllustrate = items[index].automaticallyIllustrate
         updated[index].additionalPhotos = items[index].additionalPhotos
         updated[index].preparedPhotos = items[index].preparedPhotos
+        updated[index].pendingPublication = items[index].pendingPublication
         updated[index].publishedVersion = items[index].publishedVersion
         updated[index].photosLocked = items[index].photosLocked
         updated[index].publishIngestion()
@@ -588,25 +593,35 @@ extension WardrobeStore {
             && $0.manualType == request.manualType && $0.manualColors == request.manualColors }
     }
 
-    private func saveIllustration(_ id: UUID, request: IllustrationRequest,
-                                  result: IllustrationResult? = nil, preparedPhotos: [IllustrationPreparedPhoto]? = nil,
-                                  acknowledge: Bool = false) throws {
+    private func saveIllustration(_ id: UUID, request: IllustrationRequest, discardCandidate: Bool = false) throws {
         guard let index = items.firstIndex(where: { $0.id == id }),
               illustrationIsCurrent(items[index], request: request) else { throw CancellationError() }
         var updated = items
         updated[index].illustration = request
-        if let result, let preparedPhotos {
-            var publishing = catalog
-            try publishing.publishIllustration(for: id, request: request, result: result, preparedPhotos: preparedPhotos)
-            updated[index] = publishing.items[index]
-        }
-        var acknowledgements = pendingAcknowledgements
-        let acknowledgement = ResultAcknowledgement(itemID: id, operationID: request.operationID, illustration: true)
-        if acknowledge { acknowledgements.insert(acknowledgement) }
-        try persist(updated, pendingAcknowledgements: acknowledgements)
+        if discardCandidate { updated[index].pendingPublication = nil }
+        try persist(updated)
         items = updated
-        pendingAcknowledgements = acknowledgements
-        if acknowledge && observing { startAcknowledgement(acknowledgement) }
+    }
+
+    private func commitPublication(_ item: WardrobeItem, client: BackendClient, directory: URL) async throws {
+        guard let candidate = item.pendingPublication else { throw CancellationError() }
+        // Artifacts and candidate are durable first. The server atomically fixes the
+        // source set and acknowledges delivery before this version becomes visible.
+        try await client.acknowledge(ResultAcknowledgement(itemID: item.id,
+            operationID: candidate.request.operationID, illustration: true))
+        try Task.checkCancellation()
+        var updated = catalog
+        try updated.confirmPublication(for: item.id, operationID: candidate.request.operationID)
+        try persist(updated.items)
+        items = updated.items
+        let folder = directory.appendingPathComponent(item.directoryName)
+        for cached in item.preparedPhotos where !candidate.preparedPhotos.contains(where: { $0.filename == cached.filename }) {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(cached.filename))
+        }
+        if let previous = item.illustrationResult?.filename,
+           previous != candidate.publication.illustration?.filename {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(previous))
+        }
     }
 
     private func processIllustration(_ id: UUID, operationID: UUID) async {
@@ -614,10 +629,14 @@ extension WardrobeStore {
         var retrySeconds: UInt64 = 1
         while observing && !Task.isCancelled {
             guard let item = items.first(where: { $0.id == id }), var intent = item.illustration,
-                  intent.operationID == operationID, intent.status == .pending else { return }
+                  intent.operationID == operationID, (intent.status == .pending || item.pendingPublication != nil) else { return }
             guard illustrationIsCurrent(item, request: intent) else { return }
             do {
                 let client = BackendClient(settings: settings)
+                if item.pendingPublication != nil {
+                    try await commitPublication(item, client: client, directory: directory)
+                    return
+                }
                 let response: IllustrationResponse
                 if intent.submitted {
                     do { response = try await client.illustrationStatus(item, request: intent) }
@@ -650,19 +669,15 @@ extension WardrobeStore {
                     guard illustrationIsCurrent(item, request: intent) else { return }
                     let filename = "illustration-\(operationID.uuidString.lowercased()).png"
                     try data.write(to: directory.appendingPathComponent(item.directoryName).appendingPathComponent(filename), options: .atomic)
-                    let previous = items.first(where: { $0.id == id })
-                    let previousFilename = previous?.illustrationResult?.filename
                     var completed = intent
                     completed.status = .ready
                     completed.readyForDelivery = false
-                    try saveIllustration(id, request: completed, result: IllustrationResult(filename: filename, response: response), preparedPhotos: prepared, acknowledge: true)
-                    for cached in previous?.preparedPhotos ?? [] where !prepared.contains(where: { $0.filename == cached.filename }) {
-                        try? FileManager.default.removeItem(at: directory.appendingPathComponent(item.directoryName).appendingPathComponent(cached.filename))
-                    }
-                    if let previousFilename, previousFilename != filename {
-                        try? FileManager.default.removeItem(at: directory.appendingPathComponent(item.directoryName).appendingPathComponent(previousFilename))
-                    }
-                    return
+                    var updated = catalog
+                    try updated.stageIllustration(for: id, request: completed,
+                        result: IllustrationResult(filename: filename, response: response), preparedPhotos: prepared)
+                    try persist(updated.items)
+                    items = updated.items
+                    continue
                 }
                 try saveIllustration(id, request: intent)
                 if intent.status == .failed { return }
@@ -684,7 +699,13 @@ extension WardrobeStore {
                 }
                 else if case ClientError.oversizedPhoto = error { intent.error = "image_too_large" }
                 else { intent.error = retryable ? "offline" : "invalid_provider_response" }
-                do { try saveIllustration(id, request: intent) }
+                var discardCandidate = false
+                if item.pendingPublication != nil {
+                    if case ClientError.resultUnavailable(let code) = error {
+                        discardCandidate = ["operation_superseded", "item_deleted", "result_expired"].contains(code)
+                    } else if case ClientError.server(404) = error { discardCandidate = true }
+                }
+                do { try saveIllustration(id, request: intent, discardCandidate: discardCandidate) }
                 catch { notice = "Не удалось сохранить состояние иллюстрации."; return }
                 guard retryable else { return }
                 do { try await Task.sleep(nanoseconds: retrySeconds * 1_000_000_000) } catch { return }
@@ -762,6 +783,7 @@ extension WardrobeStore {
     func saveAdditionalPhotos(_ drafts: [IllustrationPhotoDraft], for id: UUID, primaryVersion: UUID) throws {
         guard let directory, storageAvailable, let index = items.firstIndex(where: { $0.id == id }),
               items[index].photoVersionID == primaryVersion else { throw ClientError.invalidPhoto }
+        guard items[index].pendingPublication == nil else { throw ClientError.publicationInProgress }
         guard !items[index].photosLocked else { throw ClientError.photosLocked }
         guard drafts.count <= 2, Set(drafts.map(\.id)).count == drafts.count,
               drafts.allSatisfy({ ["back", "detail"].contains($0.role) }) else { throw ClientError.invalidPhoto }

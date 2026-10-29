@@ -97,7 +97,7 @@ test('multiple views preserve manual type and colors, reuse prepared photos, and
   const changedSet = { ...update, operationId: randomUUID(), revision: 3, photos: initial.photos.slice(0, 1) };
   const conflict = await requestIllustration(server, photo.itemId, changedSet);
   assert.equal(conflict.status, 409);
-  assert.equal((await conflict.json()).error, 'photos_locked');
+  assert.equal((await conflict.json()).error, 'identity_conflict');
 });
 
 test('replacing the primary photo supersedes a pending illustration and late provider data cannot block the new photo', async t => {
@@ -201,7 +201,7 @@ test('delete during generation permanently removes illustrations and rejects lat
   assert.equal((await requestIllustration(server, photo.itemId, input)).status, 410);
   await server.stop(); const restarted = await env.launch(fixture.env);
   assert.equal((await restarted.request(path)).status, 410);
-  assert.equal((await restarted.request(`${path}/ack`, { method: 'POST' })).status, 204);
+  assert.equal((await restarted.request(`${path}/ack`, { method: 'POST' })).status, 410);
   assert.equal(fixture.calls.generation.length, 1);
 });
 
@@ -236,7 +236,7 @@ test('ready illustration survives restart, expires after seven days, and old ack
   const refresh = { ...input, operationId: randomUUID(), revision: 2 };
   assert.equal((await requestIllustration(restarted, photo.itemId, refresh)).status, 202);
   const refreshed = await waitForIllustration(restarted, photo.itemId, refresh.operationId);
-  assert.equal((await restarted.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}/ack`, { method: 'POST' })).status, 204);
+  assert.equal((await restarted.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}/ack`, { method: 'POST' })).status, 409);
   assert.equal((await restarted.request(refreshed.resultPath)).status, 200);
   assert.equal(fixture.calls.preparation.length, 2);
 });
@@ -327,4 +327,42 @@ test('a completed source set stays immutable after delivery and restart, while a
   assert.deepEqual(ready.effectiveFeatures.colors, ['Чёрный']);
   const newThing = await photoRequest();
   assert.equal((await upload(restarted, newThing)).status, 202);
+});
+
+test('editing angles before first publication supersedes generated output; commit alone freezes the accepted set', async t => {
+  let finishGeneration;
+  const gate = new Promise(resolve => { finishGeneration = resolve; });
+  const fixture = await illustrationFixture(t, { generation: async (request, response) => {
+    await gate; response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ request_id: 'fixture-1' }));
+  } });
+  const env = await environment(t);
+  let server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const initial = illustration(photo);
+  await requestIllustration(server, photo.itemId, initial);
+  await until(() => fixture.calls.generation.length === 1);
+  const detail = await photoRequest();
+  const newer = illustration(photo, { revision: 2, photos: [...initial.photos,
+    { id: detail.photoVersionId, role: 'detail', imageBase64: detail.imageBase64 }] });
+  finishGeneration();
+  await waitForIllustration(server, photo.itemId, initial.operationId);
+  await server.stop();
+  server = await env.launch(fixture.env);
+  // Restart must not misinterpret generated output as a committed publication.
+  // The client discarded the first response after its local angle edit. No download or ack.
+  assert.equal((await requestIllustration(server, photo.itemId, newer)).status, 202);
+  const staleAck = await server.request(`/v1/items/${photo.itemId}/illustrations/${initial.operationId}/ack`, { method: 'POST' });
+  assert.equal(staleAck.status, 409);
+  assert.equal((await staleAck.json()).error, 'operation_superseded');
+  await waitForIllustration(server, photo.itemId, newer.operationId);
+  const commitPath = `/v1/items/${photo.itemId}/illustrations/${newer.operationId}/ack`;
+  assert.equal((await server.request(commitPath, { method: 'POST' })).status, 204);
+  await server.stop();
+  const restarted = await env.launch(fixture.env);
+  assert.equal((await restarted.request(commitPath, { method: 'POST' })).status, 204, 'Lost commit response is safely recoverable');
+  const changed = illustration(photo, { revision: 3 });
+  const denied = await requestIllustration(restarted, photo.itemId, changed);
+  assert.equal(denied.status, 409);
+  assert.equal((await denied.json()).error, 'photos_locked');
 });
