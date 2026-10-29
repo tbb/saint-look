@@ -50,7 +50,7 @@ struct WardrobeView: View {
                                 .buttonStyle(.plain)
                                 .accessibilityElement(children: .contain)
                                 .accessibilityIdentifier("wardrobe-item-\(item.id)")
-                                .accessibilityValue(item.status == .ready ? "Готово" : item.status == .pending ? "Обрабатывается" : "Ошибка обработки")
+                                .accessibilityValue(item.hasPreparedVersion ? "Готово" : item.isPreparing ? "Подготовка" : "Нужно завершить подготовку")
                             }
                         }
                     }
@@ -90,8 +90,8 @@ struct WardrobeView: View {
 
     private var collectionStatus: some View {
         VStack(alignment: .leading, spacing: 8) {
-            let pending = store.items.filter { $0.status == .pending }.count
-            let ready = store.items.filter { $0.status == .ready }.count
+            let pending = store.items.filter { $0.isPreparing }.count
+            let ready = store.items.filter { store.preparedFilesAvailable(for: $0) }.count
             if !store.items.isEmpty {
                 Text(pending > 0 ? "\(itemCountTitle) · в обработке: \(pending)" : itemCountTitle)
                     .font(.subheadline)
@@ -177,6 +177,10 @@ private struct ItemProcessingStatus: View {
                 Text(item.uploadStarted ? "Обработка" : "Ожидает отправки")
                     .accessibilityIdentifier("pending-status")
             case .ready:
+                if !item.hasPreparedVersion {
+                    Text(item.isPreparing ? "Подготовка вещи" : "Нужно завершить подготовку")
+                        .accessibilityIdentifier("preparation-status")
+                }
                 if item.mode == .demo {
                     Text("Тестовая вырезка")
                         .accessibilityIdentifier("ready-status")
@@ -315,7 +319,7 @@ private struct ItemDetailView: View {
                 }
                 .accessibilityIdentifier("illustration-sources")
             }
-            if store.illustrationAvailable == false {
+            if store.illustrationAvailable == false && item.publishedVersion?.illustration == nil && item.downloadedIllustration == nil {
                 Text("Создание иллюстраций пока недоступно. Фото и вырезка сохранены.")
                     .font(.footnote).foregroundStyle(.secondary)
                     .accessibilityIdentifier("illustration-unavailable")
@@ -324,17 +328,25 @@ private struct ItemDetailView: View {
                 Text(message).font(.footnote).foregroundStyle(.secondary)
                     .accessibilityIdentifier("illustration-status")
             }
-            if item.illustration?.status == .pending {
-                ProgressView("Готовим иллюстрацию…")
+            if store.preparationConfiguration?.encoder.available == false {
+                Text("Подготовка вещей пока недоступна на сервере. Фото и предыдущие версии сохранены.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("preparation-unavailable")
+            }
+            if item.isPreparing && item.preparation?.status != .failed {
+                ProgressView("Готовим вещь…")
                     .accessibilityIdentifier("illustration-pending")
-            } else {
-                Button(item.canResumeIllustrationDelivery ? "Повторить сохранение иллюстрации"
-                       : item.illustrationResult == nil ? "Создать иллюстрацию" : "Обновить иллюстрацию") {
-                    store.requestIllustration(itemID)
+            } else if !item.hasPreparedVersion || item.illustrationIsStale || item.preparation != nil
+                        || (store.preparationConfiguration?.encoder.activeSpaceID != nil
+                            && item.publishedVersion?.representation?.response.spaceID != store.preparationConfiguration?.encoder.activeSpaceID) {
+                Button(item.illustrationIsStale ? "Обновить вещь" : item.hasPreparedVersion ? "Обновить подготовку" : "Завершить подготовку") {
+                    if item.illustrationIsStale && item.downloadedIllustration == nil && item.preparation == nil {
+                        store.requestIllustration(itemID)
+                    } else { store.finishPreparation(itemID) }
                 }
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("generate-illustration")
-                .disabled(item.isReconcilingLegacyPublication || item.status != .ready || (store.illustrationAvailable == false && !item.canResumeIllustrationDelivery) || !store.storageAvailable)
+                .disabled(item.isReconcilingLegacyPublication || item.status != .ready || (store.illustrationAvailable == false && item.publishedVersion?.illustration == nil && item.downloadedIllustration == nil && !item.canResumeIllustrationDelivery) || !store.storageAvailable)
             }
             if item.illustrationResult != nil {
                 Text(item.illustrationIsStale ? "Показана предыдущая версия иллюстрации." : "Иллюстрация сохранена на устройстве.")

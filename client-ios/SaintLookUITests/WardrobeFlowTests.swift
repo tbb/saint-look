@@ -54,10 +54,13 @@ final class WardrobeFlowTests: XCTestCase {
             XCTAssertFalse(app.images["item-photo"].exists, "An empty collection must contain no garment photos")
             return
         }
-        let summary = app.staticTexts["wardrobe-summary"]
-        let expected = "Всего: \(ready + pending). Готово: \(ready). Ожидают: \(pending)."
-        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", expected), object: summary)
-        await fulfillment(of: [expectation], timeout: timeout)
+        // These ingestion/recovery scenarios wait for cutouts, not full model readiness.
+        // Full publication is asserted separately through illustration delivery and admission.
+        let predicate = NSPredicate { _, _ in
+            app.staticTexts.matching(identifier: "ready-status").count == ready
+                && app.staticTexts.matching(identifier: "pending-status").count == pending
+        }
+        await fulfillment(of: [XCTNSPredicateExpectation(predicate: predicate, object: app)], timeout: timeout)
     }
 
     private func launch(reset: Bool, baseURL: String, trialIndex: Int? = nil, cameraProblem: String? = nil) -> XCUIApplication {
@@ -230,8 +233,9 @@ final class WardrobeFlowTests: XCTestCase {
         app.buttons["add-demo-photo"].tap()
         await waitForSummary(app, ready: 1, pending: 0)
         try openFirstItem(in: app)
-        XCTAssertTrue(app.staticTexts["illustration-saved"].waitForExistence(timeout: 30))
-        try tapVisibleButton("show-illustration", in: app)
+        let staged = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS[c] %@", "сохранени"), object: app.staticTexts["illustration-status"])
+        await fulfillment(of: [staged], timeout: 30)
+        XCTAssertFalse(app.buttons["show-illustration"].isEnabled, "Unconfirmed first publication is not visible")
         let before = try await transportState()
         let path = try XCTUnwrap(before["lastIllustrationPath"] as? String)
         XCTAssertEqual(before["illustrationOperations"] as? Int, 1)
@@ -242,7 +246,7 @@ final class WardrobeFlowTests: XCTestCase {
         let restored = launch(reset: false, baseURL: testURL)
         await waitForSummary(restored, ready: 1, pending: 0)
         try openFirstItem(in: restored)
-        try tapVisibleButton("show-illustration", in: restored)
+        XCTAssertFalse(restored.buttons["show-illustration"].isEnabled)
         XCTAssertTrue(restored.images["item-photo"].firstMatch.exists)
         try await control(mode: "drop-next-ack-response")
         let acknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 1, timeout: 30)
@@ -329,12 +333,10 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(firstAcknowledged)
         let initial = try await providerControl()
         XCTAssertEqual(initial["illustrationPreparationCalls"] as? Int, 1)
-        try tapVisibleButton("generate-illustration", in: app)
-        let refreshed = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 2, timeout: 30)
-        XCTAssertTrue(refreshed, "Explicit refresh of an unchanged ready image starts a new operation after ack")
+        XCTAssertFalse(app.buttons["generate-illustration"].exists, "An unchanged complete item does not offer a paid regeneration")
         let refreshProvider = try await providerControl()
         XCTAssertEqual(refreshProvider["illustrationPreparationCalls"] as? Int, 1)
-        XCTAssertEqual(refreshProvider["illustrationGenerationCalls"] as? Int, 2)
+        XCTAssertEqual(refreshProvider["illustrationGenerationCalls"] as? Int, 1)
         app.terminate()
 
         let restored = launch(reset: false, baseURL: testURL)
@@ -343,7 +345,7 @@ final class WardrobeFlowTests: XCTestCase {
         try chooseType("hoodie", in: restored)
         restored.buttons["save-item-edits"].tap()
         try tapVisibleButton("generate-illustration", in: restored)
-        let secondAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 3, timeout: 30)
+        let secondAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 2, timeout: 30)
         XCTAssertTrue(secondAcknowledged)
         let reused = try await providerControl()
         XCTAssertEqual(reused["illustrationPreparationCalls"] as? Int, 1, "Manual edits reuse the prepared source even after server ack cleanup and app restart")
@@ -353,7 +355,7 @@ final class WardrobeFlowTests: XCTestCase {
         restored.buttons["item-actions"].tap()
         XCTAssertFalse(restored.buttons["replace-photo"].exists)
         XCTAssertFalse(restored.buttons["replace-demo-photo"].exists)
-        XCTAssertEqual(reused["illustrationGenerationCalls"] as? Int, 3,
+        XCTAssertEqual(reused["illustrationGenerationCalls"] as? Int, 2,
                        "Attribute updates preserve the fixed photographs and reuse their preparation")
     }
 
