@@ -8,6 +8,9 @@ class RepresentationContract(unittest.TestCase):
         self.assertEqual(canonical_text('t_shirt', ['white', 'black', 'white']),
                          't shirt. Colors: black, white.')
 
+    def test_absent_color_omits_color_sentence(self):
+        self.assertEqual(canonical_text('shirt', []), 'shirt.')
+
     def test_prepared_version_keeps_raw_projected_vector(self):
         item = representation([2.0] * 128, 'photo-1', 'a' * 64, 'shirt. Colors: blue.')
         self.assertEqual(validate_representation(item), [2.0] * 128)

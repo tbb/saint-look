@@ -2,7 +2,7 @@
 // Real image quality remains unqualified; these versions are deliberately provisional.
 import { jevRequest, jevModel } from './jev.mjs';
 const yesNo = { yes: 'Visible on this item', no: 'Visibly absent', unknown: 'Not visible or uncertain' };
-const choices = {
+export const observableChoices = {
   silhouette: { fitted: 'Narrow or fitted shape', straight: 'Straight shape', relaxed: 'Wide body or dropped shoulders; not wearer sizing', unknown: 'Unclear', not_applicable: 'Not applicable' },
   body_length: { cropped: 'Cropped', regular: 'Regular length', long: 'Long', unknown: 'Unclear', not_applicable: 'Not applicable' },
   sleeves: { sleeveless: 'No sleeves', short: 'Short sleeves', long: 'Long sleeves', unknown: 'Unclear', not_applicable: 'Not applicable' },
@@ -26,7 +26,7 @@ export async function featureRequest(photos, roles) {
   const questions = {
     suitability: { ...prepared[0].questions.suitability, instructions: `${guidance} Is this one standalone item, not worn by a human?` },
     item_type: { ...prepared[0].questions.item_type, instructions: `${guidance} Which item type?` },
-    ...Object.fromEntries(Object.entries(choices).map(([name, criteria]) => [name, { type: 'choice', criteria, instructions: `${guidance} Describe ${name.replaceAll('_', ' ')}.` }])),
+    ...Object.fromEntries(Object.entries(observableChoices).map(([name, criteria]) => [name, { type: 'choice', criteria, instructions: `${guidance} Describe ${name.replaceAll('_', ' ')}.` }])),
     ...Object.fromEntries(Object.keys(prepared[0].questions).filter(k => k.startsWith('color_')).map(k => [k,
       { type: 'noul', instructions: `${guidance} Is ${k.slice(6)} a main color of the item itself?` }])),
   };

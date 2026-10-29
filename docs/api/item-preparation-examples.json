@@ -1,0 +1,228 @@
+{
+  "note": "Documentation examples: angle-bracket values stand for existing payloads, not literal API input. Pending/failed response keeps all identity/feature/mode/provenance fields; representationJSON/SHA/input=null until ready; artifacts may be present at pending. Preparation features use taxonomy IDs; illustration response/reuseObserved use existing display labels. Digest of observed/effective fields is backend canonical recursive-key-sorted JSON; iOS echoes returned hash and values, does not recreate canonical JSON. reuse.publicationId is the prior committed preparation operation UUID. Prepared photo metadata is checked against existing receipts.",
+  "config": {
+    "protocolVersion": 1,
+    "publicationProtocol": "prepared-item-v1",
+    "preparationRequired": true,
+    "representationEncoding": "opaque-json-string-v1",
+    "encoder": {
+      "available": true,
+      "mode": "controlled",
+      "activeSpaceID": "controlled-outfit-v2",
+      "supportedSpaceIDs": [
+        "controlled-outfit-v2"
+      ],
+      "reason": null
+    },
+    "newItemPreparation": {
+      "available": true,
+      "reason": null
+    },
+    "encoderRefresh": {
+      "available": true,
+      "reason": null
+    },
+    "recommendations": {
+      "available": false,
+      "reason": "not_enabled"
+    }
+  },
+  "fromIllustration": {
+    "operationId": "00000000-0000-4000-8000-000000000006",
+    "revision": 1,
+    "photoVersionId": "00000000-0000-4000-8000-000000000002",
+    "sourceSetVersionId": "00000000-0000-4000-8000-000000000003",
+    "illustrationOperationId": "00000000-0000-4000-8000-000000000004",
+    "cutoutOperationId": "00000000-0000-4000-8000-000000000005",
+    "spaceID": "controlled-outfit-v2",
+    "mode": "fromIllustration",
+    "imageBase64": "<exact upload.png base64>",
+    "features": {
+      "type": "t_shirt",
+      "colors": [
+        "red"
+      ]
+    }
+  },
+  "reusePublication": {
+    "operationId": "00000000-0000-4000-8000-000000000006",
+    "revision": 2,
+    "photoVersionId": "00000000-0000-4000-8000-000000000002",
+    "sourceSetVersionId": "00000000-0000-4000-8000-000000000003",
+    "illustrationOperationId": "00000000-0000-4000-8000-000000000004",
+    "cutoutOperationId": "00000000-0000-4000-8000-000000000005",
+    "spaceID": "controlled-outfit-v2",
+    "mode": "reusePublication",
+    "imageBase64": "<exact upload.png base64>",
+    "features": {
+      "type": "t_shirt",
+      "colors": [
+        "red"
+      ]
+    },
+    "reuse": {
+      "publicationId": "00000000-0000-4000-8000-000000000008",
+      "artifacts": {
+        "cutoutSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "illustrationSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "observedFeaturesSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "effectiveFeaturesSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  },
+  "legacyImport": {
+    "operationId": "00000000-0000-4000-8000-000000000006",
+    "revision": 1,
+    "photoVersionId": "00000000-0000-4000-8000-000000000002",
+    "sourceSetVersionId": "00000000-0000-4000-8000-000000000003",
+    "illustrationOperationId": "00000000-0000-4000-8000-000000000004",
+    "cutoutOperationId": "00000000-0000-4000-8000-000000000005",
+    "spaceID": "controlled-outfit-v2",
+    "mode": "legacyImport",
+    "imageBase64": "<exact upload.png base64>",
+    "features": {
+      "type": "t_shirt",
+      "colors": [
+        "red"
+      ]
+    },
+    "legacy": {
+      "cutout": {
+        "imageBase64": "<cutout PNG>",
+        "mode": "live"
+      },
+      "illustration": {
+        "imageBase64": "<illustration PNG>",
+        "response": {
+          "itemId": "00000000-0000-4000-8000-000000000001",
+          "operationId": "00000000-0000-4000-8000-000000000004",
+          "photoVersionId": "00000000-0000-4000-8000-000000000002",
+          "sourceSetVersionId": "00000000-0000-4000-8000-000000000003",
+          "status": "ready",
+          "mode": "live",
+          "modelVersion": "fal-ai/nano-banana-pro/edit",
+          "templateVersion": "front-360x560-proposed-v1",
+          "geometryVersion": "fitting-square-1024-v1",
+          "observedFeatures": "<complete saved IllustrationFeatures>",
+          "effectiveFeatures": "<complete saved IllustrationFeatures>"
+        }
+      },
+      "preparedPhotos": [
+        {
+          "photoId": "00000000-0000-4000-8000-000000000002",
+          "sourceSHA256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "preparedSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "versions": {
+            "modelVersion": "fal-ai/nano-banana-pro/edit",
+            "templateVersion": "front-360x560-proposed-v1",
+            "geometryVersion": "fitting-square-1024-v1"
+          }
+        }
+      ]
+    }
+  },
+  "ready": {
+    "operationId": "00000000-0000-4000-8000-000000000006",
+    "revision": 1,
+    "photoVersionId": "00000000-0000-4000-8000-000000000002",
+    "sourceSetVersionId": "00000000-0000-4000-8000-000000000003",
+    "illustrationOperationId": "00000000-0000-4000-8000-000000000004",
+    "cutoutOperationId": "00000000-0000-4000-8000-000000000005",
+    "spaceID": "controlled-outfit-v2",
+    "mode": "controlled",
+    "itemId": "00000000-0000-4000-8000-000000000001",
+    "status": "ready",
+    "imageMode": "test",
+    "provenance": "pipeline",
+    "effectiveFeatures": {
+      "type": "t_shirt",
+      "colors": [
+        "red"
+      ]
+    },
+    "input": {
+      "sourceSHA256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "textSHA256": "9a6f131307c3293a5986c90759cd6668ced159954dd1d07843ffc311c30ae738"
+    },
+    "representationJSON": "{\"schemaVersion\":1,\"spaceID\":\"controlled-outfit-v2\",\"photoVersionID\":\"00000000-0000-4000-8000-000000000002\",\"sourceSHA256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"textSHA256\":\"9a6f131307c3293a5986c90759cd6668ced159954dd1d07843ffc311c30ae738\",\"vector\":[0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125]}",
+    "representationSHA256": "e269bc139b1969424f73867be131e7396e90b3a9b8c22420cc1e8066e54f1400",
+    "artifacts": {
+      "cutoutSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "illustrationSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "observedFeaturesSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "effectiveFeaturesSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "error": null
+  },
+  "pending": {
+    "operationId": "00000000-0000-4000-8000-000000000006",
+    "revision": 1,
+    "photoVersionId": "00000000-0000-4000-8000-000000000002",
+    "sourceSetVersionId": "00000000-0000-4000-8000-000000000003",
+    "illustrationOperationId": "00000000-0000-4000-8000-000000000004",
+    "cutoutOperationId": "00000000-0000-4000-8000-000000000005",
+    "spaceID": "controlled-outfit-v2",
+    "mode": "controlled",
+    "itemId": "00000000-0000-4000-8000-000000000001",
+    "status": "pending",
+    "imageMode": "test",
+    "provenance": "pipeline",
+    "effectiveFeatures": {
+      "type": "t_shirt",
+      "colors": [
+        "red"
+      ]
+    },
+    "input": null,
+    "representationJSON": null,
+    "representationSHA256": null,
+    "artifacts": {
+      "cutoutSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "illustrationSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "observedFeaturesSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "effectiveFeaturesSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "error": null
+  },
+  "failed": {
+    "operationId": "00000000-0000-4000-8000-000000000006",
+    "revision": 1,
+    "photoVersionId": "00000000-0000-4000-8000-000000000002",
+    "sourceSetVersionId": "00000000-0000-4000-8000-000000000003",
+    "illustrationOperationId": "00000000-0000-4000-8000-000000000004",
+    "cutoutOperationId": "00000000-0000-4000-8000-000000000005",
+    "spaceID": "controlled-outfit-v2",
+    "mode": "controlled",
+    "itemId": "00000000-0000-4000-8000-000000000001",
+    "status": "failed",
+    "imageMode": "test",
+    "provenance": "pipeline",
+    "effectiveFeatures": {
+      "type": "t_shirt",
+      "colors": [
+        "red"
+      ]
+    },
+    "input": null,
+    "representationJSON": null,
+    "representationSHA256": null,
+    "artifacts": {
+      "cutoutSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "illustrationSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "observedFeaturesSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "effectiveFeaturesSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "error": "encoder_failed"
+  },
+  "ack": {
+    "publicationProtocol": "prepared-item-v1",
+    "preparationOperationId": "00000000-0000-4000-8000-000000000006"
+  },
+  "reuseObserved": {
+    "previousIllustrationOperationId": "00000000-0000-4000-8000-000000000004",
+    "sourceSetVersionId": "00000000-0000-4000-8000-000000000003",
+    "observedFeatures": "<complete saved IllustrationFeatures object>",
+    "observedFeaturesSHA256": "<echo server digest; legacy may omit hash with explicit legacyImport:true>",
+    "legacyImport": false
+  }
+}
