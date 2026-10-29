@@ -47,6 +47,34 @@ import Foundation
         let inactive = try VisualFixtures.prepare(environment: [:], support: support, resources: sources, taxonomy: taxonomy)
         precondition(inactive == nil)
         print("PASS: fixture boundary rejects unknown scenarios and non-test launches")
+        var legacyEnvironment = environment
+        legacyEnvironment["SAINT_LOOK_VISUAL_SCENARIO"] = "legacy-labels"
+        _ = try VisualFixtures.prepare(environment: legacyEnvironment, support: support, resources: sources, taxonomy: taxonomy)
+        let legacyFile = WardrobeCatalogFile(directory: root)
+        var legacy = try legacyFile.load()
+        precondition(legacy.items.count == 1)
+        let legacyID = legacy.items[0].id
+        precondition(legacy.items[0].displayedType == "Накидка" && legacy.items[0].displayedColors == ["Сиреневый"])
+        precondition(!legacy.items[0].hasPreparedVersion && legacy.items[0].publishedVersion?.completeness == .legacyImage)
+        precondition(!legacy.items[0].automaticallyIllustrate && legacy.pendingAcknowledgements == [])
+        try legacy.editAttributes(for: legacyID, type: nil, colors: nil, taxonomy: taxonomy)
+        try legacyFile.save(legacy)
+        legacyEnvironment["SAINT_LOOK_RESET_DATA"] = "0"
+        _ = try VisualFixtures.prepare(environment: legacyEnvironment, support: support, resources: sources, taxonomy: taxonomy)
+        legacy = try legacyFile.load()
+        precondition(legacy.items[0].displayedType == "Накидка" && legacy.items[0].displayedColors == ["Сиреневый"])
+        try legacy.editAttributes(for: legacyID, type: "Рубашка", colors: nil, taxonomy: taxonomy)
+        try legacyFile.save(legacy); legacy = try legacyFile.load()
+        precondition(legacy.items[0].displayedType == "Рубашка" && legacy.items[0].displayedColors == ["Сиреневый"])
+        try legacy.editAttributes(for: legacyID, type: nil, colors: ["Фиолетовый"], taxonomy: taxonomy)
+        try legacyFile.save(legacy); legacy = try legacyFile.load()
+        precondition(legacy.items[0].displayedType == "Рубашка" && legacy.items[0].displayedColors == ["Фиолетовый"])
+        precondition(!legacy.items[0].hasPreparedVersion && legacy.items[0].preparation == nil && legacy.items[0].illustration == nil)
+        do {
+            _ = try CanonicalItemFeatures(displayType: "Накидка", colors: ["Сиреневый"], taxonomy: taxonomy)
+            fatalError("Historical labels are preserved locally, never admitted as a new encoder packet")
+        } catch ClientError.invalidAttributes { }
+        print("PASS: stored legacy labels survive untouched save/restart, explicit field edits preserve the other field, and unknown new packets stay invalid")
         var fittingEnvironment = environment
         fittingEnvironment["SAINT_LOOK_VISUAL_SCENARIO"] = "fitting-ready"
         _ = try VisualFixtures.prepare(environment: fittingEnvironment, support: support, resources: sources, taxonomy: taxonomy)
