@@ -1,0 +1,544 @@
+{
+  "format": 1,
+  "id": "epic63-public-v1",
+  "purpose": "development acceptance candidate; not holdout or human-labelled compatibility benchmark",
+  "createdAt": "2026-10-29",
+  "authorization": "No paid calls authorized by this manifest. Exact budget and provider approval required separately.",
+  "items": [
+    {
+      "id": "white-tee",
+      "type": "t_shirt",
+      "colors": [
+        "white"
+      ],
+      "image": "images/white-tee.jpg",
+      "sha256": "3aa6d547cca9a7cd3bd2782e98485dbadfd892a35b8d99c31d8134379e5ba49f",
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:Worn_T-shirt_white.png",
+        "author": "Taylor 49",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+      },
+      "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/2/23/Worn_T-shirt_white.png",
+      "visualReview": "previously reviewed TrialPhotos",
+      "sourceSha256": "fbc6e902898915c554187d961515c7db2505954c4e46d4a090528de4348cdb50",
+      "width": 1024,
+      "height": 1024,
+      "transformations": "EXIF transpose, RGB, fit within 1024x1024 without upscaling, JPEG quality 90; whole garment retained",
+      "category": "body",
+      "photoRoles": [
+        "front"
+      ],
+      "readyForApplication": false
+    },
+    {
+      "id": "blue-jeans",
+      "type": "jeans",
+      "colors": [
+        "blue"
+      ],
+      "image": "images/blue-jeans.jpg",
+      "sha256": "b8af41665c6d3b1aa712cccb839ec4661cadbe488c2baa0ec426d4061dda463e",
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:Jeans.jpg",
+        "author": "Oktaeder",
+        "license": "Public domain (author dedication)",
+        "licenseUrl": "https://commons.wikimedia.org/wiki/File:Jeans.jpg"
+      },
+      "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/5/5a/Jeans.jpg",
+      "visualReview": "previously reviewed TrialPhotos",
+      "sourceSha256": "b316902ad85e8ff46b164ceb7f2c38d3c1424c9d789703e0267e3dfce68fbe1c",
+      "width": 435,
+      "height": 650,
+      "transformations": "EXIF transpose, RGB, fit within 1024x1024 without upscaling, JPEG quality 90; whole garment retained",
+      "category": "bottom",
+      "photoRoles": [
+        "front"
+      ],
+      "readyForApplication": false
+    },
+    {
+      "id": "light-polo",
+      "type": "polo",
+      "colors": [
+        "white",
+        "black"
+      ],
+      "image": "images/light-polo.jpg",
+      "sha256": "6da9f10e4d54475d0c2bf15f80cfe5b3ecca13dc735bc21c9fbf84a60b90eeb5",
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:Classical_polo_shirt.jpg",
+        "author": "Elkagye",
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/"
+      },
+      "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/7/7b/Classical_polo_shirt.jpg",
+      "visualReview": "previously reviewed TrialPhotos",
+      "sourceSha256": "609a842b50d1d15c7ca1800143649769ad817c3b6929e31ee283ef024784b0e2",
+      "width": 1024,
+      "height": 950,
+      "transformations": "EXIF transpose, RGB, fit within 1024x1024 without upscaling, JPEG quality 90; whole garment retained",
+      "category": "body",
+      "photoRoles": [
+        "front"
+      ],
+      "readyForApplication": false
+    },
+    {
+      "id": "pub-01",
+      "title": "File:Adidas Samba OG.jpg",
+      "image": "images/pub-01.jpg",
+      "sha256": "9a467e39e72b33d367af18a01808c98f8ba161ce0e9e84e1a800682c310c226b",
+      "width": 1024,
+      "height": 622,
+      "type": "sneakers",
+      "colors": [
+        "white",
+        "black",
+        "brown"
+      ],
+      "visualReview": "accepted; manually inspected by assistant",
+      "sourcePage": "https://commons.wikimedia.org/wiki/File:Adidas_Samba_OG.jpg",
+      "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/f/fa/Adidas_Samba_OG.jpg",
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:Adidas_Samba_OG.jpg",
+        "author": "LeDroider",
+        "license": "CC0",
+        "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en"
+      },
+      "visualNotes": "Single shoe on display; one footwear choice, not a verified complete pair.",
+      "annotationSource": "Assistant visual inspection; not owner preference or compatibility ground truth",
+      "transformations": "EXIF transpose, RGB, fit within 1024x1024 without upscaling, JPEG quality 90; whole garment retained",
+      "format": "JPEG",
+      "sourceSha256": "1884870b84d1d8238172854fb5837239b74b1b8d6d6fa6dd39a2da48ed91d6cc",
+      "category": "shoes",
+      "photoRoles": [
+        "three-quarter"
+      ],
+      "readyForApplication": false
+    },
+    {
+      "id": "pub-03",
+      "title": "File:Blue Business Shirt.jpg",
+      "image": "images/pub-03.jpg",
+      "sha256": "c860d7bfda63bf70d6919c66ff061a705b50804568767fcadd470b96f9ba988c",
+      "width": 1024,
+      "height": 671,
+      "type": "shirt",
+      "colors": [
+        "blue"
+      ],
+      "visualReview": "accepted; manually inspected by assistant",
+      "sourcePage": "https://commons.wikimedia.org/wiki/File:Blue_Business_Shirt.jpg",
+      "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/c/c5/Blue_Business_Shirt.jpg",
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:Blue_Business_Shirt.jpg",
+        "author": "ChristianGlaeser",
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "http://creativecommons.org/licenses/by-sa/3.0/",
+        "authorEvidence": "Commons file history: uploader states photography made by me"
+      },
+      "visualNotes": "One blue shirt on hanger; full front opening.",
+      "annotationSource": "Assistant visual inspection; not owner preference or compatibility ground truth",
+      "transformations": "EXIF transpose, RGB, fit within 1024x1024 without upscaling, JPEG quality 90; whole garment retained",
+      "format": "JPEG",
+      "sourceSha256": "4aa4a96c88a1d8109d427a8d2150855383d77e18fdbb6555bda1f9d3bce2eb60",
+      "category": "body",
+      "photoRoles": [
+        "front"
+      ],
+      "readyForApplication": false
+    },
+    {
+      "id": "pub-13",
+      "title": "File:Jumper sweater.jpg",
+      "image": "images/pub-13.jpg",
+      "sha256": "818efe57781f4abc0d92286c590553b1cc1f8b8f0f3ec3c20db91d3de8f855fc",
+      "width": 696,
+      "height": 506,
+      "type": "sweater",
+      "colors": [
+        "white"
+      ],
+      "visualReview": "accepted; manually inspected by assistant",
+      "sourcePage": "https://commons.wikimedia.org/wiki/File:Jumper_sweater.jpg",
+      "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/d/dd/Jumper_sweater.jpg",
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:Jumper_sweater.jpg",
+        "author": "Dmn",
+        "license": "Public domain",
+        "licenseUrl": "https://commons.wikimedia.org/wiki/File:Jumper_sweater.jpg"
+      },
+      "visualNotes": "One off-white/very light gray pullover on wooden floor; illumination darkens observed white.",
+      "annotationSource": "Assistant visual inspection; not owner preference or compatibility ground truth",
+      "transformations": "EXIF transpose, RGB, fit within 1024x1024 without upscaling, JPEG quality 90; whole garment retained",
+      "format": "JPEG",
+      "sourceSha256": "eedcacc80ad000b171517b55960da01e0410d706f3893a110d96a606f2e2a192",
+      "category": "body",
+      "photoRoles": [
+        "front"
+      ],
+      "readyForApplication": false
+    },
+    {
+      "id": "pub-15",
+      "title": "File:Whole-cut shoe.jpg",
+      "image": "images/pub-15.jpg",
+      "sha256": "baf494d5f7e1c126addb66a289376d377d5c5fc78b1b342a41e87d2363e9ea19",
+      "width": 1024,
+      "height": 692,
+      "type": "shoes",
+      "colors": [
+        "brown"
+      ],
+      "visualReview": "accepted; manually inspected by assistant",
+      "sourcePage": "https://commons.wikimedia.org/wiki/File:Whole-cut_shoe.jpg",
+      "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/2/23/Whole-cut_shoe.jpg",
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:Whole-cut_shoe.jpg",
+        "author": "Sijokjose",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0"
+      },
+      "visualNotes": "Single brown wholecut dress shoe; one footwear choice, not a verified complete pair.",
+      "annotationSource": "Assistant visual inspection; not owner preference or compatibility ground truth",
+      "transformations": "EXIF transpose, RGB, fit within 1024x1024 without upscaling, JPEG quality 90; whole garment retained",
+      "format": "JPEG",
+      "sourceSha256": "0e042a34ba7ca1fdd1f856c2640130ba54177bd821cd3e0c54801fee79ab4456",
+      "category": "shoes",
+      "photoRoles": [
+        "three-quarter"
+      ],
+      "readyForApplication": false
+    },
+    {
+      "id": "pub-22",
+      "title": "File:Cardigan, sweater.JPG",
+      "image": "images/pub-22.jpg",
+      "sha256": "7ca043d7d96f8d8bf83794ba891735348797a4d549ab12625a6d1ba230e9c68b",
+      "width": 960,
+      "height": 937,
+      "type": "cardigan",
+      "colors": [
+        "red"
+      ],
+      "visualReview": "accepted; manually inspected by assistant",
+      "sourcePage": "https://commons.wikimedia.org/wiki/File:Cardigan,_sweater.JPG",
+      "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/Cardigan%2C_sweater.JPG/960px-Cardigan%2C_sweater.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/c/c1/Cardigan%2C_sweater.JPG",
+      "transformations": "EXIF transpose, RGB, fit within 1024x1024 without upscaling, JPEG quality 90; whole garment retained",
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:Cardigan,_sweater.JPG",
+        "author": "Rovdyr",
+        "license": "CC BY 2.5",
+        "licenseUrl": "https://creativecommons.org/licenses/by/2.5"
+      },
+      "visualNotes": "One red button-front knitted cardigan; patterned background is not garment.",
+      "annotationSource": "Assistant visual inspection; not owner preference or compatibility ground truth",
+      "format": "JPEG",
+      "sourceSha256": "540cb9cda8c24371857fc12803ec5b20ff9e5d296761fe44b2ccfe0afa787836",
+      "category": "body",
+      "photoRoles": [
+        "front"
+      ],
+      "readyForApplication": false
+    },
+    {
+      "id": "pub-25",
+      "title": "File:Chino pants.jpg",
+      "image": "images/pub-25.jpg",
+      "sha256": "3ee36a4ec51a6be01545fcfc323173dbbee1225cdd21d0dc766ba7233ca0d925",
+      "width": 768,
+      "height": 1024,
+      "type": "trousers",
+      "colors": [
+        "beige"
+      ],
+      "visualReview": "accepted; manually inspected by assistant",
+      "sourcePage": "https://commons.wikimedia.org/wiki/File:Chino_pants.jpg",
+      "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3e/Chino_pants.jpg/960px-Chino_pants.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/3/3e/Chino_pants.jpg",
+      "transformations": "EXIF transpose, RGB, fit within 1024x1024 without upscaling, JPEG quality 90; whole garment retained",
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:Chino_pants.jpg",
+        "author": "Kuha455405",
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "http://creativecommons.org/licenses/by-sa/3.0/"
+      },
+      "visualNotes": "One pair of beige chino trousers laid flat.",
+      "annotationSource": "Assistant visual inspection; not owner preference or compatibility ground truth",
+      "format": "JPEG",
+      "sourceSha256": "992c84affb3ee9cbe43d519f4f126114cbfe8fc6b7fcfca864a6db96d10439f2",
+      "category": "bottom",
+      "photoRoles": [
+        "front"
+      ],
+      "readyForApplication": false
+    },
+    {
+      "id": "pub-27",
+      "title": "File:Grey knitted sweater.jpg",
+      "image": "images/pub-27.jpg",
+      "sha256": "a0c5be95160b028bf357123db48d61ac82da44cce47e59a800b83b26ce247202",
+      "width": 960,
+      "height": 690,
+      "type": "sweater",
+      "colors": [
+        "gray",
+        "red",
+        "green",
+        "yellow",
+        "black"
+      ],
+      "visualReview": "accepted; manually inspected by assistant",
+      "sourcePage": "https://commons.wikimedia.org/wiki/File:Grey_knitted_sweater.jpg",
+      "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a1/Grey_knitted_sweater.jpg/960px-Grey_knitted_sweater.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/a/a1/Grey_knitted_sweater.jpg",
+      "transformations": "EXIF transpose, RGB, fit within 1024x1024 without upscaling, JPEG quality 90; whole garment retained",
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:Grey_knitted_sweater.jpg",
+        "author": "Aslak Raanes (aslakr)",
+        "license": "CC BY 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+        "authorEvidence": "Commons description and structured creator; original Flickr https://www.flickr.com/photos/aslakr/47039780/"
+      },
+      "visualNotes": "One gray knitted pullover with multicolor yoke/hem; stone background is not garment.",
+      "annotationSource": "Assistant visual inspection; not owner preference or compatibility ground truth",
+      "format": "JPEG",
+      "sourceSha256": "69b74188071b4fb45259038f89d30a2ee74faf1ac9aae0f6f747f27ae14212c4",
+      "category": "body",
+      "photoRoles": [
+        "front"
+      ],
+      "readyForApplication": false
+    },
+    {
+      "id": "pub-29",
+      "title": "File:Jacket.jpg",
+      "image": "images/pub-29.jpg",
+      "sha256": "fec5f27dfa627722fc2ab4ff937a304a573b16590e94dbc834705d99073fcafd",
+      "width": 960,
+      "height": 723,
+      "type": "blazer",
+      "colors": [
+        "black"
+      ],
+      "visualReview": "accepted; manually inspected by assistant",
+      "sourcePage": "https://commons.wikimedia.org/wiki/File:Jacket.jpg",
+      "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/19/Jacket.jpg/960px-Jacket.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/1/19/Jacket.jpg",
+      "transformations": "EXIF transpose, RGB, fit within 1024x1024 without upscaling, JPEG quality 90; whole garment retained",
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:Jacket.jpg",
+        "author": "Jwitos",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0"
+      },
+      "visualNotes": "One tailored black collarless jacket on hanger; taxonomy blazer selected by observed tailoring.",
+      "annotationSource": "Assistant visual inspection; not owner preference or compatibility ground truth",
+      "format": "JPEG",
+      "sourceSha256": "221bb509fdb1792da563469421573679b7cd2131b8812b2b580d90c65356e606",
+      "category": "body",
+      "photoRoles": [
+        "front"
+      ],
+      "readyForApplication": false
+    },
+    {
+      "id": "pub-30",
+      "title": "File:ReebokPrincesswhite.jpg",
+      "image": "images/pub-30.jpg",
+      "sha256": "bfb5f90753a367314203f0808727c8a027294da799dd72ed1b146ebe011f37fb",
+      "width": 960,
+      "height": 720,
+      "type": "sneakers",
+      "colors": [
+        "white"
+      ],
+      "visualReview": "accepted; manually inspected by assistant",
+      "sourcePage": "https://commons.wikimedia.org/wiki/File:ReebokPrincesswhite.jpg",
+      "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ee/ReebokPrincesswhite.jpg/960px-ReebokPrincesswhite.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/e/ee/ReebokPrincesswhite.jpg",
+      "transformations": "EXIF transpose, RGB, fit within 1024x1024 without upscaling, JPEG quality 90; whole garment retained",
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:ReebokPrincesswhite.jpg",
+        "author": "Lacats98",
+        "license": "Public domain",
+        "licenseUrl": "https://commons.wikimedia.org/wiki/File:ReebokPrincesswhite.jpg"
+      },
+      "visualNotes": "Matching pair of white sneakers; small red/gray logo accents omitted from dominant colors.",
+      "annotationSource": "Assistant visual inspection; not owner preference or compatibility ground truth",
+      "format": "JPEG",
+      "sourceSha256": "431b6b138621d28137c3eebac05e8e530eb71a387a3f92398f82bdd0f5855818",
+      "category": "shoes",
+      "photoRoles": [
+        "three-quarter"
+      ],
+      "readyForApplication": false
+    },
+    {
+      "id": "pub-31",
+      "title": "File:Worn Tender Co. denim jacket.jpg",
+      "image": "images/pub-31.jpg",
+      "sha256": "4f5b5332cc9cd9b4a72bcd99e963c19f54c67488f37b92c901c1c2bf5a052e6d",
+      "width": 960,
+      "height": 717,
+      "type": "jacket",
+      "colors": [
+        "blue"
+      ],
+      "visualReview": "accepted; manually inspected by assistant",
+      "sourcePage": "https://commons.wikimedia.org/wiki/File:Worn_Tender_Co._denim_jacket.jpg",
+      "downloadUrl": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/51/Worn_Tender_Co._denim_jacket.jpg/960px-Worn_Tender_Co._denim_jacket.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "originalUrl": "https://upload.wikimedia.org/wikipedia/commons/5/51/Worn_Tender_Co._denim_jacket.jpg",
+      "transformations": "EXIF transpose, RGB, fit within 1024x1024 without upscaling, JPEG quality 90; whole garment retained",
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:Worn_Tender_Co._denim_jacket.jpg",
+        "author": "Dma132",
+        "license": "CC0",
+        "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en"
+      },
+      "visualNotes": "One worn blue denim jacket laid flat on wooden deck.",
+      "annotationSource": "Assistant visual inspection; not owner preference or compatibility ground truth",
+      "format": "JPEG",
+      "sourceSha256": "e569e4037832e645e31e021f03fd27c79d46d4c1315a33c4a79d7f8342ebe9d2",
+      "category": "body",
+      "photoRoles": [
+        "front"
+      ],
+      "readyForApplication": false
+    },
+    {
+      "id": "olive-cargo",
+      "type": "trousers",
+      "colors": [
+        "green"
+      ],
+      "category": "bottom",
+      "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/c/cd/Cargo_pants_001.jpg",
+      "visualNotes": "One full olive-green pair of cargo trousers on a hanger against a door; no person. Loose straight legs and side pockets.",
+      "image": "images/olive-cargo.jpg",
+      "sha256": "5c156557c8132bff466d9ddc6dc074762fd45771e842079dbd7968bc5bc540fb",
+      "sourceSha256": "fa25320a41f69e42e5924cfe83ab9f6015397136a12b2fa1c450731973e512a9",
+      "sourceBytes": 2232295,
+      "width": 680,
+      "height": 1024,
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:Cargo_pants_001.jpg",
+        "author": "Ocdp",
+        "license": "CC0 1.0",
+        "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/"
+      },
+      "photoRoles": [
+        "front"
+      ],
+      "visualReview": "Source photo inspected by assistant on 2026-10-29; not owner taste assessment",
+      "annotationSource": "Assistant visual inspection, not provider output or compatibility ground truth",
+      "transformations": "EXIF transpose; transparent pixels composited on white when present; RGB; fit within 1024x1024 without upscaling using Pillow LANCZOS; JPEG quality90; no cropping",
+      "readyForApplication": false
+    },
+    {
+      "id": "black-jeans",
+      "type": "jeans",
+      "colors": [
+        "black"
+      ],
+      "category": "bottom",
+      "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/1/16/Black_Jeans_%283168529272%29.jpg",
+      "visualNotes": "One full pair of black slim jeans draped over a metal rail; no person. Waist detail partly hidden by fold; background remains visible.",
+      "image": "images/black-jeans.jpg",
+      "sha256": "7f15cafdd42009ab13af83e79ed5e76d3765e018fa6813457553c66bee5c38b1",
+      "sourceSha256": "066049513aaab7c0780fec5bb2cadc64e3481468c4f35e08246042e63f3598df",
+      "sourceBytes": 4907645,
+      "width": 683,
+      "height": 1024,
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:Black_Jeans_(3168529272).jpg",
+        "author": "Marcus Quigmire",
+        "license": "CC BY-SA 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0/"
+      },
+      "photoRoles": [
+        "front"
+      ],
+      "visualReview": "Source photo inspected by assistant on 2026-10-29; not owner taste assessment",
+      "annotationSource": "Assistant visual inspection, not provider output or compatibility ground truth",
+      "transformations": "EXIF transpose; transparent pixels composited on white when present; RGB; fit within 1024x1024 without upscaling using Pillow LANCZOS; JPEG quality90; no cropping",
+      "readyForApplication": false
+    },
+    {
+      "id": "creepers",
+      "type": "shoes",
+      "colors": [
+        "black"
+      ],
+      "category": "shoes",
+      "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/d/d7/Creepers_shoes_Transparent.png",
+      "visualNotes": "Matching pair of black creepers; pre-existing published transparent cutout, not local Photoroom output.",
+      "image": "images/creepers.jpg",
+      "sha256": "435834a09175809d14396250aa23d4145be48c4330305a213294413ae8016783",
+      "sourceSha256": "df7642e0879b5a13a35cd46ca4da37173e95a6b32520f3c3c5975cebc75bd229",
+      "sourceBytes": 3488996,
+      "width": 1024,
+      "height": 807,
+      "attribution": {
+        "source": "https://commons.wikimedia.org/wiki/File:Creepers_shoes_Transparent.png",
+        "author": "Alchemica; Il Passeggero",
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/"
+      },
+      "photoRoles": [
+        "three-quarter"
+      ],
+      "visualReview": "Source photo inspected by assistant on 2026-10-29; not owner taste assessment",
+      "annotationSource": "Assistant visual inspection, not provider output or compatibility ground truth",
+      "transformations": "EXIF transpose; transparent pixels composited on white when present; RGB; fit within 1024x1024 without upscaling using Pillow LANCZOS; JPEG quality90; no cropping",
+      "readyForApplication": false
+    }
+  ],
+  "counts": {
+    "items": 16,
+    "sourcePhotos": 16,
+    "body": 8,
+    "bottom": 4,
+    "shoes": 4,
+    "additionalAngles": 0
+  },
+  "eligibility": "Public photographic inputs only. Every app item still requires the complete real pipeline; readyForApplication=false until publication.",
+  "limitations": [
+    "Two retained footwear entries show one shoe rather than a verified pair (pub-01,pub-15).",
+    "Creepers use a published transparent derivative; its background is composited white for the transport JPEG.",
+    "Mixed backgrounds, lighting and wear. Manual type/color labels are provisional; live acceptance must use actual published attributes.",
+    "No headwear, skirts or tall boots: these categories have no taste evidence.",
+    "Not 300 independent photos. Any 300-item load expansion is synthetic and separate from taste evaluation."
+  ],
+  "proposedRun": {
+    "initialItems": 16,
+    "initialSourcePhotos": 16,
+    "variantsPerItem": 1,
+    "abComparisons": 0,
+    "extraGenerationSlots": 8,
+    "generationAttemptCeiling": 24,
+    "jevAttemptCeiling": 48,
+    "photoroomSandboxAttemptCeiling": 60,
+    "automaticRetries": false,
+    "photoroomLive": false,
+    "accountTopUps": false,
+    "budgetApprovalRequired": true,
+    "updateCases": [
+      {
+        "item": "light-polo",
+        "action": "Change manual colors from white+black to white, await atomic update, restore after observation; no source photo changes"
+      },
+      {
+        "item": "olive-cargo",
+        "action": "Change manual type within supported taxonomy for update/error restoration; no source photo changes"
+      },
+      {
+        "item": "blue-jeans",
+        "action": "Encoder-version update only; no paid image steps repeated"
+      }
+    ],
+    "reservePolicy": "Extra 8 generation slots are shared across explicit update cases and known failures; unknown outcomes consume a slot and require reconciliation before any next attempt. No automatic repeats."
+  }
+}
