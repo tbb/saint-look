@@ -1,0 +1,115 @@
+{
+  "evidence": "real-model-http-single-rank",
+  "model": "real",
+  "imageProvidersCalled": 0,
+  "receipts": "syntheticReceiptFixture, not proof of live image publication",
+  "spaceID": "5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b",
+  "hardware": {
+    "cpu": "Intel Xeon Processor (Cascadelake)",
+    "logicalCPUs": 4,
+    "os": "linux",
+    "kernel": "6.8.0-139-generic",
+    "architecture": "x64",
+    "hostMemoryMiB": 5925,
+    "node": "v24.21.0",
+    "modelThreads": 1
+  },
+  "preparation": {
+    "modelStartupMilliseconds": 10966.13,
+    "totalMilliseconds": 17820.56,
+    "sampledTreePeakRSSMiB": 973.85,
+    "sampleIntervalMilliseconds": 25,
+    "inputs": [
+      {
+        "file": "photo-1.png",
+        "publicSHA256": "fbc6e902898915c554187d961515c7db2505954c4e46d4a090528de4348cdb50",
+        "encoderInputSHA256": "7ea9e7ce0115a1d10f8215fdaf6f187cdf1e28ff9096a6bd39d0e9c465c452c7",
+        "type": "t_shirt",
+        "colors": [
+          "white"
+        ],
+        "prepareMilliseconds": 5929.03,
+        "representationSHA256": "31cf950bb4130186a942eebcdfb23047df0fa5062f0f157e26098ad432b6f782",
+        "representationBytes": 2853
+      },
+      {
+        "file": "photo-2.jpg",
+        "publicSHA256": "b316902ad85e8ff46b164ceb7f2c38d3c1424c9d789703e0267e3dfce68fbe1c",
+        "encoderInputSHA256": "ecab36402ce3e5f8b09a0d0aa12b4047a868f88a7a125ce44a4614777b84249c",
+        "type": "jeans",
+        "colors": [
+          "blue"
+        ],
+        "prepareMilliseconds": 244.99,
+        "representationSHA256": "a60765c276ecb671a012999ff21dfa6b9fc19010e9a24d17f0f7186eb53d3fc0",
+        "representationBytes": 2868
+      },
+      {
+        "file": "photo-3.jpg",
+        "publicSHA256": "609a842b50d1d15c7ca1800143649769ad817c3b6929e31ee283ef024784b0e2",
+        "encoderInputSHA256": "e75e386d6d89196b3a491717c2c574801b7be98db26bea95c45cbd37bd048e46",
+        "type": "polo",
+        "colors": [
+          "white"
+        ],
+        "prepareMilliseconds": 313.46,
+        "representationSHA256": "45187f8da5390bafc25b2db36c5f02865d07dfd10db25f5ba883ff83c8f5e1da",
+        "representationBytes": 2868
+      }
+    ],
+    "memoryScope": "test runner plus offline encoder worker, sampled RSS"
+  },
+  "backend": {
+    "listeningMilliseconds": 230.58,
+    "modelReadyMilliseconds": 9807.12,
+    "sampledTreePeakRSSMiB": 310.86,
+    "sampleIntervalMilliseconds": 25,
+    "memoryScope": "backend plus rank worker, sampled RSS"
+  },
+  "requests": [
+    {
+      "label": "fresh-worker-first-rank-warm-filesystem-cache",
+      "totalItems": 3,
+      "eligibleCandidates": 2,
+      "payloadBytes": 10313,
+      "elapsedMilliseconds": 51.3,
+      "selectedType": "t_shirt",
+      "proposal": {
+        "itemId": "2ee5eefa-bfa5-4752-8be7-f5b5fb170136",
+        "publishedVersionId": "6e947fc9-7d40-412b-bf32-bd6c34a7d4da"
+      }
+    },
+    {
+      "label": "warm-rank",
+      "totalItems": 3,
+      "eligibleCandidates": 2,
+      "payloadBytes": 10313,
+      "elapsedMilliseconds": 22.76,
+      "selectedType": "t_shirt",
+      "proposal": {
+        "itemId": "2ee5eefa-bfa5-4752-8be7-f5b5fb170136",
+        "publishedVersionId": "6e947fc9-7d40-412b-bf32-bd6c34a7d4da"
+      }
+    },
+    {
+      "label": "warm-synthetic-300-two-repeated-candidate-vectors",
+      "totalItems": 300,
+      "eligibleCandidates": 299,
+      "payloadBytes": 980915,
+      "elapsedMilliseconds": 152.58,
+      "selectedType": "t_shirt",
+      "proposal": {
+        "itemId": "01ff40b1-68b8-4964-9649-6af1564d9efd",
+        "publishedVersionId": "39a7ef37-4842-48f2-9e8a-4ecdba394347"
+      }
+    }
+  ],
+  "limitations": [
+    "Filesystem cache warmed by offline preparation before fresh HTTP worker.",
+    "RSS is sampled process-tree memory; not a cgroup maximum.",
+    "Synthetic 300 packets repeat two real vectors; not 300 distinct photographs or taste-quality evidence.",
+    "HTTP upload, validation, rank and response measured; iOS first display and WAN not measured."
+  ],
+  "measurementDateUTC": "2026-10-29",
+  "implementationCommit": "4f8dde4"
+}

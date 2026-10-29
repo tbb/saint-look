@@ -11,6 +11,8 @@ const blue = (await demoResult()).image;
 const red = await sharp(blue).tint({ r: 210, g: 40, b: 45 }).png().toBuffer();
 let attributesCalls = 0;
 let cutoutCalls = 0;
+let encoderPreparationCalls = 0, modelRankCalls = 0;
+const modelCalls = { push() { encoderPreparationCalls++; } }, rankCalls = { push() { modelRankCalls++; } };
 let nextAttributes = null;
 let nextCutout = null;
 let illustrationMode = null;
@@ -46,12 +48,12 @@ const server = createServer(async (request, response) => {
           return reply(response, 400, { error: 'invalid_control' });
         }
         if (input.reset) { attributesCalls = 0; cutoutCalls = 0; nextAttributes = null; nextCutout = null; illustrationMode = null;
-          illustrationPreparationCalls = 0; illustrationAttributesCalls = 0; illustrationGenerationCalls = 0; illustrationFinalizationCalls = 0; }
+          illustrationPreparationCalls = 0; illustrationAttributesCalls = 0; illustrationGenerationCalls = 0; illustrationFinalizationCalls = 0; encoderPreparationCalls = 0; modelRankCalls = 0; }
         if ('nextAttributes' in input) nextAttributes = input.nextAttributes;
         if ('nextCutout' in input) nextCutout = input.nextCutout;
         if ('illustrationMode' in input) illustrationMode = input.illustrationMode;
       } else if (request.method !== 'GET') return reply(response, 405, { error: 'method_not_allowed' });
-      return reply(response, 200, { attributesCalls, cutoutCalls, illustrationPreparationCalls, illustrationAttributesCalls, illustrationGenerationCalls, illustrationFinalizationCalls });
+      return reply(response, 200, { attributesCalls, cutoutCalls, illustrationPreparationCalls, illustrationAttributesCalls, illustrationGenerationCalls, illustrationFinalizationCalls, encoderPreparationCalls, modelRankCalls });
     }
     if (request.method === 'GET' && request.url === '/fal-ai/nano-banana-pro/requests/ui-fixture/status') return reply(response, 200, { status: 'COMPLETED' });
     if (request.method === 'GET' && request.url === '/fal-ai/nano-banana-pro/requests/ui-fixture') return reply(response, 200, { images: [{ url: `http://127.0.0.1:${server.address().port}/illustration.png` }] });
@@ -60,7 +62,7 @@ const server = createServer(async (request, response) => {
     }
     if (request.method !== 'POST') return reply(response, 404, { error: 'not_found' });
     const body = await bodyOf(request, 16 * 1024 * 1024);
-    if (await modelFixture(request, response, body)) return;
+    if (await modelFixture(request, response, body, {}, modelCalls, rankCalls)) return;
     if (request.url === '/fal-ai/nano-banana-pro/edit') {
       illustrationGenerationCalls++;
       if (illustrationMode === 'unknown') { response.destroy(); return; }
