@@ -11,6 +11,10 @@ import { initializeDeletion, deleteItem } from './deletion.mjs';
 import { createRetention, acknowledge } from './retention.mjs';
 import { initializeDataVersion, release } from './data-version.mjs';
 import { readRevision } from './revision.mjs';
+import { createProviderBudget, ProviderBudgetError } from './provider-budget.mjs';
+import { ProviderError } from './providers.mjs';
+import { createPreparations } from './preparations.mjs';
+import { publicationProtocol } from './publication-contract.mjs';
 import { createIllustrations } from './illustrations.mjs';
 
 const revision = readRevision();
@@ -40,12 +44,18 @@ initializeProcessing(database);
 initializeAttempts(database);
 const provider = createProviders(process.env);
 const retention = createRetention(database, process.env, provider);
-const worker = createWorker(database, provider, process.env, retention);
-const illustrations = createIllustrations(database, process.env, retention);
+const providerBudget = createProviderBudget(database, process.env);
+const budget = { available: providerBudget.available, reserve(providerName, operationKey) {
+  try { providerBudget.reserve(providerName, operationKey); }
+  catch (error) { if (error instanceof ProviderBudgetError) throw new ProviderError(error.code); throw error; }
+} };
+const worker = createWorker(database, provider, process.env, retention, budget);
+const illustrations = createIllustrations(database, process.env, retention, budget);
+const preparations = createPreparations(database, process.env, retention, illustrations, directory);
 
 function itemResponse(row) {
   return { itemId: row.item_id, operationId: row.operation_id, photoVersionId: row.photo_version_id,
-    status: row.status, mode: row.mode, revision: row.revision, processing: { attributes: row.attributes_state, cutout: row.cutout_state }, type: row.type, colors: row.colors ? JSON.parse(row.colors) : [],
+    status: row.status, mode: row.mode, resultSHA256: database.prepare('SELECT result_digest FROM operation_receipts WHERE operation_id=?').get(row.operation_id)?.result_digest ?? null, revision: row.revision, processing: { attributes: row.attributes_state, cutout: row.cutout_state }, type: row.type, colors: row.colors ? JSON.parse(row.colors) : [],
     resultPath: row.status === 'ready' ? `/v1/items/${row.item_id}/operations/${row.operation_id}/result` : null, error: row.error };
 }
 function send(response, status, body) {
@@ -55,11 +65,18 @@ function send(response, status, body) {
 const server = createServer(async (request, response) => {
   try {
     const path = new URL(request.url, 'http://localhost').pathname;
-    if (request.method === 'GET' && path === '/health') return send(response, 200, { status: 'ok', mode: provider.mode, revision, dataVersion: release.dataVersion, illustrationAvailable: await illustrations.available(),
-      ...(process.env.SAINT_LOOK_DEPLOYMENT_ID ? { deploymentId: process.env.SAINT_LOOK_DEPLOYMENT_ID } : {}) });
+    if (request.method === 'GET' && path === '/health') { const configuration = await preparations.config(); return send(response, 200, { status: 'ok', mode: provider.mode, revision, dataVersion: release.dataVersion, illustrationAvailable: await illustrations.available(), encoderAvailable: configuration.encoder.available, preparationAvailable: configuration.newItemPreparation.available, publicationProtocol,
+      ...(process.env.SAINT_LOOK_DEPLOYMENT_ID ? { deploymentId: process.env.SAINT_LOOK_DEPLOYMENT_ID } : {}) }); }
     if (!authorized(request)) return send(response, 401, { error: 'unauthorized' });
     retention.sweep();
-    illustrations.sweep();
+    illustrations.sweep(); preparations.sweep();
+    if (request.method === 'GET' && path === '/v1/recommendations/config') return send(response, 200, await preparations.config());
+    const preparation = path.match(/^\/v1\/items\/([^/]+)\/preparations(?:\/([^/]+))?$/);
+    if (preparation) {
+      const itemId = preparation[1].toLowerCase(), operationId = preparation[2]?.toLowerCase();
+      if (request.method === 'POST' && !operationId) { const accepted = await preparations.accept(request, itemId); return send(response, accepted.status, accepted.body); }
+      if (request.method === 'GET' && operationId) return send(response, 200, preparations.read(itemId, operationId));
+    }
     const prepared = path.match(/^\/v1\/items\/([^/]+)\/illustrations\/([^/]+)\/sources\/([^/]+)\/prepared$/);
     if (request.method === 'GET' && prepared) {
       const image = illustrations.prepared(...prepared.slice(1).map(value => value.toLowerCase()));
@@ -78,7 +95,7 @@ const server = createServer(async (request, response) => {
         response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' }); return response.end(result);
       }
       if (request.method === 'POST' && action === 'ack') {
-        illustrations.acknowledge(itemId, operationId); response.writeHead(204, { 'Cache-Control': 'no-store' }); return response.end();
+        await preparations.acknowledge(request, itemId, operationId); response.writeHead(204, { 'Cache-Control': 'no-store' }); return response.end();
       }
     }
     const acknowledgement = path.match(/^\/v1\/items\/([^/]+)\/operations\/([^/]+)\/ack$/);
@@ -124,6 +141,7 @@ server.listen(Number(process.env.PORT || 8787), process.env.HOST || '127.0.0.1',
 process.on('SIGTERM', () => {
   worker.close();
   illustrations.close();
+  preparations.close();
   retention.close();
   server.close(() => { database.close(); process.exit(0); });
   server.closeIdleConnections();

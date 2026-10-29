@@ -1,3 +1,4 @@
+import { featureDigest, validateObserved } from './publication-contract.mjs';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { RequestError, uuid } from './upload.mjs';
@@ -59,12 +60,12 @@ async function readInput(request, itemId) {
     throw new RequestError(400, 'invalid_features');
   }
   const identity = { itemId: itemId.toLowerCase(), operationId: input.operationId.toLowerCase(), photoVersionId: input.photoVersionId.toLowerCase(),
-    sourceSetVersionId: input.sourceSetVersionId.toLowerCase(), revision: input.revision, manualType, manualColors,
+    sourceSetVersionId: input.sourceSetVersionId.toLowerCase(), revision: input.revision, manualType, manualColors, ...(input.reuseObserved ? { reuseObserved: input.reuseObserved } : {}),
     photos: photos.map(({ id, role, digest }) => ({ id, role, digest })), ...illustrationVersions };
   return { ...identity, fingerprint: digest(JSON.stringify(identity)), photos };
 }
 
-export function createIllustrations(database, env, retention) {
+export function createIllustrations(database, env, retention, budget) {
   database.exec(`CREATE TABLE IF NOT EXISTS illustrations (
     operation_id TEXT PRIMARY KEY, item_id TEXT NOT NULL, photo_version_id TEXT NOT NULL,
     source_set_version_id TEXT NOT NULL, revision INTEGER NOT NULL, fingerprint TEXT NOT NULL,
@@ -78,6 +79,14 @@ export function createIllustrations(database, env, retention) {
       state TEXT NOT NULL DEFAULT 'pending', prepared_digest TEXT, prepared_versions TEXT,
       expires_at INTEGER NOT NULL, PRIMARY KEY(item_id,photo_id));
     CREATE INDEX IF NOT EXISTS illustration_expiry ON illustrations(retention_state,expires_at);`);
+  const illustrationColumns = new Set(database.prepare('PRAGMA table_info(illustrations)').all().map(column => column.name));
+  for (const column of ['result_digest', 'observed_digest', 'effective_digest']) if (!illustrationColumns.has(column)) database.exec(`ALTER TABLE illustrations ADD COLUMN ${column} TEXT`);
+  // Existing undelivered v3 output has real bytes: bind them before any cleanup.
+  for (const row of database.prepare('SELECT * FROM illustrations WHERE result IS NOT NULL OR observed IS NOT NULL OR effective IS NOT NULL').all()) {
+    database.prepare('UPDATE illustrations SET result_digest=COALESCE(result_digest,?),observed_digest=COALESCE(observed_digest,?),effective_digest=COALESCE(effective_digest,?) WHERE operation_id=?')
+      .run(row.result ? digest(row.result) : null, row.observed ? featureDigest(parse(row.observed)) : null,
+        row.effective ? featureDigest(parse(row.effective)) : null, row.operation_id);
+  }
   // Identity receipts, not a server wardrobe: no image bytes or attributes survive here.
   database.exec(`CREATE TABLE IF NOT EXISTS published_sources (
     item_id TEXT PRIMARY KEY, photo_version_id TEXT NOT NULL,
@@ -132,10 +141,14 @@ export function createIllustrations(database, env, retention) {
   function response(row) {
     return { itemId: row.item_id, operationId: row.operation_id, photoVersionId: row.photo_version_id,
       sourceSetVersionId: row.source_set_version_id, revision: row.revision, status: row.status, mode: row.mode,
+      resultSHA256: row.result_digest, observedFeaturesSHA256: row.observed_digest, effectiveFeaturesSHA256: row.effective_digest,
       processing: parse(row.processing), observedFeatures: parse(row.observed), effectiveFeatures: parse(row.effective),
       manualType: row.manual_type, manualColors: parse(row.manual_colors), ...parse(row.versions),
-      preparedSources: row.status === 'ready' ? parse(row.photos).map(photo => ({ photoId: photo.id,
-        preparedPath: `/v1/items/${row.item_id}/illustrations/${row.operation_id}/sources/${photo.id}/prepared` })) : [],
+      preparedSources: row.status === 'ready' ? parse(row.photos).map(photo => {
+        const source = database.prepare('SELECT prepared_digest,prepared_versions FROM illustration_sources WHERE item_id=? AND photo_id=?').get(row.item_id, photo.id);
+        return { photoId: photo.id, sourceSHA256: photo.digest, preparedSHA256: source?.prepared_digest ?? null,
+          versions: parse(source?.prepared_versions ?? null), preparedPath: `/v1/items/${row.item_id}/illustrations/${row.operation_id}/sources/${photo.id}/prepared` };
+      }) : [],
       resultPath: row.status === 'ready' ? `/v1/items/${row.item_id}/illustrations/${row.operation_id}/result` : null, error: row.error };
   }
   function live(operationId) {
@@ -169,6 +182,7 @@ export function createIllustrations(database, env, retention) {
         if (!source.prepared) {
           setStage(operationId, stage, 'in_flight');
           database.prepare("UPDATE illustration_sources SET state='in_flight' WHERE item_id=? AND photo_id=?").run(row.item_id, input.id);
+          budget.reserve('photoroom', `${operationId}:preparation:${input.id}`);
           const prepared = await provider.prepare(Buffer.from(source.source), abort.signal);
           if (!live(operationId)) return;
           database.prepare("UPDATE illustration_sources SET prepared=?,prepared_digest=?,prepared_versions=?,state='done' WHERE item_id=? AND photo_id=?")
@@ -182,16 +196,18 @@ export function createIllustrations(database, env, retention) {
       let effective = parse(row.effective);
       if (!effective) {
         setStage(operationId, stage, 'in_flight');
+        budget.reserve('jev', `${operationId}:illustration:attributes:${row.photo_version_id}`);
         const observed = await provider.attributes(photos, abort.signal);
         if (!live(operationId)) return;
         effective = { ...observed, type: row.manual_type ?? observed.type, colors: parse(row.manual_colors) ?? observed.colors };
-        database.prepare('UPDATE illustrations SET observed=?,effective=? WHERE operation_id=?').run(json(observed), json(effective), operationId);
+        database.prepare('UPDATE illustrations SET observed=?,effective=?,observed_digest=?,effective_digest=? WHERE operation_id=?').run(json(observed), json(effective), featureDigest(observed), featureDigest(effective), operationId);
         setStage(operationId, stage, 'done');
       }
       stage = 'generation'; row = live(operationId); if (!row) return;
       let generated = row.generated && { png: Buffer.from(row.generated), usableAlpha: Boolean(row.generated_alpha) };
       if (!generated) {
         setStage(operationId, stage, 'in_flight');
+        if (!row.provider_receipt) budget.reserve('fal', `${operationId}:illustration:generation:${row.photo_version_id}`);
         generated = await provider.generate(photos, effective, abort.signal, receipt => {
           if (live(operationId)) database.prepare('UPDATE illustrations SET provider_receipt=? WHERE operation_id=?').run(receipt, operationId);
         }, row.provider_receipt);
@@ -204,11 +220,12 @@ export function createIllustrations(database, env, retention) {
       if (generated.usableAlpha) { result = generated.png; setStage(operationId, stage, 'skipped'); }
       else {
         setStage(operationId, stage, 'in_flight');
+        budget.reserve('photoroom', `${operationId}:finalization:${row.photo_version_id}`);
         result = await provider.prepare(generated.png, abort.signal, stage);
         if (!live(operationId)) return;
         setStage(operationId, stage, 'done');
       }
-      if (live(operationId)) database.prepare("UPDATE illustrations SET result=?,status='ready',error=NULL WHERE operation_id=?").run(result, operationId);
+      if (live(operationId)) database.prepare("UPDATE illustrations SET result=?,result_digest=?,status='ready',error=NULL WHERE operation_id=?").run(result, digest(result), operationId);
     } catch (error) {
       if (!live(operationId)) return;
       const unknown = !(error instanceof ProviderError) || error.unknown;
@@ -230,7 +247,7 @@ export function createIllustrations(database, env, retention) {
   }
   const cleanup = setInterval(sweep, 1000);
   return {
-    available: provider.available,
+    available: async () => await provider.available() && budget.available(),
     sweep,
     async accept(request, itemId) {
       if (!await provider.available()) { request.resume(); throw new RequestError(503, 'illustration_unavailable'); }
@@ -258,6 +275,19 @@ export function createIllustrations(database, env, retention) {
       }
       const knownSet = database.prepare('SELECT photos FROM illustrations WHERE item_id=? AND source_set_version_id=? LIMIT 1').get(input.itemId, input.sourceSetVersionId);
       if (knownSet && knownSet.photos !== sourceSet) throw new RequestError(409, 'identity_conflict');
+      let reusedObserved = null;
+      if (input.reuseObserved) {
+        const reuse = input.reuseObserved;
+        validateObserved(reuse.observedFeatures);
+        const prior = get(reuse.previousIllustrationOperationId);
+        if (!prior || prior.item_id !== itemId || prior.photo_version_id !== input.photoVersionId
+          || prior.source_set_version_id !== input.sourceSetVersionId || reuse.sourceSetVersionId !== input.sourceSetVersionId
+          || prior.photos !== sourceSet || (prior.observed_digest ? prior.observed_digest !== featureDigest(reuse.observedFeatures)
+            || reuse.observedFeaturesSHA256 !== prior.observed_digest : reuse.legacyImport !== true || prior.retention_state !== 'delivered')) {
+          throw new RequestError(409, 'observed_features_conflict');
+        }
+        reusedObserved = reuse.observedFeatures;
+      }
       const deadline = retention.deadline();
       database.exec('BEGIN IMMEDIATE');
       try {
@@ -266,6 +296,12 @@ export function createIllustrations(database, env, retention) {
           .run(input.operationId, input.itemId, input.photoVersionId, input.sourceSetVersionId, input.revision, input.fingerprint,
             json(input.photos.map(({ id, role, digest }) => ({ id, role, digest }))), input.manualType, json(input.manualColors), provider.mode,
             json(Object.fromEntries(stages.map(stage => [stage, 'pending']))), deadline, json(illustrationVersions));
+        if (reusedObserved) {
+          const effective = { ...reusedObserved, type: input.manualType ?? reusedObserved.type, colors: input.manualColors ?? reusedObserved.colors };
+          database.prepare('UPDATE illustrations SET observed=?,effective=?,observed_digest=?,effective_digest=?,processing=? WHERE operation_id=?')
+            .run(json(reusedObserved), json(effective), featureDigest(reusedObserved), featureDigest(effective),
+              json(Object.fromEntries(stages.map(stage => [stage, stage === 'attributes' ? 'done' : 'pending']))), input.operationId);
+        }
         for (const photo of input.photos) {
           const known = database.prepare('SELECT * FROM illustration_sources WHERE item_id=? AND photo_id=?').get(input.itemId, photo.id);
           if (known && known.digest !== photo.digest) throw new RequestError(409, 'identity_conflict');
@@ -300,6 +336,14 @@ export function createIllustrations(database, env, retention) {
       return Buffer.from(source.prepared);
     },
     acknowledge(itemId, operationId) {
+      requireNotDeleted(database, itemId);
+      const row = get(operationId);
+      if (!row || row.item_id !== itemId) throw new RequestError(404, 'not_found');
+      if (row.retention_state === 'delivered') return;
+      readable(itemId, operationId);
+      throw new RequestError(409, 'preparation_required');
+    },
+    commit(itemId, operationId) {
       if (!uuid.test(itemId) || !uuid.test(operationId)) throw new RequestError(400, 'invalid_identity');
       requireNotDeleted(database, itemId);
       const known = get(operationId);
@@ -314,8 +358,7 @@ export function createIllustrations(database, env, retention) {
       }
       const row = readable(itemId, operationId);
       if (row.status !== 'ready') throw new RequestError(409, 'not_ready');
-      database.exec('BEGIN IMMEDIATE');
-      try {
+      {
         // This is the publication commit: generated output alone never freezes photos.
         lockSources(row);
         database.prepare(`UPDATE illustrations SET retention_state='delivered',status='failed',error='result_delivered',
@@ -326,8 +369,7 @@ export function createIllustrations(database, env, retention) {
             .some(other => parse(other.photos).some(input => input.id === photo.id));
           if (!used) database.prepare(`UPDATE illustration_sources SET ${cleared} WHERE item_id=? AND photo_id=?`).run(itemId, photo.id);
         }
-        database.exec('COMMIT');
-      } catch (error) { database.exec('ROLLBACK'); throw error; }
+      }
     },
     close() { closing = true; clearInterval(cleanup); for (const timer of timers.values()) clearTimeout(timer); abort.abort(); },
   };

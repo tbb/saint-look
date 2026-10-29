@@ -12,11 +12,17 @@ export function initializeAttempts(database) {
     revision INTEGER NOT NULL, action TEXT NOT NULL, source_digest TEXT NOT NULL,
     UNIQUE(item_id, revision)
   )`);
-  const record = database.prepare('INSERT INTO operation_receipts VALUES (?,?,?,?,?,?)');
+  const receiptColumns = new Set(database.prepare('PRAGMA table_info(operation_receipts)').all().map(column => column.name));
+  for (const column of ['result_digest', 'result_mode']) if (!receiptColumns.has(column)) database.exec(`ALTER TABLE operation_receipts ADD COLUMN ${column} TEXT`);
+  const record = database.prepare('INSERT INTO operation_receipts(operation_id,item_id,photo_version_id,revision,action,source_digest) VALUES (?,?,?,?,?,?)');
   // Existing catalogs contain only the initial attempt; keep its identity on upgrade.
   for (const row of database.prepare(`SELECT items.* FROM items LEFT JOIN operation_receipts receipt
     ON items.operation_id=receipt.operation_id WHERE receipt.operation_id IS NULL`).all()) {
     record.run(row.operation_id, row.item_id, row.photo_version_id, row.revision, 'create', digest(Buffer.from(row.source)));
+  }
+  for (const row of database.prepare('SELECT operation_id,result,mode FROM items WHERE result IS NOT NULL').all()) {
+    database.prepare('UPDATE operation_receipts SET result_digest=COALESCE(result_digest,?),result_mode=COALESCE(result_mode,?) WHERE operation_id=?')
+      .run(digest(row.result), row.mode, row.operation_id);
   }
 }
 
@@ -59,7 +65,7 @@ export function acceptAttempt(database, input, provider, explicit = false, expir
   if (action === 'replace' && knownPhoto) throw new RequestError(409, 'identity_conflict');
   database.exec('BEGIN IMMEDIATE');
   try {
-    database.prepare('INSERT INTO operation_receipts VALUES (?,?,?,?,?,?)')
+    database.prepare('INSERT INTO operation_receipts(operation_id,item_id,photo_version_id,revision,action,source_digest) VALUES (?,?,?,?,?,?)')
       .run(input.operationId, input.itemId, input.photoVersionId, revision, action, sourceDigest);
     database.prepare(`INSERT INTO items(item_id,operation_id,photo_version_id,status,source,mode,provider_id,revision,expires_at)
       VALUES (?,?,?,'pending',?,?,?,?,?) ON CONFLICT(item_id) DO UPDATE SET
