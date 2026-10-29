@@ -793,6 +793,44 @@ struct OutfitCoreChecks {
                 preparedItems: legacyPackets, savedOutfit: original, activeSpaceID: "controlled-fixture-space")
             fatalError("A legacy fixed context cannot be admitted")
         } catch RecommendationError.preparationRequired { }
+        // Similar is a separate intent in the same editor, with the actual
+        // published origin and observable attributes rather than draft edits.
+        let similar = try session.begin(draft: original, targetSlotID: target, intent: .similar, pinnedSlotIDs: pins,
+            items: items, preparedItems: packets, savedOutfit: original, activeSpaceID: "controlled-fixture-space")
+        precondition(similar.intent == .similar)
+        precondition(similar.items.contains(where: { $0.itemId == shirt.id }),
+                     "Similar replacement requires the prepared original, unlike complement")
+        precondition(similar.items.first(where: { $0.itemId == shirt.id })?.effectiveFeatures.traits == shirt.publishedVersion?.illustration?.response.effectiveFeatures?.traits)
+        draft = original; history = OutfitCompositionHistory()
+        do {
+            _ = try session.apply(response(similar), to: &draft, history: &history, pinnedSlotIDs: pins,
+                items: items, preparedItems: packets, savedOutfit: original, taxonomy: taxonomy)
+            fatalError("A complement response cannot satisfy a similar request")
+        } catch RecommendationError.invalidResponse { }
+        let similarAgain = try session.begin(draft: original, targetSlotID: target, intent: .similar, pinnedSlotIDs: pins,
+            items: items, preparedItems: packets, savedOutfit: original, activeSpaceID: "controlled-fixture-space")
+        var similarResponse = response(similarAgain)
+        similarResponse.intent = .similar; similarResponse.rankingVersion = "observable-context-v1"
+        _ = try session.apply(similarResponse, to: &draft, history: &history, pinnedSlotIDs: pins,
+            items: items, preparedItems: packets, savedOutfit: original, taxonomy: taxonomy)
+        precondition(draft.slots[1].itemID == alternative.id)
+        history.undo(in: &draft, availableItemIDs: Set(items.map(\.id)))
+        precondition(draft == original && !history.canUndo)
+        let originOnly = try session.begin(draft: emptyContext, targetSlotID: target, intent: .similar, pinnedSlotIDs: pins,
+            items: items, preparedItems: packets, savedOutfit: nil, activeSpaceID: "controlled-fixture-space")
+        precondition(originOnly.intent == .similar && originOnly.orderedSlots.filter { $0.itemId != nil }.count == 1)
+        do {
+            _ = try session.begin(draft: original, targetSlotID: target, intent: .similar, pinnedSlotIDs: pins,
+                items: legacyItems, preparedItems: legacyPackets, savedOutfit: original, activeSpaceID: "controlled-fixture-space")
+            fatalError("An exclusion-only legacy source cannot support similar replacement")
+        } catch RecommendationError.similaritySourceRequired { }
+        var editedSource = shirt
+        editedSource.manualType = "Пальто"; editedSource.manualColors = ["Чёрный"]
+        let observedPacket = try RecommendationItem(item: editedSource,
+            representationJSON: editedSource.publishedVersion!.representation!.response.representationJSON!)
+        precondition(observedPacket.effectiveFeatures.type == "Футболка" && observedPacket.effectiveFeatures.colors == ["Белый"],
+                     "Similarity transmits committed effective features, never newer editable draft traits")
+        print("PASS: distinct similar intent, prepared origin, published traits, origin-only start, response intent and one undo")
         precondition(RecommendationError.message(for: URLError(.notConnectedToInternet)) != RecommendationError.message(for: ClientError.resultUnavailable("model_failed")))
         print("PASS: single recommendation draft/undo/save, cached wire, pins, context, legacy target, versions and late response guards")
     }

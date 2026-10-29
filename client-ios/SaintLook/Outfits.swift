@@ -214,24 +214,42 @@ struct OutfitCompositionHistory {
 
 // A recommendation transports only committed, cached representations. Tensor
 // contents belong to the server adapter; the client preserves the exact string.
+enum RecommendationIntent: String, Codable { case complement, similar }
+
+/// Published observable attributes are copied verbatim. The backend verifies
+/// their canonical digest and owns the soft similarity policy.
+struct RecommendationEffectiveFeatures: Codable, Equatable {
+    let version: String
+    let type: String
+    let colors: [String]
+    let traits: [String: String]
+
+    init(_ features: IllustrationFeatures) {
+        version = features.version; type = features.type; colors = features.colors; traits = features.traits
+    }
+}
+
 struct RecommendationItem: Codable, Equatable {
     let itemId: UUID
     let publishedVersionId: UUID
     let photoVersionId: UUID
     let sourceSetVersionId: UUID
     let features: CanonicalItemFeatures
+    let effectiveFeatures: RecommendationEffectiveFeatures
     let representationJSON: String
     let representationSHA256: String
 
     init(item: WardrobeItem, representationJSON: String) throws {
         guard item.hasPreparedVersion, let publication = item.publishedVersion,
               let representation = publication.representation,
+              let publishedFeatures = publication.illustration?.response.effectiveFeatures, publishedFeatures.isValid,
               representationJSON == representation.response.representationJSON,
               let digest = representation.response.representationSHA256,
               representationJSON.utf8.count <= 8 * 1024 else { throw RecommendationError.preparationRequired }
         itemId = item.id; publishedVersionId = publication.versionID
         photoVersionId = publication.photoVersionID; sourceSetVersionId = publication.sourceSetVersionID
         features = try CanonicalItemFeatures(displayType: publication.type, colors: publication.colors)
+        effectiveFeatures = RecommendationEffectiveFeatures(publishedFeatures)
         self.representationJSON = representationJSON; representationSHA256 = digest
     }
 }
@@ -254,6 +272,7 @@ struct SingleRecommendationRequest: Codable, Equatable {
     let requestId: UUID
     let snapshotId: UUID
     let targetSlotId: UUID
+    var intent: RecommendationIntent = .complement
     let orderedSlots: [Slot]
     let pinnedSlotIds: [UUID]
     let excludedItemIds: [UUID]
@@ -267,6 +286,8 @@ struct SingleRecommendationResponse: Codable {
     let snapshotId: UUID
     let targetSlotId: UUID
     let outcome: Outcome
+    var intent: RecommendationIntent? = nil
+    var rankingVersion: String? = nil
     let proposal: Proposal?
     let spaceID: String?
     let mode: String
@@ -276,7 +297,9 @@ struct SingleRecommendationResponse: Codable {
 
     var message: String {
         switch outcome {
-        case .proposed: return "Предложена другая вещь. Сохраните лук, если результат подходит."
+        case .proposed: return intent == .similar
+            ? "Предложена похожая замена. Сохраните лук, если результат подходит."
+            : "Предложена другая вещь. Сохраните лук, если результат подходит."
         case .no_alternative: return "Другой подходящей вещи пока нет. Добавьте вещи в гардероб или измените состав."
         case .empty_context: return RecommendationError.emptyContext.localizedDescription
         case .constraints_conflict:
@@ -288,12 +311,13 @@ struct SingleRecommendationResponse: Codable {
 }
 
 enum RecommendationError: LocalizedError {
-    case stale, targetPinned, emptyContext, preparationRequired, contextTooLarge, wardrobeTooLarge, invalidResponse
+    case stale, targetPinned, emptyContext, preparationRequired, similaritySourceRequired, contextTooLarge, wardrobeTooLarge, invalidResponse
     var errorDescription: String? {
         switch self {
         case .stale: return "Лук или гардероб изменился. Запустите подбор снова."
         case .targetPinned: return "Открепите это место для подбора."
         case .emptyContext: return "Добавьте хотя бы одну вещь в другое место, чтобы подобрать сочетание."
+        case .similaritySourceRequired: return "Для похожей замены нужно завершить подготовку исходной вещи. Откройте её в гардеробе."
         case .preparationRequired: return "Для подбора нужно завершить или обновить подготовку вещей. Откройте гардероб."
         case .contextTooLarge: return "Подбор одной вещи доступен для контекста до 32 вещей. Ручная сборка остаётся доступна."
         case .wardrobeTooLarge: return "Этот подбор поддерживает до 300 подготовленных вещей. Состав сохранён."
@@ -310,7 +334,8 @@ enum RecommendationError: LocalizedError {
         if case ClientError.resultUnavailable(let code) = error {
             switch code {
             case "snapshot_stale": return RecommendationError.stale.localizedDescription
-            case "incompatible_representations": return RecommendationError.preparationRequired.localizedDescription
+            case "incompatible_representations", "representation_space_changed", "similarity_features_required": return RecommendationError.preparationRequired.localizedDescription
+            case "similarity_source_required": return RecommendationError.similaritySourceRequired.localizedDescription
             case "model_unavailable": return "Подбор временно недоступен. Состав сохранён. Попробуйте позже."
             case "model_failed": return "Модель не смогла подобрать вещь. Состав сохранён. Попробуйте ещё раз."
             case "context_too_large": return RecommendationError.contextTooLarge.localizedDescription
@@ -348,16 +373,21 @@ struct OutfitRecommendationSession {
 
     mutating func cancel() { pending = nil }
 
-    mutating func begin(draft: Outfit, targetSlotID: UUID, pinnedSlotIDs: Set<UUID>, excludedItemIDs: Set<UUID> = [],
+    mutating func begin(draft: Outfit, targetSlotID: UUID, intent: RecommendationIntent = .complement, pinnedSlotIDs: Set<UUID>, excludedItemIDs: Set<UUID> = [],
                         items: [WardrobeItem], preparedItems: [RecommendationItem], savedOutfit: Outfit?, activeSpaceID: String?) throws -> SingleRecommendationRequest {
         cancel()
         guard draft.slots.contains(where: { $0.id == targetSlotID }) else { throw RecommendationError.stale }
         guard !pinnedSlotIDs.contains(targetSlotID) else { throw RecommendationError.targetPinned }
         let context = draft.slots.filter { $0.id != targetSlotID && $0.itemID != nil }
-        guard !context.isEmpty else { throw RecommendationError.emptyContext }
+        guard intent == .similar || !context.isEmpty else { throw RecommendationError.emptyContext }
         guard context.count <= 32 else { throw RecommendationError.contextTooLarge }
         let targetItemID = draft.slots.first(where: { $0.id == targetSlotID })?.itemID
-        let transmittedItems = preparedItems.filter { $0.itemId != targetItemID }
+        if intent == .similar {
+            guard let targetItemID, preparedItems.contains(where: { $0.itemId == targetItemID }) else {
+                throw RecommendationError.similaritySourceRequired
+            }
+        }
+        let transmittedItems = preparedItems.filter { intent == .similar || $0.itemId != targetItemID }
         guard transmittedItems.count <= 300 else { throw RecommendationError.wardrobeTooLarge }
         let usable = Dictionary(uniqueKeysWithValues: transmittedItems.map { ($0.itemId, $0) })
         guard context.allSatisfy({ usable[$0.itemID!] != nil }) else { throw RecommendationError.preparationRequired }
@@ -373,7 +403,7 @@ struct OutfitRecommendationSession {
             return .init(slotId: slot.id, zone: slot.zone, itemId: slot.itemID,
                          publishedVersionId: item?.publishedVersion?.versionID)
         }
-        let request = SingleRecommendationRequest(requestId: UUID(), snapshotId: UUID(), targetSlotId: targetSlotID,
+        let request = SingleRecommendationRequest(requestId: UUID(), snapshotId: UUID(), targetSlotId: targetSlotID, intent: intent,
             orderedSlots: slots, pinnedSlotIds: pinnedSlotIDs.sorted { $0.uuidString < $1.uuidString },
             excludedItemIds: excludedItemIDs.sorted { $0.uuidString < $1.uuidString },
             items: transmittedItems.sorted { $0.itemId.uuidString < $1.itemId.uuidString })
@@ -389,13 +419,17 @@ struct OutfitRecommendationSession {
               snapshot.request.targetSlotId == response.targetSlotId else { throw RecommendationError.stale }
         defer { cancel() }
         let targetItemID = snapshot.request.orderedSlots.first(where: { $0.slotId == response.targetSlotId })?.itemId
-        let transmittedItems = preparedItems.filter { $0.itemId != targetItemID }
+        let transmittedItems = preparedItems.filter { snapshot.request.intent == .similar || $0.itemId != targetItemID }
         guard snapshot.draft == draft, snapshot.savedOutfit == savedOutfit, snapshot.inventory == Self.inventory(items),
               Set(snapshot.request.pinnedSlotIds) == pinnedSlotIDs, Set(snapshot.request.excludedItemIds) == excludedItemIDs,
               snapshot.request.items == transmittedItems.sorted(by: { $0.itemId.uuidString < $1.itemId.uuidString }) else {
             throw RecommendationError.stale
         }
         guard response.policyVersion == "outfit-placement-v1", ["real", "controlled"].contains(response.mode) else { throw RecommendationError.invalidResponse }
+        guard (response.intent ?? .complement) == snapshot.request.intent,
+              snapshot.request.intent != .similar || response.rankingVersion == "observable-context-v1" else {
+            throw RecommendationError.invalidResponse
+        }
         guard response.outcome == .proposed else {
             guard response.proposal == nil else { throw RecommendationError.invalidResponse }
             return response.message
