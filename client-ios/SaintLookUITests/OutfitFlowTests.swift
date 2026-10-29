@@ -670,6 +670,17 @@ final class OutfitFlowTests: XCTestCase {
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-' ")).count, 2)
         app.buttons["cancel-outfit-picker"].tap()
         XCTAssertTrue(app.buttons[firstID].label.contains("Свитер"))
+        let providerCounts = try await activityCounts()
+        performSlotAction("recommend-slot", slotID: cycleSlotID, in: app)
+        let proposed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS 'Футболка'"), object: app.buttons[firstID])
+        XCTAssertEqual(XCTWaiter.wait(for: [proposed], timeout: 30), .completed,
+                       "Controlled backend recommendation replaces only the first layer")
+        XCTAssertTrue(app.buttons[secondID].label.contains("Худи"))
+        XCTAssertTrue(app.buttons[thirdID].label.contains("Куртка"))
+        let afterRecommendation = try await activityCounts()
+        XCTAssertEqual(afterRecommendation, providerCounts, "Recommendation must not upload images or call image/attribute providers")
+        tap(app.buttons["fitting-undo"], in: app)
+        XCTAssertTrue(app.buttons[firstID].label.contains("Свитер"), "One undo restores the pre-proposal draft")
         tap(app.buttons["add-body-layer"], in: app)
         // A deliberately empty final layer is also durable.
         capture("outfit-04-independent-layers")

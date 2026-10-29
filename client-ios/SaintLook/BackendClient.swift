@@ -20,16 +20,25 @@ struct BackendClient {
     private func send(_ request: URLRequest, expectedStatus: Int? = nil) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
-        if response.statusCode == 410 || response.statusCode == 503 || response.statusCode == 409 {
+        if [400, 409, 410, 503].contains(response.statusCode) {
             struct Failure: Decodable { let error: String }
             if let failure = try? JSONDecoder().decode(Failure.self, from: data),
-               ["result_expired", "result_delivered", "illustration_unavailable", "processing_in_progress", "photos_locked", "operation_superseded", "item_deleted", "encoder_unavailable", "encoder_failed", "preparation_required", "preparation_incomplete", "incompatible_representations", "representation_space_changed", "identity_conflict"].contains(failure.error) {
+               ["result_expired", "result_delivered", "illustration_unavailable", "processing_in_progress", "photos_locked", "operation_superseded", "item_deleted", "encoder_unavailable", "encoder_failed", "preparation_required", "preparation_incomplete", "incompatible_representations", "representation_space_changed", "identity_conflict", "snapshot_stale", "model_unavailable", "model_failed", "context_too_large", "invalid_prepared_item"].contains(failure.error) {
                 throw ClientError.resultUnavailable(failure.error)
             }
         }
         guard (200..<300).contains(response.statusCode) else { throw ClientError.server(response.statusCode) }
         if let expectedStatus, response.statusCode != expectedStatus { throw ClientError.invalidResponse }
         return data
+    }
+
+    func recommendSingle(_ snapshot: SingleRecommendationRequest) async throws -> SingleRecommendationResponse {
+        let body = try JSONEncoder().encode(snapshot)
+        guard body.count <= 4 * 1024 * 1024 else { throw RecommendationError.wardrobeTooLarge }
+        var operation = try request(path: "v1/recommendations/single", method: "POST", body: body)
+        operation.timeoutInterval = 60
+        let data = try await send(operation, expectedStatus: 200)
+        return try JSONDecoder().decode(SingleRecommendationResponse.self, from: data)
     }
 
     func acknowledge(_ acknowledgement: ResultAcknowledgement) async throws {
