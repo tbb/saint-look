@@ -34,6 +34,13 @@ struct OutfitCoreChecks {
         catalog.items = [shirt, jeans]
         catalog.outfits = []
         let cutouts: Set<UUID> = [shirtID, jeansID]
+        do {
+            try catalog.saveOutfit(outfit, taxonomy: taxonomy, availableCutouts: cutouts)
+            fatalError("Cutouts alone must not admit an incomplete item to a new look")
+        } catch OutfitError.unavailableItem { }
+        shirt = try preparedFixture(shirt)
+        jeans = try preparedFixture(jeans)
+        catalog.items = [shirt, jeans]
         try catalog.saveOutfit(outfit, taxonomy: taxonomy, availableCutouts: cutouts)
         try catalog.saveOutfit(outfit, taxonomy: taxonomy, availableCutouts: cutouts)
         precondition(catalog.outfits.count == 1, "Repeated save must not duplicate a look")
@@ -93,6 +100,8 @@ struct OutfitCoreChecks {
         hoodie.status = .ready; hoodie.type = "Худи"; hoodie.resultFilename = "result.png"
         var jacket = WardrobeItem(id: UUID(), operationID: UUID(), photoVersionID: UUID())
         jacket.status = .ready; jacket.type = "Куртка"; jacket.resultFilename = "result.png"
+        hoodie = try preparedFixture(hoodie)
+        jacket = try preparedFixture(jacket)
         var cycling = Outfit()
         let cyclingFirst = cycling.slots[1].id
         let cyclingSecond = cycling.addBodyLayer()
@@ -210,6 +219,7 @@ struct OutfitCoreChecks {
 
         // Candidate rules use the effective manual type, never a guessed fallback.
         var corrected = shirt
+        corrected.publishedVersion = nil // Category mapping also applies to editable incomplete items.
         corrected.manualType = "Брюки"
         precondition(OutfitZone.bottom.accepts(corrected, taxonomy: taxonomy))
         precondition(!OutfitZone.body.accepts(corrected, taxonomy: taxonomy))
@@ -300,6 +310,8 @@ struct OutfitCoreChecks {
 
         // Publication is observed through the same catalog commands used by the app.
         var publishing = WardrobeCatalog(items: [shirt, jeans], outfits: [outfit])
+        publishing.items[0].publishedVersion = nil
+        publishing.items[0].photosLocked = false
         let initialRequest = IllustrationRequest(operationID: UUID(), photoVersionID: shirt.photoVersionID,
             sourceSetVersionID: shirt.sourceSetVersionID, revision: 1, manualType: nil, manualColors: nil, status: .ready)
         publishing.items[0].illustration = initialRequest
@@ -308,6 +320,13 @@ struct OutfitCoreChecks {
             templateVersion: "front-360x560-proposed-v1", geometryVersion: "fitting-square-1024-v1")
         let firstResult = illustrationResult(item: shirt, request: initialRequest, type: "Футболка", filename: "first-illustration.png")
         try publishing.stageIllustration(for: shirtID, request: initialRequest, result: firstResult, preparedPhotos: [source])
+        precondition(publishing.items[0].pendingPublication == nil && publishing.items[0].canEditPhotos)
+        precondition(!publishing.items[0].hasPreparedVersion, "Illustration readiness alone must never admit an item")
+        do {
+            try publishing.confirmPublication(for: shirtID, operationID: initialRequest.operationID)
+            fatalError("A downloaded illustration cannot commit without prepared representations")
+        } catch is CancellationError { }
+        try stagePrepared(&publishing, for: shirtID, request: initialRequest, result: firstResult, preparedPhotos: [source])
         precondition(!publishing.items[0].photosLocked, "Downloaded output is not yet a committed publication")
         precondition(publishing.items[0].displayedIllustration == nil, "The first downloaded candidate is not yet visible")
         precondition(!publishing.items[0].canEditPhotos, "An uncertain commit freezes source editing until reconciliation")
@@ -321,7 +340,7 @@ struct OutfitCoreChecks {
         } catch ClientError.publicationInProgress { }
         try publishing.confirmPublication(for: shirtID, operationID: initialRequest.operationID)
         precondition(publishing.items[0].photosLocked)
-        precondition(publishing.items[0].publishedVersion?.completeness == .illustrated)
+        precondition(publishing.items[0].publishedVersion?.completeness == .prepared)
         precondition(publishing.items[0].displayedIllustration?.filename == "first-illustration.png")
         try publishing.editAttributes(for: shirtID, type: "Худи", colors: ["Чёрный"], taxonomy: taxonomy)
         precondition(publishing.items[0].editedType == "Худи")
@@ -346,11 +365,11 @@ struct OutfitCoreChecks {
         completed.status = .ready
         let newResult = illustrationResult(item: shirt, request: completed, type: "Худи", filename: "second-illustration.png")
         do {
-            try publishing.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [])
+            try stagePrepared(&publishing, for: shirtID, request: completed, result: newResult, preparedPhotos: [])
             fatalError("A partial package must not publish")
         } catch ClientError.invalidResponse { }
         precondition(publishing.items[0].displayedType == "Футболка")
-        try publishing.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
+        try stagePrepared(&publishing, for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
         precondition(publishing.items[0].displayedType == "Футболка", "Staging is not visible publication")
         try file.save(publishing)
         publishing = try file.load()
@@ -360,10 +379,11 @@ struct OutfitCoreChecks {
         precondition(published.items[0].displayedType == "Худи")
         precondition(published.items[0].displayedColors == ["Чёрный"])
         precondition(published.items[0].displayedIllustration?.filename == "second-illustration.png")
-        precondition(published.items[0].publishedVersion?.versionID == completed.operationID)
+        precondition(published.items[0].publishedVersion?.versionID == published.items[0].publishedVersion?.representation?.response.operationId)
+        precondition(published.items[0].publishedVersion?.representation?.response.illustrationOperationId == completed.operationID)
         precondition(published.outfits == [outfit])
         var deletingCommit = published
-        try deletingCommit.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
+        try stagePrepared(&deletingCommit, for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
         deletingCommit.removeItem(shirtID)
         try file.save(deletingCommit)
         deletingCommit = try file.load()
@@ -375,16 +395,77 @@ struct OutfitCoreChecks {
         precondition(deletingCommit.outfits[0].slots.first { $0.zone == .body }?.itemID == nil)
         try publishing.editAttributes(for: shirtID, type: "Куртка", colors: nil, taxonomy: taxonomy)
         do {
-            try publishing.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
+            try stagePrepared(&publishing, for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
             fatalError("A late package must not cancel a newer edit")
         } catch is CancellationError { }
         publishing.removeItem(shirtID)
         do {
-            try publishing.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
+            try stagePrepared(&publishing, for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
             fatalError("A late publication must not restore a deleted thing")
         } catch is CancellationError { }
         precondition(publishing.items.map(\.id) == [jeansID])
         print("PASS: attribute updates publish atomically, partial/failed/offline updates retain the old version, stale results cannot restore edits or deletions")
+
+        // Preparation is a separate durable operation; no encoder response can
+        // change a publication until matching files and the commit are confirmed.
+        var preparing = published
+        try preparing.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
+        let preparation = try preparationIntent(item: preparing.items[0], candidate: preparing.items[0].downloadedIllustration!)
+        try preparing.beginPreparation(for: shirtID, intent: preparation)
+        var submittedPreparation = preparation
+        submittedPreparation.submitted = true
+        try preparing.savePreparation(for: shirtID, intent: submittedPreparation)
+        try file.save(preparing)
+        preparing = try file.load()
+        precondition(preparing.items[0].preparation?.operationID == preparation.operationID)
+        precondition(preparing.items[0].preparation?.submitted == true)
+        precondition(preparing.items[0].publishedVersion?.versionID == published.items[0].publishedVersion?.versionID)
+        let preparedResponse = preparationResponse(item: preparing.items[0], intent: preparation)
+        do {
+            try preparing.stagePreparation(for: shirtID, response: preparedResponse, representationFilename: "broken.json",
+                representationDigest: "wrong-hash", actualArtifacts: preparation.artifacts, actualSourceDigest: preparation.sourceSHA256)
+            fatalError("Corrupted representation bytes must never stage")
+        } catch ClientError.invalidResponse { }
+        do {
+            try preparing.stagePreparation(for: shirtID, response: preparedResponse, representationFilename: "response.json",
+                representationDigest: preparedResponse.representationSHA256!, actualArtifacts: preparation.artifacts, actualSourceDigest: "different-photo")
+            fatalError("Representation from another original must never stage")
+        } catch ClientError.invalidResponse { }
+        var encoderFailure = preparation
+        encoderFailure.status = .failed; encoderFailure.error = "encoder_failed"
+        try preparing.savePreparation(for: shirtID, intent: encoderFailure)
+        try file.save(preparing)
+        preparing = try file.load()
+        precondition(preparing.items[0].hasPreparedVersion, "Previous complete packet remains available after encoder failure/restart")
+        precondition(preparing.items[0].publishedVersion?.versionID == published.items[0].publishedVersion?.versionID)
+        var supersededPreparation = preparing
+        let newerPreparation = try preparationIntent(item: supersededPreparation.items[0], candidate: supersededPreparation.items[0].downloadedIllustration!, space: "next-controlled-space")
+        try supersededPreparation.beginPreparation(for: shirtID, intent: newerPreparation)
+        do {
+            try supersededPreparation.stagePreparation(for: shirtID, response: preparedResponse, representationFilename: "old.json",
+                representationDigest: preparedResponse.representationSHA256!, actualArtifacts: preparation.artifacts, actualSourceDigest: preparation.sourceSHA256)
+            fatalError("Late response for the old operation/space must not replace the new intent")
+        } catch ClientError.invalidResponse { }
+        var editedPreparation = preparing
+        try editedPreparation.editAttributes(for: shirtID, type: "Куртка", colors: nil, taxonomy: taxonomy)
+        do {
+            try editedPreparation.stagePreparation(for: shirtID, response: preparedResponse, representationFilename: "late.json",
+                representationDigest: preparedResponse.representationSHA256!, actualArtifacts: preparation.artifacts, actualSourceDigest: preparation.sourceSHA256)
+            fatalError("Late preparation must not overwrite newer manual input")
+        } catch is CancellationError { }
+        precondition(editedPreparation.items[0].editedType == "Куртка" && editedPreparation.items[0].displayedType == "Худи")
+        try preparing.stagePreparation(for: shirtID, response: preparedResponse, representationFilename: "exact.json",
+            representationDigest: preparedResponse.representationSHA256!, actualArtifacts: preparation.artifacts, actualSourceDigest: preparation.sourceSHA256)
+        try file.save(preparing)
+        preparing = try file.load()
+        precondition(preparing.items[0].pendingPublication?.publication.representation?.response.representationJSON == "{\"fixture\": 1.00000000001}")
+        precondition(!preparing.items[0].canEditAttributes && preparing.items[0].publishedVersion?.versionID != preparation.operationID)
+        try preparing.confirmPublication(for: shirtID, operationID: completed.operationID)
+        precondition(preparing.items[0].publishedVersion?.versionID == preparation.operationID && preparing.items[0].hasPreparedVersion)
+        precondition(preparing.items[0].preparation == nil && preparing.items[0].downloadedIllustration == nil)
+        let emptyColorFeatures = try CanonicalItemFeatures(displayType: "Рубашка", colors: [], taxonomy: taxonomy)
+        precondition(emptyColorFeatures == CanonicalItemFeatures(type: "shirt", colors: []))
+        print("PASS: preparation identity/space, opaque bytes, artifact digests, failure/restart, stale edits, and atomic full admission")
 
         // A legacy edited illustration is paired with its old effective attributes,
         // while the newer manual input remains available in the editor.
@@ -466,6 +547,59 @@ struct OutfitCoreChecks {
                      "A publication with no illustration must not borrow one from another version")
         print("PASS: migration never borrows a stale illustration from another photo version")
 
+    }
+    static func stagePrepared(_ catalog: inout WardrobeCatalog, for id: UUID, request: IllustrationRequest,
+                              result: IllustrationResult, preparedPhotos: [IllustrationPreparedPhoto]) throws {
+        try catalog.stageIllustration(for: id, request: request, result: result, preparedPhotos: preparedPhotos)
+        let item = catalog.items.first { $0.id == id }!
+        let candidate = item.downloadedIllustration!
+        let intent = try preparationIntent(item: item, candidate: candidate)
+        try catalog.beginPreparation(for: id, intent: intent)
+        let response = preparationResponse(item: item, intent: intent)
+        try catalog.stagePreparation(for: id, response: response, representationFilename: "representation.json",
+            representationDigest: response.representationSHA256!, actualArtifacts: intent.artifacts, actualSourceDigest: intent.sourceSHA256)
+    }
+
+    static func preparationIntent(item: WardrobeItem, candidate: PendingItemPublication, space: String = "controlled-space") throws -> ItemPreparation {
+        let digest = String(repeating: "a", count: 64)
+        return ItemPreparation(operationID: UUID(), revision: item.preparationRevision + 1, spaceID: space,
+            mode: .fromIllustration, cutoutOperationID: item.operationID, publication: candidate.publication,
+            request: candidate.request, preparedPhotos: candidate.preparedPhotos,
+            features: try CanonicalItemFeatures(displayType: candidate.publication.type, colors: candidate.publication.colors),
+            sourceSHA256: digest, artifacts: .init(cutoutSHA256: digest, illustrationSHA256: digest,
+                observedFeaturesSHA256: digest, effectiveFeaturesSHA256: digest), provenance: "pipeline",
+            manualType: item.manualType, manualColors: item.manualColors)
+    }
+
+    static func preparationResponse(item: WardrobeItem, intent: ItemPreparation) -> PreparationResponse {
+        PreparationResponse(itemId: item.id, operationId: intent.operationID, revision: intent.revision,
+            photoVersionId: intent.publication.photoVersionID, sourceSetVersionId: intent.publication.sourceSetVersionID,
+            illustrationOperationId: intent.request.operationID, cutoutOperationId: intent.cutoutOperationID, spaceID: intent.spaceID, status: .ready,
+            mode: "controlled", imageMode: "test", provenance: "pipeline", effectiveFeatures: intent.features,
+            representationJSON: "{\"fixture\": 1.00000000001}", representationSHA256: String(repeating: "b", count: 64),
+            input: .init(sourceSHA256: intent.sourceSHA256, textSHA256: String(repeating: "c", count: 64)), artifacts: intent.artifacts, error: nil)
+    }
+
+    static func preparedFixture(_ input: WardrobeItem) throws -> WardrobeItem {
+        var item = input
+        let request = IllustrationRequest(operationID: UUID(), photoVersionID: item.photoVersionID,
+            sourceSetVersionID: item.sourceSetVersionID, revision: 1, manualType: nil, manualColors: nil, status: .ready)
+        let result = illustrationResult(item: item, request: request, type: item.type!, filename: "controlled-illustration.png")
+        item.colors = result.response.effectiveFeatures!.colors
+        let id = UUID(), digest = String(repeating: "a", count: 64)
+        let response = PreparationResponse(itemId: item.id, operationId: id, revision: 1,
+            photoVersionId: item.photoVersionID, sourceSetVersionId: item.sourceSetVersionID,
+            illustrationOperationId: request.operationID, cutoutOperationId: item.operationID, spaceID: "controlled-fixture-space", status: .ready,
+            mode: "controlled", imageMode: "test", provenance: "pipeline",
+            effectiveFeatures: try CanonicalItemFeatures(displayType: item.type, colors: item.colors),
+            representationJSON: "{\"controlledFixture\":true}", representationSHA256: digest,
+            input: .init(sourceSHA256: digest, textSHA256: digest),
+            artifacts: .init(cutoutSHA256: digest, illustrationSHA256: digest, observedFeaturesSHA256: digest, effectiveFeaturesSHA256: digest), error: nil)
+        item.publishedVersion = ItemPublication(versionID: id, photoVersionID: item.photoVersionID,
+            sourceSetVersionID: item.sourceSetVersionID, cutoutFilename: item.resultFilename!, cutoutMode: .demo,
+            illustration: result, type: item.type, colors: item.colors, completeness: .prepared,
+            representation: StoredRepresentation(filename: "controlled-representation.json", response: response))
+        return item
     }
     static func illustrationResult(item: WardrobeItem, request: IllustrationRequest, type: String, filename: String) -> IllustrationResult {
         let keys = ["silhouette", "body_length", "sleeves", "pattern", "pattern_location", "pattern_size", "neckline", "fastening", "surface", "hood", "kangaroo_pocket", "patch_pockets", "dropped_shoulders", "contrast_cuffs", "lettering"]
