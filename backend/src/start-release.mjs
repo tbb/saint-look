@@ -4,6 +4,9 @@ readRevision(true);
 const profile = process.env.SAINT_LOOK_DEPLOYMENT_PROFILE || 'controlled-http';
 if (!['controlled-http', 'live'].includes(profile)) throw new Error('Unsupported deployment profile.');
 process.env.SAINT_LOOK_DEPLOYMENT_PROFILE = profile;
+const modelProfile = process.env.SAINT_LOOK_MODEL_PROFILE || 'disabled';
+if (!['disabled', 'outfit-transformer-labse-v1'].includes(modelProfile)
+  || (profile === 'controlled-http' && modelProfile !== 'disabled')) throw new Error('Unsupported release model configuration.');
 if (profile === 'controlled-http') {
   await import('./start-controlled.mjs');
 } else {

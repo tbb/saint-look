@@ -1,0 +1,57 @@
+name: Real checkpoint image verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'backend/Dockerfile'
+      - 'backend/ml/**'
+      - 'backend/src/model*.mjs'
+      - 'backend/test/real-preparation.mjs'
+      - '.dockerignore'
+      - '.github/workflows/model-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: model-image-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checkpoint-image:
+    if: github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build pinned CPU runtime and verify every model asset digest
+        run: |
+          git rev-parse HEAD > backend/REVISION
+          docker build --build-arg SAINT_LOOK_RUNTIME=model-runtime -f backend/Dockerfile -t saint-look-model .
+      - name: Actual checkpoint through HTTP with public photograph and controlled image providers
+        run: |
+          printf '%s  %s\n' 'fbc6e902898915c554187d961515c7db2505954c4e46d4a090528de4348cdb50' client-ios/SaintLook/TrialPhotos/photo-1.png | sha256sum --check
+          # No network means no provider call, model download or credential use.
+          # The test creates only its loopback provider servers inside this container.
+          docker run --rm --network none --memory 2g --cpus 1 \
+            -e NODE_ENV=test -e SAINT_LOOK_REAL_MODEL_TEST=1 \
+            -e SAINT_LOOK_REAL_MODEL_PHOTO=/public-photo.png \
+            -v "$PWD/backend/test:/app/backend/test:ro" \
+            -v "$PWD/client-ios/SaintLook/TrialPhotos/photo-1.png:/public-photo.png:ro" \
+            saint-look-model node --test test/real-preparation.mjs | tee model-image-proof.txt
+      - name: Preserve actual model proof
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: real-checkpoint-image-proof
+          path: model-image-proof.txt
+          if-no-files-found: warn
+          retention-days: 14

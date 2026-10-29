@@ -23,7 +23,7 @@ struct OutfitsView: View {
                         Label("Пока нет луков", systemImage: "square.grid.2x2")
                     } description: {
                         Text(eligibleCount < 2
-                             ? "Для сохранения лука нужны хотя бы две вещи с готовой вырезкой и известным типом."
+                             ? "Для сохранения лука нужны хотя бы две полностью подготовленные вещи."
                              : "Соедините вещи из гардероба. Сохранённые сочетания будут доступны без сети.")
                     } actions: {
                         if eligibleCount < 2 {
@@ -366,6 +366,8 @@ struct OutfitEditorView: View {
     @State var draft: Outfit
     @Environment(\.dismiss) private var dismiss
     @State private var choosingSlot: OutfitSlot?
+    @State private var actionSlotID: UUID?
+    @State private var pendingPickerSlotID: UUID?
     @State private var activeSlotID: UUID?
     @State private var activeBodySlotID: UUID?
     @State private var pinnedSlotIDs: Set<UUID> = []
@@ -681,40 +683,67 @@ struct OutfitEditorView: View {
     }
 
     private func slotMenu(_ slot: OutfitSlot) -> some View {
-        Menu {
-            Button("Выбрать вещь", systemImage: "square.grid.2x2") { choosingSlot = slot }
-            Button("Следующая вещь", systemImage: "chevron.right") { cycle(slot.id, forward: true) }
-                .disabled(!canCycle(slot))
-                .accessibilityIdentifier("next-slot-\(slot.id)")
-            Button("Предыдущая вещь", systemImage: "chevron.left") { cycle(slot.id, forward: false) }
-                .disabled(!canCycle(slot))
-                .accessibilityIdentifier("previous-slot-\(slot.id)")
-            if slot.itemID != nil || slot.needsReplacement {
-                Button("Очистить", systemImage: "xmark") { select(nil, for: slot.id) }
-                    .accessibilityLabel("Очистить: \(outfitSlotTitle(slot, in: draft))")
-                    .accessibilityIdentifier("clear-slot-\(slot.id)")
-            }
-            if slot.zone == .body {
-                Button("Убрать слой", systemImage: "minus") {
-                    let previous = draft
-                    draft.removeBodyLayer(slot.id)
-                    compositionHistory.recordChange(from: previous, to: draft)
-                    if !draft.slots.contains(where: { $0.id == activeSlotID }) {
-                        activeSlotID = draft.slots.first { $0.zone == .body }?.id
-                        activeBodySlotID = activeSlotID
-                    }
-                    errorMessage = nil
-                }
-                .accessibilityLabel("Убрать: \(outfitSlotTitle(slot, in: draft))")
-                .accessibilityIdentifier("remove-body-layer-\(slot.id)")
-            }
-        } label: {
+        Button { actionSlotID = slot.id } label: {
             Image(systemName: "ellipsis")
                 .frame(minWidth: 44, minHeight: 44)
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("Действия: \(outfitSlotTitle(slot, in: draft))")
         .accessibilityIdentifier("outfit-slot-menu-\(slot.id)")
+        // Anchor the system action sheet/popover to this place's button. Native
+        // Menu clips its collection at maximum text while retaining screen-height
+        // scroll bounds, so lower actions bounce out of reach after a drag.
+        .confirmationDialog("Действия: \(outfitSlotTitle(slot, in: draft))",
+            isPresented: actionPresentation(for: slot.id), titleVisibility: .visible) {
+                if let current = draft.slots.first(where: { $0.id == slot.id }) { slotActions(current) }
+                Button("Отмена", role: .cancel) { pendingPickerSlotID = nil }
+            }
+        .onChange(of: actionSlotID) { _, current in
+            guard current == nil, pendingPickerSlotID == slot.id else { return }
+            pendingPickerSlotID = nil
+            // Finish the dialog state before requesting the existing picker sheet.
+            choosingSlot = draft.slots.first(where: { $0.id == slot.id })
+        }
+    }
+
+    private func actionPresentation(for slotID: UUID) -> Binding<Bool> {
+        Binding(get: { actionSlotID == slotID }, set: { presented in
+            if !presented, actionSlotID == slotID { actionSlotID = nil }
+        })
+    }
+
+    @ViewBuilder
+    private func slotActions(_ slot: OutfitSlot) -> some View {
+        Button("Выбрать вещь") {
+            pendingPickerSlotID = slot.id
+            actionSlotID = nil
+        }
+        Button("Следующая вещь") { cycle(slot.id, forward: true) }
+            .disabled(!canCycle(slot))
+            .accessibilityIdentifier("next-slot-\(slot.id)")
+        Button("Предыдущая вещь") { cycle(slot.id, forward: false) }
+            .disabled(!canCycle(slot))
+            .accessibilityIdentifier("previous-slot-\(slot.id)")
+        if slot.itemID != nil || slot.needsReplacement {
+            Button("Очистить") { select(nil, for: slot.id) }
+                .accessibilityLabel("Очистить: \(outfitSlotTitle(slot, in: draft))")
+                .accessibilityIdentifier("clear-slot-\(slot.id)")
+        }
+        if slot.zone == .body {
+            Button("Убрать слой") {
+                guard draft.slots.contains(where: { $0.id == slot.id && $0.zone == .body }) else { return }
+                let previous = draft
+                draft.removeBodyLayer(slot.id)
+                compositionHistory.recordChange(from: previous, to: draft)
+                if !draft.slots.contains(where: { $0.id == activeSlotID }) {
+                    activeSlotID = draft.slots.first { $0.zone == .body }?.id
+                    activeBodySlotID = activeSlotID
+                }
+                errorMessage = nil
+            }
+            .accessibilityLabel("Убрать: \(outfitSlotTitle(slot, in: draft))")
+            .accessibilityIdentifier("remove-body-layer-\(slot.id)")
+        }
     }
 
     private var saveExplanation: String? {
@@ -882,7 +911,7 @@ struct OutfitPickerView: View {
     private var emptyDescription: String {
         if allEligibleAreUsed { return "Одна вещь может быть только в одном слое. Выберите другой слой или очистите его." }
         if awaitingCandidates { return "После обработки здесь появятся вещи, подходящие этой зоне." }
-        return "Нужны готовая вырезка и подходящий тип. Проверьте вещи в гардеробе; эту зону можно оставить пустой."
+        return "Нужны подготовленные вещи подходящего типа. Проверьте вещи в гардеробе; эту зону можно оставить пустой."
     }
 
     private var typeFilter: some View {

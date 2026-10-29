@@ -54,19 +54,23 @@ final class WardrobeFlowTests: XCTestCase {
             XCTAssertFalse(app.images["item-photo"].exists, "An empty collection must contain no garment photos")
             return
         }
-        let summary = app.staticTexts["wardrobe-summary"]
-        let expected = "Всего: \(ready + pending). Готово: \(ready). Ожидают: \(pending)."
-        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", expected), object: summary)
-        await fulfillment(of: [expectation], timeout: timeout)
+        // These ingestion/recovery scenarios wait for cutouts, not full model readiness.
+        // Full publication is asserted separately through illustration delivery and admission.
+        let predicate = NSPredicate { _, _ in
+            app.staticTexts.matching(identifier: "ready-status").count == ready
+                && app.staticTexts.matching(identifier: "pending-status").count == pending
+        }
+        await fulfillment(of: [XCTNSPredicateExpectation(predicate: predicate, object: app)], timeout: timeout)
     }
 
-    private func launch(reset: Bool, baseURL: String, trialIndex: Int? = nil, cameraProblem: String? = nil) -> XCUIApplication {
+    private func launch(reset: Bool, baseURL: String, trialIndex: Int? = nil, cameraProblem: String? = nil, visualScenario: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["SAINT_LOOK_BASE_URL"] = baseURL
         app.launchEnvironment["SAINT_LOOK_OWNER_TOKEN"] = testToken
         app.launchEnvironment["SAINT_LOOK_UI_TESTING"] = "1"
         app.launchEnvironment["SAINT_LOOK_RESET_DATA"] = reset ? "1" : "0"
         if let cameraProblem { app.launchEnvironment["SAINT_LOOK_CAMERA_TEST_PROBLEM"] = cameraProblem }
+        if let visualScenario { app.launchEnvironment["SAINT_LOOK_VISUAL_SCENARIO"] = visualScenario }
         if let trialIndex {
             app.launchEnvironment["SAINT_LOOK_LIVE_TRIAL"] = "1"
             app.launchEnvironment["SAINT_LOOK_TRIAL_PHOTO_INDEX"] = String(trialIndex)
@@ -346,12 +350,10 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(firstAcknowledged)
         let initial = try await providerControl()
         XCTAssertEqual(initial["illustrationPreparationCalls"] as? Int, 1)
-        try tapVisibleButton("generate-illustration", in: app)
-        let refreshed = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 2, timeout: 30)
-        XCTAssertTrue(refreshed, "Explicit refresh of an unchanged ready image starts a new operation after ack")
+        XCTAssertFalse(app.buttons["generate-illustration"].exists, "An unchanged complete item does not offer a paid regeneration")
         let refreshProvider = try await providerControl()
         XCTAssertEqual(refreshProvider["illustrationPreparationCalls"] as? Int, 1)
-        XCTAssertEqual(refreshProvider["illustrationGenerationCalls"] as? Int, 2)
+        XCTAssertEqual(refreshProvider["illustrationGenerationCalls"] as? Int, 1)
         app.terminate()
 
         let restored = launch(reset: false, baseURL: testURL)
@@ -360,7 +362,7 @@ final class WardrobeFlowTests: XCTestCase {
         try chooseType("hoodie", in: restored)
         restored.buttons["save-item-edits"].tap()
         try tapVisibleButton("generate-illustration", in: restored)
-        let secondAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 3, timeout: 30)
+        let secondAcknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 2, timeout: 30)
         XCTAssertTrue(secondAcknowledged)
         let reused = try await providerControl()
         XCTAssertEqual(reused["illustrationPreparationCalls"] as? Int, 1, "Manual edits reuse the prepared source even after server ack cleanup and app restart")
@@ -370,7 +372,7 @@ final class WardrobeFlowTests: XCTestCase {
         restored.buttons["item-actions"].tap()
         XCTAssertFalse(restored.buttons["replace-photo"].exists)
         XCTAssertFalse(restored.buttons["replace-demo-photo"].exists)
-        XCTAssertEqual(reused["illustrationGenerationCalls"] as? Int, 3,
+        XCTAssertEqual(reused["illustrationGenerationCalls"] as? Int, 2,
                        "Attribute updates preserve the fixed photographs and reuse their preparation")
     }
 
@@ -906,10 +908,11 @@ final class WardrobeFlowTests: XCTestCase {
 
     @MainActor
     func testLegacyLabelsSurviveUntouchedSaveAndExplicitSelectionReplacesOnlyEditedField() async throws {
-        try await control(mode: "legacy-attributes")
-        let app = launch(reset: true, baseURL: testURL)
-        app.buttons["add-demo-photo"].tap()
+        // Legacy labels enter through the persisted catalog, not a corrupted new
+        // provider response that current finite-taxonomy validation must reject.
+        let app = launch(reset: true, baseURL: testURL, visualScenario: "legacy-labels")
         await waitForSummary(app, ready: 1, pending: 0)
+        XCTAssertTrue(app.staticTexts["preparation-status"].exists, "A historical cutout is not a fully prepared item")
         try await control(mode: "offline")
         try tapVisibleButton("edit-item", in: app)
         try tapVisibleButton("choose-colors", in: app)
@@ -918,7 +921,7 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Накидка"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Сиреневый"].exists)
         app.terminate()
-        let restored = launch(reset: false, baseURL: testURL)
+        let restored = launch(reset: false, baseURL: testURL, visualScenario: "legacy-labels")
         restored.swipeUp()
         XCTAssertTrue(restored.staticTexts["Накидка"].waitForExistence(timeout: 5))
         XCTAssertTrue(restored.staticTexts["Сиреневый"].exists)
@@ -934,7 +937,7 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertFalse(restored.staticTexts["Сиреневый"].exists)
         XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
         let state = try await transportState()
-        XCTAssertEqual(state["forwardedUploads"] as? Int, 1)
+        XCTAssertEqual(state["forwardedUploads"] as? Int, 0, "Loading and editing historical local data must not upload a new item")
     }
 
     @MainActor

@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 const state = JSON.parse(fs.readFileSync(process.env.FIXTURE_STATE));
 const secretInput = args[0] === 'secrets' ? fs.readFileSync(0, 'utf8') : undefined;
-fs.appendFileSync(process.env.CAPTURE, JSON.stringify({ args, secretInput, token: process.env.FLY_API_TOKEN, ownerTokenPresent: !!process.env.SAINT_LOOK_DEV_OWNER_TOKEN, railwayTokenPresent: !!process.env.RAILWAY_TOKEN, providerKeyPresent: !!(process.env.TYPESAFE_API_KEY || process.env.PHOTOROOM_API_KEY || process.env.GEMINI_API_KEY), configText: args[0] === 'deploy' ? fs.readFileSync(args[args.indexOf('--config') + 1], 'utf8') : undefined }) + '\\n');
+fs.appendFileSync(process.env.CAPTURE, JSON.stringify({ args, secretInput, token: process.env.FLY_API_TOKEN, ownerTokenPresent: !!process.env.SAINT_LOOK_DEV_OWNER_TOKEN, railwayTokenPresent: !!process.env.RAILWAY_TOKEN, providerKeyPresent: !!(process.env.TYPESAFE_API_KEY || process.env.PHOTOROOM_API_KEY || process.env.GEMINI_API_KEY || process.env.FAL_KEY || process.env.PHOTOROOM_SANDBOX_API_KEY), configText: args[0] === 'deploy' ? fs.readFileSync(args[args.indexOf('--config') + 1], 'utf8') : undefined }) + '\\n');
 if (args[0] === 'deploy') {
   if (state.fail) { console.error(process.env.FLY_API_TOKEN); process.exit(1); }
   process.exit(0);
@@ -144,6 +144,42 @@ test('live upload refuses absent account attestation or keys before invoking Fly
   assert.equal(f.calls().length, 0);
 });
 
+test('real model deployment refuses unapproved memory before touching Fly', t => {
+  const f = fixture(t);
+  writeFileSync(join(f.release, 'backend/release.json'), JSON.stringify({ profiles: ['controlled-http', 'live'],
+    providerConfig: 'photoroom-jev-1.14.0-taxonomy-1', modelRuntime: 'outfit-transformer-labse-v1' }));
+  const result = f.run({ SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', AI_TRIAL_PREFLIGHT_VERIFIED: 'true',
+    TYPESAFE_API_KEY: 'typesafe-fixture-secret', PHOTOROOM_API_KEY: 'sandbox_fixture_secret',
+    SAINT_LOOK_MODEL_PROFILE: 'outfit-transformer-labse-v1', SAINT_LOOK_FLY_MEMORY_MB: '2048',
+    FLY_MODEL_MEMORY_APPROVED: 'false' });
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /memory.*approval|approval.*memory/i);
+  assert.equal(f.calls().length, 0);
+});
+
+test('approved model release upgrades only the existing machine memory and selects pinned runtime', t => {
+  const f = fixture(t);
+  f.volume.attached_machine_id = f.machine.id;
+  f.state.machines = [f.machine];
+  writeFileSync(join(f.release, 'backend/release.json'), JSON.stringify({ profiles: ['controlled-http', 'live'],
+    providerConfig: 'photoroom-jev-1.14.0-taxonomy-1', modelRuntime: 'outfit-transformer-labse-v1' }));
+  const result = f.run({ SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', AI_TRIAL_PREFLIGHT_VERIFIED: 'true',
+    TYPESAFE_API_KEY: 'typesafe-fixture-secret', PHOTOROOM_API_KEY: 'sandbox_fixture_secret',
+    SAINT_LOOK_MODEL_PROFILE: 'outfit-transformer-labse-v1', SAINT_LOOK_FLY_MEMORY_MB: '2048',
+    FLY_MODEL_MEMORY_APPROVED: 'true' });
+  assert.equal(result.status, 0, result.stderr);
+  const deployment = f.calls().find(call => call.args[0] === 'deploy');
+  assert.match(deployment.configText, /memory = "2048MB"/);
+  assert.match(deployment.configText, /cpus = 1/);
+  assert.ok(deployment.args.includes('SAINT_LOOK_RUNTIME=model-runtime'));
+  assert.ok(deployment.args.includes('SAINT_LOOK_MODEL_PROFILE=outfit-transformer-labse-v1'));
+  assert.ok(deployment.args.includes('SAINT_LOOK_MODEL_ASSETS=/opt/saint-look-model'));
+  assert.ok(deployment.args.includes('SAINT_LOOK_MODEL_THREADS=1'));
+  assert.ok(deployment.args.includes('--ha=false'));
+  assert.equal(f.calls().filter(call => call.args[0] === 'deploy').length, 1);
+  assert.equal(JSON.parse(result.stdout).memoryMB, 2048);
+});
+
 
 test('live upload refuses the previous provider configuration before any Fly call', t => {
   const f = fixture(t);
@@ -152,4 +188,40 @@ test('live upload refuses the previous provider configuration before any Fly cal
   assert.equal(result.status, 1);
   assert.match(result.stderr, /provider configuration/);
   assert.equal(f.calls().length, 0);
+});
+
+test('enabling paid illustrations requires the separately approved bounded API budget before Fly', t => {
+  const f = fixture(t);
+  writeFileSync(join(f.release, 'backend/release.json'), JSON.stringify({ profiles: ['live'], providerConfig: 'photoroom-jev-1.14.0-taxonomy-1' }));
+  const result = f.run({ SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', AI_TRIAL_PREFLIGHT_VERIFIED: 'true',
+    TYPESAFE_API_KEY: 'typesafe-fixture-secret', PHOTOROOM_API_KEY: 'sandbox_fixture_secret',
+    SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true', FAL_KEY: 'fixture-fal-key' });
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /budget/i);
+  assert.equal(f.calls().length, 0);
+});
+
+test('approved illustrations stage only sandbox and fal secrets and pass bounded policy without exposing keys', t => {
+  const f = fixture(t);
+  writeFileSync(join(f.release, 'backend/release.json'), JSON.stringify({ profiles: ['live'], providerConfig: 'photoroom-jev-1.14.0-taxonomy-1' }));
+  const budget = { id: 'epic63-public-v1-5d85dde081e8', approved: true, pricesCheckedAt: new Date().toISOString(),
+    limits: { photoroom: 60, jev: 48, fal: 24 }, ratesMicrousd: { photoroom: 0, jev: 2753, fal: 150000 }, maxCostMicrousd: 4500000 };
+  const config = { SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', AI_TRIAL_PREFLIGHT_VERIFIED: 'true',
+    TYPESAFE_API_KEY: 'typesafe-fixture-secret', PHOTOROOM_API_KEY: 'sandbox_fixture_secret',
+    SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true', FAL_KEY: 'fixture-fal-key', SAINT_LOOK_API_BUDGET_JSON: JSON.stringify(budget) };
+  const result = f.run(config);
+  assert.equal(result.status, 0, result.stderr);
+  const secrets = f.calls().find(call => call.args[0] === 'secrets');
+  assert.match(secrets.secretInput, /PHOTOROOM_SANDBOX_API_KEY=sandbox_fixture_secret\nFAL_KEY=fixture-fal-key/);
+  const deploy = f.calls().find(call => call.args[0] === 'deploy');
+  assert.ok(deploy.args.includes('SAINT_LOOK_ILLUSTRATIONS_ENABLED=true'));
+  assert.ok(deploy.args.some(arg => arg.startsWith('SAINT_LOOK_API_BUDGET_JSON=') && arg.includes('4500000')));
+  assert.doesNotMatch(result.stdout + result.stderr + JSON.stringify(deploy.args), /fixture-fal-key|sandbox_fixture_secret/);
+  assert.ok(f.calls().every(call => !call.providerKeyPresent));
+  const before = f.calls().length;
+  for (const changed of [{ approved: false }, { limits: { ...budget.limits, fal: 25 } },
+    { pricesCheckedAt: new Date(Date.now() - 86400001).toISOString() }, { maxCostMicrousd: 4500001 }]) {
+    assert.equal(f.run({ ...config, SAINT_LOOK_API_BUDGET_JSON: JSON.stringify({ ...budget, ...changed }) }).status, 1);
+    assert.equal(f.calls().length, before);
+  }
 });

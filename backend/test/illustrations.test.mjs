@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { commitIllustration } from './preparation-support.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -64,11 +65,11 @@ test('single photo produces a separate transparent illustration with observed tr
   assert.equal(image.status, 200);
   assert.deepEqual(Buffer.from(await image.arrayBuffer()), fixture.result);
   assert.equal((await (await server.request(`/v1/items/${photo.itemId}`)).json()).status, 'ready');
-  assert.equal((await server.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}/ack`, { method: 'POST' })).status, 204);
+  assert.equal((await commitIllustration(server, photo, input)).response.status, 204);
   assert.equal((await server.request(ready.resultPath)).status, 410);
   assert.equal((await server.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}`)).status, 410);
   assert.equal((await requestIllustration(server, photo.itemId, input)).status, 410);
-  assert.equal((await server.request(`/v1/items/${photo.itemId}/result`)).status, 200);
+  assert.equal((await server.request(`/v1/items/${photo.itemId}/result`)).status, 410);
 });
 
 test('multiple views preserve manual type and colors, reuse prepared photos, and reject mutated identities', async t => {
@@ -286,7 +287,7 @@ test('locally saved prepared sources survive acknowledgement and avoid sandbox c
   const prepared = await server.request(first.preparedSources[0].preparedPath);
   assert.equal(prepared.status, 200);
   const preparedBase64 = Buffer.from(await prepared.arrayBuffer()).toString('base64');
-  assert.equal((await server.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}/ack`, { method: 'POST' })).status, 204);
+  assert.equal((await commitIllustration(server, photo, input)).response.status, 204);
   assert.equal((await server.request(first.preparedSources[0].preparedPath)).status, 410);
   const refresh = { ...input, operationId: randomUUID(), revision: 2, manualType: 'Худи', photos: [{ ...input.photos[0], preparedBase64 }] };
   assert.equal((await requestIllustration(server, photo.itemId, refresh)).status, 202);
@@ -303,7 +304,7 @@ test('a completed source set stays immutable after delivery and restart, while a
   const initial = illustration(photo);
   await requestIllustration(server, photo.itemId, initial);
   await waitForIllustration(server, photo.itemId, initial.operationId);
-  await server.request(`/v1/items/${photo.itemId}/illustrations/${initial.operationId}/ack`, { method: 'POST' });
+  assert.equal((await commitIllustration(server, photo, initial)).response.status, 204);
   await server.stop();
   const restarted = await env.launch(fixture.env);
   for (const action of ['replace', 'retry']) {
@@ -357,10 +358,11 @@ test('editing angles before first publication supersedes generated output; commi
   assert.equal((await staleAck.json()).error, 'operation_superseded');
   await waitForIllustration(server, photo.itemId, newer.operationId);
   const commitPath = `/v1/items/${photo.itemId}/illustrations/${newer.operationId}/ack`;
-  assert.equal((await server.request(commitPath, { method: 'POST' })).status, 204);
+  const commit = await commitIllustration(server, photo, newer);
+  assert.equal(commit.response.status, 204);
   await server.stop();
   const restarted = await env.launch(fixture.env);
-  assert.equal((await restarted.request(commitPath, { method: 'POST' })).status, 204, 'Lost commit response is safely recoverable');
+  assert.equal((await restarted.request(commitPath, commit.ack)).status, 204, 'Lost commit response is safely recoverable');
   const changed = illustration(photo, { revision: 3 });
   const denied = await requestIllustration(restarted, photo.itemId, changed);
   assert.equal(denied.status, 409);

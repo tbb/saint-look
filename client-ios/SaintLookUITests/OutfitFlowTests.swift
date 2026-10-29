@@ -1,6 +1,45 @@
 import XCTest
 import Foundation
 
+/// Shared by the existing flow and visual journeys. UIKit can expose a dialog
+/// action as an outer Button containing a second Button with the same identity.
+/// Resolve that one nested action, never an arbitrary first matching command.
+@MainActor
+func addressedNativeDialogAction(_ identifier: String, in app: XCUIApplication) throws -> XCUIElement {
+    let matches = app.buttons.matching(identifier: identifier)
+    guard matches.firstMatch.waitForExistence(timeout: 5) else {
+        throw NativeDialogActionFailure.missing(identifier)
+    }
+    if matches.count == 1 { return matches.element }
+    let candidates = matches.allElementsBoundByIndex
+    guard candidates.count == 2 else {
+        throw NativeDialogActionFailure.ambiguous("\(identifier): \(candidates.count) matching buttons")
+    }
+    // The recorded native hierarchy is a direct Button → Button pair. Inspect
+    // each bound element: the query-wide containing filter is not unique here.
+    let childCounts = candidates.map { $0.children(matching: .button).matching(identifier: identifier).count }
+    guard childCounts.sorted() == [0, 1], let parentIndex = childCounts.firstIndex(of: 1) else {
+        throw NativeDialogActionFailure.ambiguous("\(identifier): direct child counts \(childCounts)")
+    }
+    let action = candidates[parentIndex]
+    let children = action.children(matching: .button).matching(identifier: identifier)
+    let child = children.element
+    let other = candidates[1 - parentIndex]
+    let frame = action.frame
+    let label = action.label
+    guard action.identifier == identifier, child.identifier == identifier, other.identifier == identifier,
+          !frame.isEmpty, frame == child.frame, frame == other.frame,
+          !label.isEmpty, label == child.label, label == other.label else {
+        throw NativeDialogActionFailure.ambiguous(identifier)
+    }
+    return action
+}
+
+private enum NativeDialogActionFailure: Error {
+    case missing(String)
+    case ambiguous(String)
+}
+
 final class OutfitFlowTests: XCTestCase {
     private let token = "saint-look-ui-tests-owner-token-00000001"
     private let baseURL = "http://127.0.0.1:8788"
@@ -8,6 +47,13 @@ final class OutfitFlowTests: XCTestCase {
     override func setUp() async throws {
         continueAfterFailure = false
         try await control("online", reset: true)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:8789/__control")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer saint-look-ui-provider-control-token-00000001", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["reset": true, "illustrationMode": "success"])
+        let (_, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
     }
 
     private func control(_ mode: String, reset: Bool = false) async throws {
@@ -64,9 +110,57 @@ final class OutfitFlowTests: XCTestCase {
             }
             guard attempt < 7 else { break }
             let distance = present ? viewport.midY - frame.midY : (towardTop ? 180 : -180)
-            let movement = (distance < 0 ? -1.0 : 1.0) * min(180, max(100, abs(distance)))
-            let start = app.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: viewport.midX, dy: viewport.midY))
+            let movement: CGFloat
+            let start: XCUICoordinate
+            if let bar = foregroundBar, ["Собрать лук", "Изменить лук"].contains(bar.identifier) {
+                let navigationFrame = bar.frame
+                let visibleNavigation = navigationFrame.intersection(app.frame)
+                let reachableNavigation = bar.exists && !visibleNavigation.isEmpty && bar.buttons.allElementsBoundByIndex.contains {
+                    $0.exists && $0.isHittable && !$0.frame.intersection(visibleNavigation).isEmpty
+                }
+                let containers = app.scrollViews.containing(.textField, identifier: "outfit-name").allElementsBoundByIndex.filter {
+                    guard $0.exists else { return false }
+                    let bounds = $0.frame
+                    return !bounds.intersection(viewport).isEmpty && bounds.maxY > navigationFrame.maxY
+                        && bounds.minX < navigationFrame.maxX && bounds.maxX > navigationFrame.minX
+                }
+                guard reachableNavigation, containers.count == 1, let container = containers.first else {
+                    capture("ambiguous-constructor-scroll-surface")
+                    XCTFail("Constructor scrolling requires one visible surface under its foreground navigation bar")
+                    return false
+                }
+                let bounds = container.frame
+                let content = viewport.intersection(bounds)
+                guard !content.isEmpty, content.height > 60 else {
+                    capture("invalid-constructor-scroll-path")
+                    XCTFail("Constructor scrolling requires a usable content viewport")
+                    return false
+                }
+                // At maximum text, seven 180pt drags stop before the first row.
+                // Use the visible height, preserving the same bounded attempt count
+                // and keeping the path away from navigation and the bottom safe area.
+                let direction: CGFloat = distance < 0 ? -1 : 1
+                let gestureInset = min(80, content.height * 0.2)
+                let travel = min(content.height - 2 * gestureInset,
+                                 min(content.height * 0.65, present ? max(40, abs(distance)) : content.height * 0.65))
+                movement = direction * travel
+                // The 8pt gutter stays inside the ScrollView, outside padded rows.
+                let y = direction < 0 ? content.maxY - gestureInset : content.minY + gestureInset
+                let origin = CGPoint(x: bounds.minX + 8, y: y)
+                let destination = CGPoint(x: origin.x, y: origin.y + movement)
+                guard bounds.contains(origin), bounds.contains(destination),
+                      app.frame.contains(origin), app.frame.contains(destination) else {
+                    capture("invalid-constructor-scroll-path")
+                    XCTFail("Both constructor scroll endpoints must remain inside its visible ScrollView")
+                    return false
+                }
+                start = container.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: origin.x - bounds.minX, dy: origin.y - bounds.minY))
+            } else {
+                movement = (distance < 0 ? -1.0 : 1.0) * min(180, max(100, abs(distance)))
+                start = app.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: viewport.midX, dy: viewport.midY))
+            }
             let end = start.withOffset(CGVector(dx: 0, dy: movement))
             start.press(forDuration: 0.05, thenDragTo: end)
         }
@@ -92,9 +186,13 @@ final class OutfitFlowTests: XCTestCase {
     @MainActor
     private func performSlotAction(_ action: String, slotID: String, in app: XCUIApplication) {
         tap(app.buttons["outfit-slot-menu-\(slotID)"], in: app)
-        let option = app.buttons["\(action)-\(slotID)"]
-        XCTAssertTrue(option.waitForExistence(timeout: 5))
-        option.tap()
+        do {
+            let option = try addressedNativeDialogAction("\(action)-\(slotID)", in: app)
+            option.tap()
+        } catch {
+            capture("ambiguous-native-dialog-action")
+            XCTFail("The addressed native dialog action must be unambiguous: \(error)")
+        }
     }
 
     @MainActor
@@ -160,6 +258,15 @@ final class OutfitFlowTests: XCTestCase {
     @MainActor
     private func button(prefix: String, in app: XCUIApplication) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix)).firstMatch
+    }
+
+    @MainActor
+    private func publishEditedItem(_ app: XCUIApplication) async {
+        let saved = app.staticTexts["illustration-saved"]
+        guard saved.label.contains("предыдущая") else { return }
+        tap(app.buttons["generate-illustration"], in: app)
+        let updated = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Иллюстрация сохранена на устройстве."), object: saved)
+        await fulfillment(of: [updated], timeout: 40)
     }
 
     @MainActor
@@ -404,6 +511,7 @@ final class OutfitFlowTests: XCTestCase {
             tap(app.buttons["choose-type"], in: app)
             tap(app.buttons["type-\(type)"], in: app)
             app.buttons["save-item-edits"].tap()
+        await publishEditedItem(app)
             await summary(app, ready: index + 1, pending: 0)
         }
         let before = try await activityCounts()
@@ -508,6 +616,7 @@ final class OutfitFlowTests: XCTestCase {
         tap(app.buttons["choose-type"], in: app)
         tap(app.buttons["type-trousers"], in: app)
         app.buttons["save-item-edits"].tap()
+        await publishEditedItem(app)
         await summary(app, ready: 2, pending: 0)
 
         // The pending photo must finish after the new outfit is saved.
@@ -601,6 +710,7 @@ final class OutfitFlowTests: XCTestCase {
             tap(app.buttons["type-\(type)"], in: app)
             XCTAssertTrue(app.buttons["save-item-edits"].waitForExistence(timeout: 5), "Choosing a visible type must return to the editor")
             app.buttons["save-item-edits"].tap()
+        await publishEditedItem(app)
             await summary(app, ready: index + 1, pending: 0)
         }
         app.tabBars.buttons["Луки"].tap()
@@ -775,6 +885,7 @@ final class OutfitFlowTests: XCTestCase {
             tap(app.buttons["type-\(type)"], in: app)
             XCTAssertTrue(app.buttons["save-item-edits"].waitForExistence(timeout: 5), "Choosing a visible type must return to the editor")
             app.buttons["save-item-edits"].tap()
+        await publishEditedItem(app)
             await summary(app, ready: index + 1, pending: 0)
         }
         try await control("offline")

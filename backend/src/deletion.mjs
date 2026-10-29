@@ -18,6 +18,7 @@ export function deleteItem(database, itemId) {
     database.prepare('INSERT OR IGNORE INTO deleted_items(item_id) VALUES (?)').run(itemId);
     database.prepare('DELETE FROM items WHERE item_id=?').run(itemId);
     database.prepare('DELETE FROM operation_receipts WHERE item_id=?').run(itemId);
+    database.prepare('DELETE FROM preparations WHERE item_id=?').run(itemId);
     database.prepare('DELETE FROM illustrations WHERE item_id=?').run(itemId);
     database.prepare('DELETE FROM published_sources WHERE item_id=?').run(itemId);
     database.prepare('DELETE FROM illustration_sources WHERE item_id=?').run(itemId);

@@ -31,9 +31,12 @@ jobs:
   deploy:
     if: vars.AI_TRIAL_PREFLIGHT_VERIFIED == 'true' && github.ref == 'refs/heads/main' && vars.FLY_BUDGET_VERIFIED == 'true' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       SAINT_LOOK_DEPLOYMENT_PROFILE: live
+      SAINT_LOOK_MODEL_PROFILE: ${{ vars.SAINT_LOOK_MODEL_PROFILE || 'disabled' }}
+      SAINT_LOOK_FLY_MEMORY_MB: ${{ vars.SAINT_LOOK_FLY_MEMORY_MB || '1024' }}
+      FLY_MODEL_MEMORY_APPROVED: ${{ vars.FLY_MODEL_MEMORY_APPROVED }}
     outputs:
       revision: ${{ steps.upload.outputs.revision }}
       deployment_id: ${{ steps.upload.outputs.deployment_id }}
@@ -88,6 +91,9 @@ jobs:
           FLY_APP_NAME: ${{ vars.FLY_APP_NAME }}
           AI_TRIAL_PREFLIGHT_VERIFIED: ${{ vars.AI_TRIAL_PREFLIGHT_VERIFIED }}
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          FAL_KEY: ${{ secrets.FAL_KEY }}
+          SAINT_LOOK_ILLUSTRATIONS_ENABLED: ${{ vars.SAINT_LOOK_ILLUSTRATIONS_ENABLED }}
+          SAINT_LOOK_API_BUDGET_JSON: ${{ vars.SAINT_LOOK_API_BUDGET_JSON }}
           # Owner chose sandbox on 2026-10-26. Production requires a new explicit request.
           # Keep the production secret stored separately; never fall back to it.
           PHOTOROOM_API_KEY: ${{ secrets.PHOTOROOM_SANDBOX_API_KEY }}
@@ -105,6 +111,7 @@ jobs:
           SAINT_LOOK_EXPECTED_REVISION: ${{ steps.upload.outputs.revision }}
           SAINT_LOOK_EXPECTED_DEPLOYMENT_ID: ${{ steps.upload.outputs.deployment_id }}
           SAINT_LOOK_EXPECTED_DATA_VERSION: ${{ steps.release.outputs.data_version }}
+          SAINT_LOOK_EXPECTED_MODEL_PROFILE: ${{ vars.SAINT_LOOK_MODEL_PROFILE || 'disabled' }}
         run: node scripts/deploy/probe.mjs health
       - name: Record deployment identity
         env:

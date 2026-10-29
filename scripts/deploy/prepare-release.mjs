@@ -48,13 +48,35 @@ try {
   let manifest;
   try { manifest = JSON.parse(git('show', `${sha}:backend/release.json`)); }
   catch { throw new Error('Selected commit has no supported release manifest.'); }
-  if (manifest.format !== 1 || manifest.profile !== 'controlled-http' || ![1, 2, 3].includes(manifest.dataVersion)
-    || manifest.minDataVersion !== manifest.dataVersion || manifest.maxDataVersion !== manifest.dataVersion) {
+  if (manifest.format !== 1 || manifest.profile !== 'controlled-http' || ![1, 2, 3, 4].includes(manifest.dataVersion)
+    || manifest.minDataVersion !== manifest.dataVersion || manifest.maxDataVersion !== manifest.dataVersion
+    || (manifest.dataVersion === 4 && manifest.modelRuntime !== 'outfit-transformer-labse-v1')) {
     throw new Error('Selected release is not supported by this deployment workflow.');
   }
   if (profile === 'live' && !manifest.profiles?.includes('live')) throw new Error('Selected release does not support the selected profile.');
   if (profile === 'live' && manifest.providerConfig !== 'photoroom-jev-1.14.0-taxonomy-1') {
     throw new Error('Selected release has an incompatible provider configuration.');
+  }
+  if (manifest.dataVersion >= 4) {
+    for (const name of ['ios-outfits', 'ios-visual-iphone-light', 'ios-visual-iphone-dark', 'ios-visual-iphone-max-text', 'ios-visual-ipad-light']) {
+      const matches = checked.jobs?.filter(job => job.name === name) || [];
+      if (!matches.length || matches.some(job => job.status !== 'completed' || job.conclusion !== 'success')) {
+        throw new Error(`Required CI job did not pass: ${name}.`);
+      }
+    }
+  }
+  if (process.env.SAINT_LOOK_MODEL_PROFILE && process.env.SAINT_LOOK_MODEL_PROFILE !== 'disabled') {
+    if (profile !== 'live' || process.env.SAINT_LOOK_MODEL_PROFILE !== manifest.modelRuntime) throw new Error('Selected release has an incompatible model runtime.');
+    const images = await github(`/repos/${repository}/actions/workflows/model-image.yml/runs?head_sha=${sha}&branch=main&status=success&per_page=100`);
+    const imageRun = images.workflow_runs?.find(value => value.head_sha === sha && value.head_branch === 'main'
+      && value.event === 'push' && value.path === '.github/workflows/model-image.yml' && value.status === 'completed'
+      && value.conclusion === 'success' && value.head_repository?.full_name === repository && Number.isSafeInteger(value.id));
+    if (!imageRun) throw new Error('No successful real checkpoint image check for the selected main commit.');
+    const imageJobs = await github(`/repos/${repository}/actions/runs/${imageRun.id}/jobs?filter=latest&per_page=100`);
+    const matches = imageJobs.jobs?.filter(job => job.name === 'checkpoint-image') || [];
+    if (!matches.length || matches.some(job => job.status !== 'completed' || job.conclusion !== 'success')) {
+      throw new Error('Required real checkpoint image job did not pass.');
+    }
   }
   try { git('show', `${sha}:fly.toml`); }
   catch { throw new Error('Selected release has no Fly deployment configuration.'); }

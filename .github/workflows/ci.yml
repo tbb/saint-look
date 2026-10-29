@@ -21,7 +21,7 @@ on:
         description: Local Simulator suite
         type: choice
         default: all
-        options: [all, wardrobe, outfits, visual, camera, wardrobe-recovery]
+        options: [all, wardrobe, outfits, outfits-max-text, visual, camera, wardrobe-recovery]
       visual_profiles:
         description: Visual evidence profiles (only used by the visual suite)
         type: choice
@@ -94,6 +94,7 @@ jobs:
       - run: npm --prefix backend ci --ignore-scripts
       - run: npm --prefix backend run check
       - run: npm --prefix backend test
+      - run: PYTHONPATH=backend/ml python3 -m unittest backend/ml/test_contract.py
 
   ios:
     name: ${{ matrix.suite == 'wardrobe' && 'ios' || format('ios-{0}', matrix.label) }}
@@ -135,6 +136,7 @@ jobs:
           SAINT_LOOK_TEST_PROVIDER_ORIGIN: http://127.0.0.1:8789
           # Fixture capability is off until a focused test opts in through provider control.
           SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true'
+          SAINT_LOOK_TEST_MODEL_ORIGIN: http://127.0.0.1:8789
           SAINT_LOOK_ILLUSTRATION_TEST_ORIGIN: http://127.0.0.1:8789
           SAINT_LOOK_ILLUSTRATION_TEST_CONTROLLED: 'true'
           PHOTOROOM_SANDBOX_API_KEY: sandbox_fixture
@@ -184,16 +186,18 @@ jobs:
             bash client-ios/scripts/test-visual-acceptance.sh
             exit $?
           fi
-          if [[ "$TEST_SUITE" == "outfits" ]]; then
-            # Run both independent font-size checks, preserving failure and cancellation.
+          if [[ "$TEST_SUITE" == "outfits" || "$TEST_SUITE" == "outfits-max-text" ]]; then
+            # Main/PR run both font sizes. Manual max-text selection reuses the same checks.
             trap 'exit 130' INT
             trap 'exit 143' TERM
             normal_status=0
-            bash client-ios/scripts/test-simulator.sh || normal_status=$?
-            if (( normal_status >= 128 )); then exit "$normal_status"; fi
+            if [[ "$TEST_SUITE" == "outfits" ]]; then
+              bash client-ios/scripts/test-simulator.sh || normal_status=$?
+              if (( normal_status >= 128 )); then exit "$normal_status"; fi
+            fi
             large_status=0
             SAINT_LOOK_UI_CONTENT_SIZE=accessibility-extra-extra-extra-large \
-            SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/OutfitFlowTests/testOutfitActionsStayLocalAndAccessibleWithoutSwipes \
+            SAINT_LOOK_UI_TEST_ONLY=$'SaintLookUITests/OutfitFlowTests/testOutfitActionsStayLocalAndAccessibleWithoutSwipes\nSaintLookUITests/OutfitFlowTests/testSwipeDoesNotOpenPickerAndVerticalDragScrollsThroughRow' \
             bash client-ios/scripts/test-simulator.sh || large_status=$?
             if (( large_status >= 128 )); then exit "$large_status"; fi
             if (( normal_status != 0 )); then exit "$normal_status"; fi

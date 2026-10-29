@@ -7,7 +7,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 
 const command = resolve('scripts/deploy/prepare-release.mjs');
-const jobs = ['changes', 'backend', 'ios', 'container', 'deploy-policy'];
+const jobs = ['changes', 'backend', 'ios', 'ios-outfits', 'ios-visual-iphone-light', 'ios-visual-iphone-dark', 'ios-visual-iphone-max-text', 'ios-visual-ipad-light', 'container', 'deploy-policy'];
 async function fixture(t, checked = false, prepare = async () => {}) {
   const directory = await mkdtemp(join(tmpdir(), 'saint-look-release-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -29,7 +29,10 @@ async function fixture(t, checked = false, prepare = async () => {}) {
     if (url.pathname.endsWith('/ci.yml/runs')) {
       assert.equal(url.searchParams.get('head_sha'), sha);
       response.end(JSON.stringify({ workflow_runs: state.checked ? [{ id: 42, head_sha: sha, head_branch: 'main', event: state.event, path: '.github/workflows/ci.yml', status: 'completed', conclusion: 'success', head_repository: { full_name: 'fixture/project' } }] : [] }));
-    } else if (url.pathname.endsWith('/42/jobs')) response.end(JSON.stringify({ jobs: state.jobs }));
+    } else if (url.pathname.endsWith('/model-image.yml/runs')) {
+      response.end(JSON.stringify({ workflow_runs: state.modelChecked ? [{ id: 43, head_sha: sha, head_branch: 'main', event: 'push', path: '.github/workflows/model-image.yml', status: 'completed', conclusion: 'success', head_repository: { full_name: 'fixture/project' } }] : [] }));
+    } else if (url.pathname.endsWith('/43/jobs')) response.end(JSON.stringify({ jobs: [{ name: 'checkpoint-image', status: 'completed', conclusion: state.modelJob || 'success' }] }));
+    else if (url.pathname.endsWith('/42/jobs')) response.end(JSON.stringify({ jobs: state.jobs }));
     else { response.statusCode = 404; response.end('{}'); }
   });
   await new Promise(resolve => api.listen(0, '127.0.0.1', resolve));
@@ -70,21 +73,21 @@ test('a fully checked main commit produces exactly its source plus the baked rev
   assert.deepEqual(JSON.parse(result.stdout), { revision: f.sha, ciRunId: 42, profile: 'controlled-http', dataVersion: 1 });
 });
 
-test('a checked immutable-photo release preserves data format 3 in its deployment proof', async t => {
+test('a checked encoder-ready release preserves data format 4 in its deployment proof', async t => {
   const f = await fixture(t, true, async directory => {
     const path = join(directory, 'backend/release.json');
     const manifest = JSON.parse(await readFile(path));
-    Object.assign(manifest, { dataVersion: 3, minDataVersion: 3, maxDataVersion: 3 });
+    Object.assign(manifest, { dataVersion: 4, minDataVersion: 4, maxDataVersion: 4, modelRuntime: 'outfit-transformer-labse-v1' });
     await writeFile(path, JSON.stringify(manifest));
   });
   const result = await f.run();
   assert.equal(result.code, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).dataVersion, 3);
-  assert.equal(JSON.parse(await readFile(join(f.output, 'backend/release.json'))).minDataVersion, 3);
+  assert.equal(JSON.parse(result.stdout).dataVersion, 4);
+  assert.equal(JSON.parse(await readFile(join(f.output, 'backend/release.json'))).minDataVersion, 4);
 });
 
 test('unknown or inconsistent data formats cannot produce a deployment archive', async t => {
-  for (const versions of [[4, 4, 4], [3, 2, 3], [2, 1, 2], [1, 1, 2]]) {
+  for (const versions of [[5, 5, 5], [3, 2, 3], [2, 1, 2], [1, 1, 2]]) {
     const f = await fixture(t, true, async directory => {
       const path = join(directory, 'backend/release.json');
       const manifest = JSON.parse(await readFile(path));
@@ -186,4 +189,34 @@ test('live selection rejects an older recognition provider while controlled roll
   assert.match(rejected.stderr, /provider configuration/);
   await assert.rejects(access(f.output));
   assert.equal((await f.run()).code, 0);
+});
+
+
+test('real model release requires an actual checkpoint image check on the exact main SHA', async t => {
+  const f = await fixture(t, true, async directory => {
+    const path = join(directory, 'backend/release.json');
+    const manifest = JSON.parse(await readFile(path));
+    Object.assign(manifest, { dataVersion: 4, minDataVersion: 4, maxDataVersion: 4, profiles: ['live'],
+      providerConfig: 'photoroom-jev-1.14.0-taxonomy-1', modelRuntime: 'outfit-transformer-labse-v1' });
+    await writeFile(path, JSON.stringify(manifest));
+  });
+  const config = { SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', SAINT_LOOK_MODEL_PROFILE: 'outfit-transformer-labse-v1' };
+  const missing = await f.run(f.sha, config);
+  assert.equal(missing.code, 1); assert.match(missing.stderr, /checkpoint image/i);
+  f.state.modelChecked = true; f.state.modelJob = 'skipped';
+  assert.equal((await f.run(f.sha, config)).code, 1);
+  f.state.modelJob = 'success';
+  assert.equal((await f.run(f.sha, config)).code, 0);
+});
+
+test('v4 release rejects missing full native acceptance jobs even if the workflow reports success', async t => {
+  const f = await fixture(t, true, async directory => {
+    const path = join(directory, 'backend/release.json');
+    const manifest = JSON.parse(await readFile(path));
+    Object.assign(manifest, { dataVersion: 4, minDataVersion: 4, maxDataVersion: 4, modelRuntime: 'outfit-transformer-labse-v1' });
+    await writeFile(path, JSON.stringify(manifest));
+  });
+  f.state.jobs = f.state.jobs.filter(job => job.name !== 'ios-outfits');
+  const result = await f.run();
+  assert.equal(result.code, 1); assert.match(result.stderr, /ios-outfits/);
 });
