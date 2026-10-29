@@ -1,0 +1,197 @@
+{
+  "note": "Documentation controlled examples; IDs must correspond to actual delivered receipts. Neither vectors nor scores are production fallback. Nonempty target-only legacy reference may have publishedVersionId null only when no delivered receipt exists. All fixed occupied slots require a prepared item with exact version. UUIDs normalized lowercase. Error activeSpaceID appears only for incompatible_representations. Transport limit 4MiB / 300items / 8KiB each representation; context max32. Endpoint implies complement; response replaces only target draft slot, never saves. Complement always omits the target original from items, including when prepared; orderedSlots still binds its exact local version (nullable only for legacy without publication). Its unused vector space does not block complement.",
+  "request": {
+    "requestId": "00000000-0000-4000-8000-000000000501",
+    "snapshotId": "00000000-0000-4000-8000-000000000502",
+    "targetSlotId": "00000000-0000-4000-8000-000000000602",
+    "orderedSlots": [
+      {
+        "slotId": "00000000-0000-4000-8000-000000000601",
+        "zone": "body",
+        "itemId": "00000000-0000-4000-8000-000000000001",
+        "publishedVersionId": "00000000-0000-4000-8000-000000000201"
+      },
+      {
+        "slotId": "00000000-0000-4000-8000-000000000602",
+        "zone": "bottom",
+        "itemId": null,
+        "publishedVersionId": null
+      }
+    ],
+    "pinnedSlotIds": [
+      "00000000-0000-4000-8000-000000000601"
+    ],
+    "excludedItemIds": [],
+    "items": [
+      {
+        "itemId": "00000000-0000-4000-8000-000000000001",
+        "publishedVersionId": "00000000-0000-4000-8000-000000000201",
+        "photoVersionId": "00000000-0000-4000-8000-000000000101",
+        "sourceSetVersionId": "00000000-0000-4000-8000-000000000301",
+        "features": {
+          "type": "t_shirt",
+          "colors": [
+            "white"
+          ]
+        },
+        "representationJSON": "{\"schemaVersion\":1,\"spaceID\":\"controlled-outfit-v2\",\"photoVersionID\":\"00000000-0000-4000-8000-000000000101\",\"sourceSHA256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"textSHA256\":\"ea3d1b7d11b8e89b23803f4449bd694bb3a37010473af6130985ff82e8e357de\",\"vector\":[0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125]}",
+        "representationSHA256": "7c723d9085cabd223f57e3a1f1cc101db2a1b171cc96e27e603fb64c914d93f6"
+      },
+      {
+        "itemId": "00000000-0000-4000-8000-000000000002",
+        "publishedVersionId": "00000000-0000-4000-8000-000000000202",
+        "photoVersionId": "00000000-0000-4000-8000-000000000102",
+        "sourceSetVersionId": "00000000-0000-4000-8000-000000000302",
+        "features": {
+          "type": "jeans",
+          "colors": [
+            "blue"
+          ]
+        },
+        "representationJSON": "{\"schemaVersion\":1,\"spaceID\":\"controlled-outfit-v2\",\"photoVersionID\":\"00000000-0000-4000-8000-000000000102\",\"sourceSHA256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"textSHA256\":\"8f8fbd39f26656a39bb594719213eb6c7b3df9715cc33d282813afa0c518eeaa\",\"vector\":[0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125]}",
+        "representationSHA256": "434c9604826fa27a34bbf69bc4b23600f093372d2c629da8b632da33144b7ec6"
+      }
+    ]
+  },
+  "proposed": {
+    "requestId": "00000000-0000-4000-8000-000000000501",
+    "snapshotId": "00000000-0000-4000-8000-000000000502",
+    "targetSlotId": "00000000-0000-4000-8000-000000000602",
+    "outcome": "proposed",
+    "proposal": {
+      "itemId": "00000000-0000-4000-8000-000000000002",
+      "publishedVersionId": "00000000-0000-4000-8000-000000000202"
+    },
+    "spaceID": "controlled-outfit-v2",
+    "mode": "controlled",
+    "policyVersion": "outfit-placement-v1",
+    "reason": null,
+    "conflictingSlotIds": []
+  },
+  "no_alternative": {
+    "requestId": "00000000-0000-4000-8000-000000000501",
+    "snapshotId": "00000000-0000-4000-8000-000000000502",
+    "targetSlotId": "00000000-0000-4000-8000-000000000602",
+    "outcome": "no_alternative",
+    "proposal": null,
+    "spaceID": "controlled-outfit-v2",
+    "mode": "controlled",
+    "policyVersion": "outfit-placement-v1",
+    "reason": "no_category_candidates",
+    "conflictingSlotIds": []
+  },
+  "constraints_conflict": {
+    "requestId": "00000000-0000-4000-8000-000000000501",
+    "snapshotId": "00000000-0000-4000-8000-000000000502",
+    "targetSlotId": "00000000-0000-4000-8000-000000000602",
+    "outcome": "constraints_conflict",
+    "proposal": null,
+    "spaceID": "controlled-outfit-v2",
+    "mode": "controlled",
+    "policyVersion": "outfit-placement-v1",
+    "reason": "target_pinned",
+    "conflictingSlotIds": [
+      "00000000-0000-4000-8000-000000000602"
+    ]
+  },
+  "empty_context": {
+    "requestId": "00000000-0000-4000-8000-000000000501",
+    "snapshotId": "00000000-0000-4000-8000-000000000502",
+    "targetSlotId": "00000000-0000-4000-8000-000000000602",
+    "outcome": "empty_context",
+    "proposal": null,
+    "spaceID": "controlled-outfit-v2",
+    "mode": "controlled",
+    "policyVersion": "outfit-placement-v1",
+    "reason": "context_required",
+    "conflictingSlotIds": []
+  },
+  "legacyTargetRequest": {
+    "requestId": "00000000-0000-4000-8000-000000000501",
+    "snapshotId": "00000000-0000-4000-8000-000000000502",
+    "targetSlotId": "00000000-0000-4000-8000-000000000602",
+    "orderedSlots": [
+      {
+        "slotId": "00000000-0000-4000-8000-000000000601",
+        "zone": "body",
+        "itemId": "00000000-0000-4000-8000-000000000001",
+        "publishedVersionId": "00000000-0000-4000-8000-000000000201"
+      },
+      {
+        "slotId": "00000000-0000-4000-8000-000000000602",
+        "zone": "bottom",
+        "itemId": "00000000-0000-4000-8000-000000000003",
+        "publishedVersionId": null
+      }
+    ],
+    "pinnedSlotIds": [
+      "00000000-0000-4000-8000-000000000601"
+    ],
+    "excludedItemIds": [],
+    "items": [
+      {
+        "itemId": "00000000-0000-4000-8000-000000000001",
+        "publishedVersionId": "00000000-0000-4000-8000-000000000201",
+        "photoVersionId": "00000000-0000-4000-8000-000000000101",
+        "sourceSetVersionId": "00000000-0000-4000-8000-000000000301",
+        "features": {
+          "type": "t_shirt",
+          "colors": [
+            "white"
+          ]
+        },
+        "representationJSON": "{\"schemaVersion\":1,\"spaceID\":\"controlled-outfit-v2\",\"photoVersionID\":\"00000000-0000-4000-8000-000000000101\",\"sourceSHA256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"textSHA256\":\"ea3d1b7d11b8e89b23803f4449bd694bb3a37010473af6130985ff82e8e357de\",\"vector\":[0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125]}",
+        "representationSHA256": "7c723d9085cabd223f57e3a1f1cc101db2a1b171cc96e27e603fb64c914d93f6"
+      },
+      {
+        "itemId": "00000000-0000-4000-8000-000000000002",
+        "publishedVersionId": "00000000-0000-4000-8000-000000000202",
+        "photoVersionId": "00000000-0000-4000-8000-000000000102",
+        "sourceSetVersionId": "00000000-0000-4000-8000-000000000302",
+        "features": {
+          "type": "jeans",
+          "colors": [
+            "blue"
+          ]
+        },
+        "representationJSON": "{\"schemaVersion\":1,\"spaceID\":\"controlled-outfit-v2\",\"photoVersionID\":\"00000000-0000-4000-8000-000000000102\",\"sourceSHA256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"textSHA256\":\"8f8fbd39f26656a39bb594719213eb6c7b3df9715cc33d282813afa0c518eeaa\",\"vector\":[0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125]}",
+        "representationSHA256": "434c9604826fa27a34bbf69bc4b23600f093372d2c629da8b632da33144b7ec6"
+      }
+    ]
+  },
+  "errors": {
+    "snapshot_stale": {
+      "error": "snapshot_stale"
+    },
+    "incompatible_representations": {
+      "error": "incompatible_representations",
+      "activeSpaceID": "active-space-id"
+    },
+    "model_failed": {
+      "error": "model_failed"
+    },
+    "model_unavailable": {
+      "error": "model_unavailable"
+    },
+    "context_too_large": {
+      "error": "context_too_large"
+    },
+    "invalid_prepared_item": {
+      "error": "invalid_prepared_item"
+    }
+  },
+  "configurationRecommendations": {
+    "available": true,
+    "reason": null,
+    "strategies": [
+      "single"
+    ],
+    "policyVersion": "outfit-placement-v1",
+    "limits": {
+      "items": 300,
+      "context": 32,
+      "requestBytes": 4194304,
+      "representationBytes": 8192
+    }
+  }
+}

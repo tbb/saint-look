@@ -20,7 +20,7 @@ export function createModelBridge(env, directory) {
   if (!Number.isInteger(threads) || threads < 1 || threads > 8) throw new Error('Invalid model thread count');
   const mode = origin ? 'controlled' : profile === 'disabled' ? 'disabled' : 'real';
   const timeout = 120_000, pending = new Map(), inputs = join(directory, 'model-inputs');
-  let child, closed = false, descriptor = null, queue = Promise.resolve();
+  let child, closed = false, descriptor = null, queue = Promise.resolve(), queued = 0;
   const unavailable = () => new Error('encoder_unavailable');
   function fail() {
     descriptor = null;
@@ -68,7 +68,36 @@ export function createModelBridge(env, directory) {
     if (typeof description.spaceID !== 'string' || !description.spaceID.length) throw unavailable();
     descriptor = description;
   })().catch(() => fail());
+  function validateRepresentation(result, expected) {
+    const vector = result?.vector;
+    const norm = Array.isArray(vector) && vector.reduce((sum, x) => sum + x * x, 0);
+    if (result?.schemaVersion !== 1 || result.spaceID !== expected.spaceID || result.photoVersionID !== expected.photoVersionID
+      || result.sourceSHA256 !== expected.sourceSHA256 || result.textSHA256 !== expected.textSHA256
+      || !Array.isArray(vector) || vector.length !== 128 || vector.some(value => typeof value !== 'number' || !Number.isFinite(value))
+      || !Number.isFinite(norm) || norm < 1e-12 || norm > 1e12) throw new Error('invalid_model_output');
+    return result;
+  }
+  function enqueue(run) {
+    if (queued >= 8 || closed) return Promise.reject(unavailable());
+    queued++;
+    const deadline = Date.now() + timeout;
+    const task = queue.then(() => { if (Date.now() > deadline) throw unavailable(); return run(); })
+      .finally(() => { queued--; });
+    queue = task.catch(() => {}); return task;
+  }
   return {
+    readRepresentation(json, expected) { return validateRepresentation(JSON.parse(json), expected); },
+    async rank(context, candidates) {
+      return enqueue(async () => {
+        await boot; if (!descriptor || closed) throw unavailable();
+        if (!Array.isArray(context) || context.length < 1 || context.length > 32
+          || !Array.isArray(candidates) || !candidates.length || candidates.length > 300) throw new Error('invalid_model_input');
+        const result = await exchange('rank', { context, candidates });
+        if (!Array.isArray(result?.scores) || result.scores.length !== candidates.length
+          || result.scores.some(score => typeof score !== 'number' || !Number.isFinite(score))) throw new Error('invalid_model_output');
+        return result.scores;
+      });
+    },
     async status() {
       await boot;
       return { available: Boolean(descriptor) && !closed, mode, activeSpaceID: descriptor?.spaceID ?? null,
@@ -81,17 +110,13 @@ export function createModelBridge(env, directory) {
         try {
           await writeFile(imagePath, source, { mode: 0o600 });
           const result = await exchange('prepare', { imagePath, ...(origin ? { imageBase64: source.toString('base64') } : {}), photoVersionID, ...features });
-          const norm = result?.vector?.reduce((sum, x) => sum + x * x, 0);
-          if (result?.schemaVersion !== 1 || result.spaceID !== descriptor.spaceID || result.photoVersionID !== photoVersionID
-            || result.sourceSHA256 !== sha256(source) || result.textSHA256 !== sha256(canonicalText(features))
-            || !Array.isArray(result.vector) || result.vector.length !== 128
-            || result.vector.some(value => typeof value !== 'number' || !Number.isFinite(value))
-            || !Number.isFinite(norm) || norm < 1e-12 || norm > 1e12) throw new Error('invalid_model_output');
+          validateRepresentation(result, { spaceID: descriptor.spaceID, photoVersionID,
+            sourceSHA256: sha256(source), textSHA256: sha256(canonicalText(features)) });
           const representationJSON = JSON.stringify(result);
           return { representationJSON, representationSHA256: sha256(representationJSON), input: { sourceSHA256: result.sourceSHA256, textSHA256: result.textSHA256 } };
         } finally { await rm(imagePath, { force: true }); }
       };
-      const task = queue.then(run); queue = task.catch(() => {}); return task;
+      return enqueue(run);
     },
     close() { closed = true; fail(); },
   };
