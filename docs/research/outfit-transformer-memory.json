@@ -1,0 +1,23 @@
+{
+  "initialCgroup": {
+    "memory.current": "526024704",
+    "memory.peak": "550391808",
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "1073741824",
+    "memory.swap.max": "0"
+  },
+  "finalCgroup": {
+    "memory.current": "447172608",
+    "memory.peak": "925290496",
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0",
+    "memory.max": "1073741824",
+    "memory.swap.max": "0"
+  },
+  "summedProcessPeakRSSKiB": 1092944,
+  "childExit": 0,
+  "elapsedSeconds": 23.30738587724045,
+  "threads": 1,
+  "backendAlive": true,
+  "fixtureAlive": true,
+  "notes": "Actual idle Node backend plus fixture process + real 16 photos. Fresh weight inode pagecache charged inside group. OS/services outside cgroup; local CPU not Fly; backend no pipeline requests."
+}

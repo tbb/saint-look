@@ -1,0 +1,7 @@
+# Install torch/torchvision from https://download.pytorch.org/whl/cpu on Linux.
+torch==2.6.0
+torchvision==0.21.0
+transformers==4.49.0
+Pillow==11.1.0
+numpy==2.2.3
+safetensors==0.5.3
