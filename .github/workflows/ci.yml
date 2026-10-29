@@ -195,7 +195,7 @@ jobs:
             if (( normal_status >= 128 )); then exit "$normal_status"; fi
             large_status=0
             SAINT_LOOK_UI_CONTENT_SIZE=accessibility-extra-extra-extra-large \
-            SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/OutfitFlowTests/testOutfitActionsStayLocalAndAccessibleWithoutSwipes \
+            SAINT_LOOK_UI_TEST_ONLY=$'SaintLookUITests/OutfitFlowTests/testOutfitActionsStayLocalAndAccessibleWithoutSwipes\nSaintLookUITests/OutfitFlowTests/testSwipeDoesNotOpenPickerAndVerticalDragScrollsThroughRow' \
             bash client-ios/scripts/test-simulator.sh || large_status=$?
             if (( large_status >= 128 )); then exit "$large_status"; fi
             if (( normal_status != 0 )); then exit "$normal_status"; fi
