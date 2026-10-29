@@ -1088,6 +1088,162 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testRepeatedOfflineErrorKeepsOpenReplacementMenuActionEffective() async throws {
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        let acknowledged = try await waitForTransportCount("acknowledgedOperations", equalTo: 1, timeout: 10)
+        XCTAssertTrue(acknowledged, "The initial ready result must be acknowledged before introducing the network failure")
+        try tapVisibleButton("edit-item", in: app)
+        try chooseType("shirt", in: app)
+        try chooseColors(["white"], replacing: ["blue"], in: app)
+        app.buttons["save-item-edits"].tap()
+        XCTAssertTrue(app.staticTexts["Рубашка"].waitForExistence(timeout: 5))
+        let previousImage = visiblePreviousPhoto(in: app)
+        let before = try await transportState()
+        let providersBefore = try await providerControl()
+        XCTAssertEqual(before["acceptedOperations"] as? Int, 1)
+        XCTAssertEqual(before["forwardedUploads"] as? Int, 1)
+
+        try await control(mode: "controlled-offline")
+        try tapVisibleButton("replace-demo-photo", in: app)
+        let attempted = try await waitForTransportCount("offlineAttemptedUploads", equalTo: 1, timeout: 5)
+        XCTAssertTrue(attempted, "The first replacement must actually attempt its upload")
+        let first = try await transportState()
+        let firstAttempt = try XCTUnwrap(first["offlineLastAttempt"] as? [String: Any])
+        let operationPath = try XCTUnwrap(firstAttempt["operationPath"] as? String)
+        let firstOperation = try XCTUnwrap(firstAttempt["operationId"] as? String)
+        let firstRevision = try XCTUnwrap(firstAttempt["revision"] as? Int)
+        XCTAssertEqual(firstRevision, 1)
+        XCTAssertEqual(firstAttempt["action"] as? String, "replace")
+        let firstHold = try await waitForOfflineStatusHold(operationPath: operationPath)
+        let firstRequestID = try XCTUnwrap(firstHold["requestId"] as? Int)
+        let error = app.staticTexts["item-error"].firstMatch
+        XCTAssertTrue(error.waitForExistence(timeout: 3))
+        XCTAssertEqual(error.label, "Связи с сервером пока нет. Фото сохранено; отправка продолжится автоматически.")
+        for _ in 0..<2 where !error.isHittable { app.swipeUp() }
+        XCTAssertTrue(error.isHittable, "The first offline error must be visible before the menu is opened")
+
+        app.navigationBars.buttons["item-actions"].firstMatch.tap()
+        let command = app.collectionViews.buttons.matching(identifier: "replace-demo-photo").firstMatch
+        var previousFrame: CGRect?
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard command.exists, command.isHittable else { previousFrame = nil; return false }
+            let frame = command.frame
+            defer { previousFrame = frame }
+            return !frame.isEmpty && previousFrame == frame
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed,
+                       "The native replacement menu must be stable before releasing the repeated error")
+        let released = try await releaseOfflineError(operationPath: operationPath, requestID: firstRequestID)
+        XCTAssertEqual(released["offlineReleasedErrors"] as? Int, 1)
+        let nextHold = try await waitForOfflineStatusHold(operationPath: operationPath, excluding: firstRequestID)
+        XCTAssertNotEqual(nextHold["requestId"] as? Int, firstRequestID,
+                          "A new status request proves the same operation completed catch/backoff after the repeated 503")
+        let afterError = try await transportState()
+        attachTransportState(afterError, named: "repeated-offline-error-before-menu-action")
+        XCTAssertEqual(afterError["offlineStatusRequests"] as? Int, 2)
+        XCTAssertEqual(afterError["offlineReleasedErrors"] as? Int, 1)
+        XCTAssertEqual(afterError["offlineTimeouts"] as? Int, 0)
+        XCTAssertTrue(afterError["offlineFault"] is NSNull)
+        // Do not reopen, wait out a disappearing menu, or retry this user action.
+        XCTAssertTrue(command.exists && command.isHittable,
+                      "Publishing the same offline error must leave the already-open menu interactive")
+        command.press(forDuration: 0.1)
+        let secondAttempted = try await waitForTransportCount("offlineAttemptedUploads", equalTo: 2, timeout: 5)
+        let afterPress = try await transportState()
+        attachTransportState(afterPress, named: "single-replacement-menu-action-receipt")
+        XCTAssertTrue(secondAttempted,
+                      "One press on the open menu must cause a fresh replacement upload, even when both fixture photos look identical")
+        let secondAttempt = try XCTUnwrap(afterPress["offlineLastAttempt"] as? [String: Any])
+        XCTAssertEqual(secondAttempt["itemId"] as? String, firstAttempt["itemId"] as? String)
+        XCTAssertNotEqual(secondAttempt["operationId"] as? String, firstOperation)
+        XCTAssertEqual(secondAttempt["revision"] as? Int, firstRevision + 1)
+        XCTAssertEqual(secondAttempt["action"] as? String, "replace")
+        XCTAssertEqual(afterPress["offlineTimeouts"] as? Int, 0)
+        XCTAssertTrue(afterPress["offlineFault"] is NSNull)
+        // End the bounded held-response fixture before inspecting persisted UI state.
+        try await control(mode: "offline")
+        assertRecoveryDidNotOpenPhotoPicker(in: app)
+        XCTAssertTrue(app.staticTexts["previous-result-notice"].exists)
+        XCTAssertTrue(visiblePreviousPhoto(in: app) == previousImage)
+        XCTAssertTrue(app.staticTexts["Рубашка"].exists)
+        XCTAssertTrue(app.staticTexts["Белый"].exists)
+        XCTAssertEqual(afterPress["acceptedOperations"] as? Int, before["acceptedOperations"] as? Int)
+        XCTAssertEqual(afterPress["forwardedUploads"] as? Int, before["forwardedUploads"] as? Int)
+        let providersAfter = try await providerControl()
+        for key in ["attributesCalls", "cutoutCalls"] {
+            XCTAssertEqual(providersAfter[key] as? Int, providersBefore[key] as? Int,
+                           "Offline menu interaction must not reach a paid provider")
+        }
+
+        app.terminate()
+        let restored = launch(reset: false, baseURL: testURL)
+        try openFirstItem(in: restored)
+        XCTAssertTrue(restored.staticTexts["previous-result-notice"].waitForExistence(timeout: 5))
+        XCTAssertTrue(visiblePreviousPhoto(in: restored) == previousImage)
+        _ = try await providerControl(["nextCutout": "red"])
+        try await control(mode: "online")
+        XCTAssertTrue(restored.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 40))
+        XCTAssertFalse(restored.staticTexts["previous-result-notice"].exists)
+        XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
+        XCTAssertTrue(restored.staticTexts["Белый"].exists)
+        XCTAssertFalse(visiblePreviousPhoto(in: restored) == previousImage)
+        let recovered = try await transportState()
+        XCTAssertEqual(recovered["acceptedOperations"] as? Int, 2)
+        XCTAssertEqual(recovered["forwardedUploads"] as? Int, 2)
+        await waitForSummary(restored, ready: 1, pending: 0, timeout: 5)
+    }
+
+    @MainActor
+    private func visiblePreviousPhoto(in app: XCUIApplication) -> Data {
+        let photo = app.images["item-photo"].firstMatch
+        for _ in 0..<3 where photo.frame.minY < app.navigationBars.firstMatch.frame.maxY { app.swipeDown() }
+        XCTAssertTrue(photo.exists && photo.isHittable)
+        return photo.screenshot().pngRepresentation
+    }
+
+    private func releaseOfflineError(operationPath: String, requestID: Int) async throws -> [String: Any] {
+        var request = URLRequest(url: URL(string: controlURL)!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 5
+        request.setValue("Bearer \(controlToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "mode": "controlled-offline", "releaseOfflineError": true,
+            "operationPath": operationPath, "heldRequestId": requestID
+        ])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200,
+                       "The fixture must release exactly the status response observed while the menu was open")
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    private func waitForOfflineStatusHold(operationPath: String, excluding requestID: Int? = nil) async throws -> [String: Any] {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while ContinuousClock.now < deadline {
+            let state = try await transportState()
+            XCTAssertEqual(state["offlineTimeouts"] as? Int, 0, "A fixture deadline is not an intentional repeated 503")
+            XCTAssertTrue(state["offlineFault"] is NSNull, "The controlled offline fixture must remain healthy")
+            let held = try XCTUnwrap(state["offlineHeldResponses"] as? [[String: Any]])
+            if let response = held.first(where: {
+                $0["operationPath"] as? String == operationPath && $0["requestId"] as? Int != requestID
+            }) { return response }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTFail("The app must request the same operation again after handling the offline error")
+        throw InteractionError.buttonNotVisible("held-offline-status")
+    }
+
+    private func attachTransportState(_ state: [String: Any], named name: String) {
+        guard let data = try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]) else { return }
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
     func testReplacementDeletedBeforeHeldResultArrivesStaysGoneAfterOfflineRelaunch() async throws {
         let app = launch(reset: true, baseURL: testURL)
         app.buttons["add-demo-photo"].tap()

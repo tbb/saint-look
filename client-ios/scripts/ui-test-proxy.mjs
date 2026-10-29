@@ -43,6 +43,38 @@ const illustrationOperations = new Set();
 const illustrationAcknowledgements = new Set();
 let lastIllustrationPath;
 let droppedUploadResponses = 0;
+// A deterministic retryable-error seam: no real upstream, photo retention, or app hooks.
+let offlineAttemptedUploads = 0, offlineStatusRequests = 0, offlineReleasedErrors = 0, offlineTimeouts = 0;
+let offlineLastAttempt = null, offlineFault = null;
+let offlineRequestSequence = 0;
+const offlineHeldResponses = new Map();
+function clearOfflineHolds() {
+  for (const entry of offlineHeldResponses.values()) { entry.cleanup(); entry.response.destroy(); }
+}
+function holdOfflineStatus(response, operationPath) {
+  const requestId = ++offlineRequestSequence;
+  const cleanup = () => {
+    clearTimeout(timer);
+    response.off('close', cleanup);
+    offlineHeldResponses.delete(requestId);
+  };
+  const timer = setTimeout(() => {
+    cleanup();
+    offlineTimeouts++;
+    offlineFault = 'hold_deadline_exceeded';
+    // This is a fixture failure, never a normal release or a successful barrier.
+    reply(response, 504, { error: 'fixture_offline_hold_expired' });
+    clearOfflineHolds();
+  }, 12000);
+  timer.unref();
+  offlineHeldResponses.set(requestId, { requestId, operationPath, response, cleanup });
+  response.once('close', cleanup);
+}
+function offlineState() {
+  return { offlineAttemptedUploads, offlineLastAttempt, offlineStatusRequests, offlineReleasedErrors,
+    offlineTimeouts, offlineFault,
+    offlineHeldResponses: [...offlineHeldResponses.values()].map(({ requestId, operationPath }) => ({ requestId, operationPath })) };
+}
 const heldResults = new Map();
 function releaseResults() {
   for (const release of heldResults.values()) release();
@@ -81,7 +113,18 @@ const server = createServer(async (request, response) => {
       if (request.headers.authorization !== `Bearer ${controlToken}`) return reply(response, 401, { error: 'unauthorized' });
       if (request.method === 'POST') {
         const input = JSON.parse((await readBody(request, 1024)).toString());
-        if (!['online', 'offline', 'drop-next-upload-response', 'drop-next-delete-response', 'block-acks', 'drop-next-ack-response', 'accept-upload-then-offline', 'hold-next-result', 'hold-next-illustration-result', 'foreign-illustration', 'block-prepared-sources', 'corrupt-prepared-source', 'legacy-attributes'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
+        if (!['online', 'offline', 'controlled-offline', 'drop-next-upload-response', 'drop-next-delete-response', 'block-acks', 'drop-next-ack-response', 'accept-upload-then-offline', 'hold-next-result', 'hold-next-illustration-result', 'foreign-illustration', 'block-prepared-sources', 'corrupt-prepared-source', 'legacy-attributes'].includes(input.mode)) return reply(response, 400, { error: 'invalid_mode' });
+        if (input.releaseOfflineError !== undefined) {
+          if (input.releaseOfflineError !== true || input.reset || input.advanceTimeMs !== undefined
+            || input.mode !== 'controlled-offline' || mode !== 'controlled-offline') return reply(response, 400, { error: 'invalid_offline_release' });
+          const held = offlineHeldResponses.get(input.heldRequestId);
+          if (offlineFault || !held || held.operationPath !== input.operationPath || held.response.destroyed) {
+            return reply(response, 409, { error: 'offline_response_not_held' });
+          }
+          held.cleanup();
+          offlineReleasedErrors++;
+          reply(held.response, 503, { error: 'fixture_offline' });
+        }
         let nextOffset;
         if (input.advanceTimeMs !== undefined) {
           if (!clockFile || !Number.isSafeInteger(input.advanceTimeMs) || input.advanceTimeMs < 0) {
@@ -94,13 +137,41 @@ const server = createServer(async (request, response) => {
         }
         if (nextOffset !== undefined) updateClock(nextOffset);
         mode = input.mode;
+        if (mode !== 'controlled-offline' || input.reset) clearOfflineHolds();
+        if (input.reset) {
+          offlineAttemptedUploads = 0; offlineStatusRequests = 0; offlineReleasedErrors = 0; offlineTimeouts = 0;
+          offlineLastAttempt = null; offlineFault = null;
+          // Request IDs stay monotonic so a stale release cannot match a new session.
+        }
         if (!['hold-next-result', 'hold-next-illustration-result'].includes(mode) || input.reset) releaseResults();
         if (input.reset) { preparedSourceDownloads = 0; illustrationUploads = 0; illustrationOperations.clear(); illustrationAcknowledgements.clear(); lastIllustrationPath = undefined; acceptedOperations.clear(); forwardedUploads = 0; droppedUploadResponses = 0; deletedItems.clear(); forwardedDeletes = 0; droppedDeleteResponses = 0; acknowledgedOperations.clear(); forwardedAcknowledgements = 0; droppedAcknowledgementResponses = 0; lastOperationPath = undefined; }
       } else if (request.method !== 'GET') return reply(response, 405, { error: 'method_not_allowed' });
-      return reply(response, 200, { mode, preparedSourceDownloads, illustrationUploads, illustrationOperations: illustrationOperations.size, illustrationAcknowledgements: illustrationAcknowledgements.size, lastIllustrationPath, acceptedOperations: acceptedOperations.size, forwardedUploads, droppedUploadResponses, heldResultResponses: heldResults.size, deletedItems: deletedItems.size, forwardedDeletes, droppedDeleteResponses, acknowledgedOperations: acknowledgedOperations.size, forwardedAcknowledgements, droppedAcknowledgementResponses, lastOperationPath, clockOffsetMs: clockFile ? readClockOffset() : undefined });
+      return reply(response, 200, { mode, ...offlineState(), preparedSourceDownloads, illustrationUploads, illustrationOperations: illustrationOperations.size, illustrationAcknowledgements: illustrationAcknowledgements.size, lastIllustrationPath, acceptedOperations: acceptedOperations.size, forwardedUploads, droppedUploadResponses, heldResultResponses: heldResults.size, deletedItems: deletedItems.size, forwardedDeletes, droppedDeleteResponses, acknowledgedOperations: acknowledgedOperations.size, forwardedAcknowledgements, droppedAcknowledgementResponses, lastOperationPath, clockOffsetMs: clockFile ? readClockOffset() : undefined });
     }
     if (request.url !== '/health' && !request.url?.startsWith('/v1/items')) return reply(response, 404, { error: 'not_found' });
     if (mode === 'offline') { request.socket.destroy(); return; }
+    if (mode === 'controlled-offline') {
+      if (offlineFault) return reply(response, 500, { error: 'fixture_offline_poisoned' });
+      const isAttempt = request.method === 'POST' && (request.url === '/v1/items' || /^\/v1\/items\/[^/]+\/attempts$/.test(request.url));
+      if (isAttempt) {
+        const { itemId, operationId, revision = 0, action = 'create' } = JSON.parse((await readBody(request, 16 * 1024 * 1024)).toString());
+        const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+        if (!uuid.test(itemId) || !uuid.test(operationId) || !Number.isSafeInteger(revision) || revision < 0
+          || typeof action !== 'string' || action.length > 32) return reply(response, 400, { error: 'invalid_offline_attempt' });
+        const operationPath = `/v1/items/${itemId}/operations/${operationId}`;
+        if (offlineLastAttempt?.operationPath !== operationPath) clearOfflineHolds();
+        offlineLastAttempt = { itemId, operationId, revision, action, operationPath };
+        offlineAttemptedUploads++;
+        return reply(response, 503, { error: 'fixture_offline' });
+      }
+      if (request.method === 'GET' && /^\/v1\/items\/[^/]+\/operations\/[^/]+$/.test(request.url)) {
+        offlineStatusRequests++;
+        if (request.url !== offlineLastAttempt?.operationPath) return reply(response, 409, { error: 'fixture_offline_foreign_operation' });
+        holdOfflineStatus(response, request.url);
+        return;
+      }
+      return reply(response, 503, { error: 'fixture_offline' });
+    }
     const isPreparedSource = request.method === 'GET' && /^\/v1\/items\/[^/]+\/illustrations\/[^/]+\/sources\/[^/]+\/prepared$/.test(request.url);
     if (isPreparedSource) preparedSourceDownloads++;
     if (isPreparedSource && mode === 'corrupt-prepared-source') {
@@ -177,4 +248,4 @@ const server = createServer(async (request, response) => {
 server.listen(Number(process.env.SAINT_LOOK_UI_PROXY_PORT || 8788), '127.0.0.1', () => {
   console.log(JSON.stringify({ url: `http://127.0.0.1:${server.address().port}` }));
 });
-process.on('SIGTERM', () => { releaseResults(); server.close(); server.closeAllConnections(); });
+process.on('SIGTERM', () => { releaseResults(); clearOfflineHolds(); server.close(); server.closeAllConnections(); });
