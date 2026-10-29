@@ -750,9 +750,19 @@ final class OutfitFlowTests: XCTestCase {
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists)
         XCTAssertTrue(app.buttons[firstID].label.contains("Свитер"))
         let cycleSlotID = firstID.replacingOccurrences(of: "outfit-slot-body-", with: "")
+        func waitForCycledType(_ type: String) {
+            // A native dialog can dismiss before the row's accessibility label updates.
+            let changed = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label CONTAINS %@", type), object: app.buttons[firstID])
+            let result = XCTWaiter.wait(for: [changed], timeout: 5)
+            if result != .completed { capture("cycle-selection-timeout") }
+            XCTAssertEqual(result, .completed, "The single cycle action must update its addressed layer")
+        }
         performSlotAction("next-slot", slotID: cycleSlotID, in: app)
+        waitForCycledType("Футболка")
         XCTAssertTrue(app.buttons[firstID].label.contains("Футболка"))
         performSlotAction("previous-slot", slotID: cycleSlotID, in: app)
+        waitForCycledType("Свитер")
         XCTAssertTrue(app.buttons[firstID].label.contains("Свитер"))
         XCTAssertFalse(app.buttons["cancel-outfit-picker"].exists)
         tap(app.buttons[firstID], in: app)

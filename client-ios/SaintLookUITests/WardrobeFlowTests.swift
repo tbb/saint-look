@@ -1223,10 +1223,17 @@ final class WardrobeFlowTests: XCTestCase {
                 let action = app.collectionViews.buttons.matching(identifier: identifier).firstMatch
                 var previousFrame: CGRect?
                 let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                    guard action.exists, action.isHittable else { previousFrame = nil; return false }
+                    guard action.exists else { previousFrame = nil; return false }
                     let frame = action.frame
+                    guard frame.origin.x.isFinite, frame.origin.y.isFinite,
+                          frame.width.isFinite, frame.height.isFinite,
+                          !frame.isEmpty, app.frame.contains(frame) else {
+                        previousFrame = nil
+                        return false
+                    }
                     defer { previousFrame = frame }
-                    return !frame.isEmpty && previousFrame == frame
+                    // Ask AX for an activation point only after menu geometry settles.
+                    return previousFrame == frame && action.isHittable
                 }, object: nil)
                 // Native menu entries can exist before presentation finishes. Wait
                 // for that one command rather than repeating an action with side effects.
