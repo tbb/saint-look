@@ -1,0 +1,217 @@
+{
+  "evidence": "real-model-http-compose",
+  "model": "real",
+  "imageProvidersCalled": 0,
+  "receipts": "syntheticReceiptFixture, not proof of live image publication",
+  "spaceID": "5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b",
+  "hardware": {
+    "cpu": "Intel Xeon Processor (Cascadelake)",
+    "logicalCPUs": 4,
+    "os": "linux",
+    "kernel": "6.8.0-139-generic",
+    "architecture": "x64",
+    "hostMemoryMiB": 5925,
+    "node": "v24.21.0",
+    "modelThreads": 1
+  },
+  "preparation": {
+    "modelStartupMilliseconds": 10889.61,
+    "totalMilliseconds": 19027,
+    "sampledTreePeakRSSMiB": 1006.43,
+    "sampleIntervalMilliseconds": 25,
+    "inputs": [
+      {
+        "file": "photo-1.png",
+        "publicSHA256": "fbc6e902898915c554187d961515c7db2505954c4e46d4a090528de4348cdb50",
+        "encoderInputSHA256": "7ea9e7ce0115a1d10f8215fdaf6f187cdf1e28ff9096a6bd39d0e9c465c452c7",
+        "type": "t_shirt",
+        "colors": [
+          "white"
+        ],
+        "prepareMilliseconds": 7289.72,
+        "representationSHA256": "341c058a7f80f376bf815ab1950c278818bfc87985b369cbf6e25920d850dd8e",
+        "representationBytes": 2853
+      },
+      {
+        "file": "photo-2.jpg",
+        "publicSHA256": "b316902ad85e8ff46b164ceb7f2c38d3c1424c9d789703e0267e3dfce68fbe1c",
+        "encoderInputSHA256": "ecab36402ce3e5f8b09a0d0aa12b4047a868f88a7a125ce44a4614777b84249c",
+        "type": "jeans",
+        "colors": [
+          "blue"
+        ],
+        "prepareMilliseconds": 286.13,
+        "representationSHA256": "b8c916103dfcf78c2896e1e3c8928d86086c810a756dd7b80db1e0eef637cef4",
+        "representationBytes": 2868
+      },
+      {
+        "file": "photo-3.jpg",
+        "publicSHA256": "609a842b50d1d15c7ca1800143649769ad817c3b6929e31ee283ef024784b0e2",
+        "encoderInputSHA256": "e75e386d6d89196b3a491717c2c574801b7be98db26bea95c45cbd37bd048e46",
+        "type": "polo",
+        "colors": [
+          "white"
+        ],
+        "prepareMilliseconds": 274.29,
+        "representationSHA256": "316494ace0ea185e5886c87e2d1391e3f3af684bb129b59ae88f0609fd3a16ce",
+        "representationBytes": 2868
+      }
+    ]
+  },
+  "backend": {
+    "listeningMilliseconds": 237.58,
+    "modelReadyMilliseconds": 10696.56,
+    "sampledTreePeakRSSMiB": 324.43,
+    "sampleIntervalMilliseconds": 25
+  },
+  "requests": [
+    {
+      "label": "fresh-worker-empty-context-warm-filesystem-cache",
+      "totalItems": 3,
+      "slots": 2,
+      "maximumRankCalls": 3,
+      "payloadBytes": 10208,
+      "elapsedMilliseconds": 84.57,
+      "selectedTypes": [
+        "polo",
+        "jeans"
+      ],
+      "placements": [
+        {
+          "slotId": "51d08574-42f2-46d1-8ea0-29e685502b58",
+          "itemId": "c0d0b3dd-acd1-43bc-8be5-249e29c2c034",
+          "publishedVersionId": "3b64c9f2-27ac-421b-98fb-c9c53d22f4df"
+        },
+        {
+          "slotId": "d7763c2d-d68b-4350-93e6-a34214a4c784",
+          "itemId": "e1e7f237-01db-429f-a6ba-e7ce248f4cb1",
+          "publishedVersionId": "d62ce321-7c41-4364-87f2-5227f5042b1e"
+        }
+      ]
+    },
+    {
+      "label": "warm-empty-context",
+      "totalItems": 3,
+      "slots": 2,
+      "maximumRankCalls": 3,
+      "payloadBytes": 10208,
+      "elapsedMilliseconds": 28.46,
+      "selectedTypes": [
+        "polo",
+        "jeans"
+      ],
+      "placements": [
+        {
+          "slotId": "51d08574-42f2-46d1-8ea0-29e685502b58",
+          "itemId": "c0d0b3dd-acd1-43bc-8be5-249e29c2c034",
+          "publishedVersionId": "3b64c9f2-27ac-421b-98fb-c9c53d22f4df"
+        },
+        {
+          "slotId": "d7763c2d-d68b-4350-93e6-a34214a4c784",
+          "itemId": "e1e7f237-01db-429f-a6ba-e7ce248f4cb1",
+          "publishedVersionId": "d62ce321-7c41-4364-87f2-5227f5042b1e"
+        }
+      ]
+    },
+    {
+      "label": "warm-fill-empty-pinned-body",
+      "totalItems": 3,
+      "slots": 2,
+      "maximumRankCalls": 1,
+      "payloadBytes": 10316,
+      "elapsedMilliseconds": 19.59,
+      "selectedTypes": [
+        "t_shirt",
+        "jeans"
+      ],
+      "placements": [
+        {
+          "slotId": "5b348389-29ce-4ede-99b4-d2a68dc7cab9",
+          "itemId": "5d7bc8a9-7f7a-455d-83a6-5cf3593e30cd",
+          "publishedVersionId": "86186d35-97d3-4a9c-859d-6d3ebdcb91f2"
+        },
+        {
+          "slotId": "94265a75-2e75-49b7-b952-082a669eb167",
+          "itemId": "e1e7f237-01db-429f-a6ba-e7ce248f4cb1",
+          "publishedVersionId": "d62ce321-7c41-4364-87f2-5227f5042b1e"
+        }
+      ]
+    },
+    {
+      "label": "warm-synthetic-300-eight-body-layers-plus-bottom",
+      "totalItems": 300,
+      "slots": 9,
+      "maximumRankCalls": 17,
+      "payloadBytes": 981538,
+      "elapsedMilliseconds": 1379.24,
+      "selectedTypes": [
+        "t_shirt",
+        "t_shirt",
+        "t_shirt",
+        "t_shirt",
+        "t_shirt",
+        "t_shirt",
+        "t_shirt",
+        "t_shirt",
+        "jeans"
+      ],
+      "placements": [
+        {
+          "slotId": "c121b534-9d22-46ba-b32e-40e71d1a3e78",
+          "itemId": "04487c5b-1d52-4db1-8fbe-ebf46faab8f2",
+          "publishedVersionId": "d94af86b-ebe8-4d07-b5b3-9cb8341e36f7"
+        },
+        {
+          "slotId": "086eb6b8-4c02-4a0d-9453-d1ee3a2c2df9",
+          "itemId": "06314eff-0b40-453e-880b-9f985380a003",
+          "publishedVersionId": "6a803cbb-0f6d-41a3-a147-999a89191c73"
+        },
+        {
+          "slotId": "0800bfe0-7356-42ec-8e19-6ee7fc4d8b05",
+          "itemId": "06c50525-6ad6-4b7d-88b9-2e0064fe521f",
+          "publishedVersionId": "d93bf906-8670-4167-bac1-8035e33e972b"
+        },
+        {
+          "slotId": "a11b654d-3d1c-494b-bcb1-c41d28223781",
+          "itemId": "06e44cae-68f5-4d20-a836-006a6030a09f",
+          "publishedVersionId": "b2d8cd2c-4be0-4843-a655-53e1e02111c1"
+        },
+        {
+          "slotId": "81bab22f-8e0b-4b5f-a05b-32eddbaf6d89",
+          "itemId": "08201b96-1c94-4679-97f5-24c384919b70",
+          "publishedVersionId": "03f1cc20-5ba6-4c59-8949-c8452807a491"
+        },
+        {
+          "slotId": "a87e130a-fb7a-44ae-8bc9-78ec450a7e4d",
+          "itemId": "09ffba64-6e8a-495b-ba89-cbe6ea178b3e",
+          "publishedVersionId": "8689e013-208c-4c6d-89aa-d53e976017d8"
+        },
+        {
+          "slotId": "49e90357-a6ec-4aab-91ca-a10d6c18d6e4",
+          "itemId": "0a2ab4db-c195-4daf-a09a-14f623d76a12",
+          "publishedVersionId": "d58dc236-27d9-4275-b82b-4ccf3ea0ba19"
+        },
+        {
+          "slotId": "e61719fd-10bd-4411-b271-cac1bedfee0c",
+          "itemId": "0b1df79f-04b3-47fc-b50b-eae09d7147b3",
+          "publishedVersionId": "594b1ab9-9a80-459f-b3cb-030f8591f374"
+        },
+        {
+          "slotId": "ce8c1c60-4af6-4aab-9e60-860fa986869f",
+          "itemId": "e1e7f237-01db-429f-a6ba-e7ce248f4cb1",
+          "publishedVersionId": "d62ce321-7c41-4364-87f2-5227f5042b1e"
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Filesystem cache warmed by offline preparation before fresh HTTP worker.",
+    "RSS is sampled process-tree memory; not a cgroup maximum.",
+    "Synthetic 300 packets repeat two body vectors plus one jeans vector; eight body layers test bounded search, not a realistic outfit or taste quality.",
+    "maximumRankCalls is an algorithmic bound, not instrumented model call telemetry.",
+    "Empty-context head is numerically valid; quality without context is not established.",
+    "HTTP upload, validation, rank and response measured; iOS first display and WAN not measured.",
+    "Local CPU was not container-limited; controlled HTTP tests could run concurrently."
+  ],
+  "measurementDateUTC": "2026-10-29"
+}

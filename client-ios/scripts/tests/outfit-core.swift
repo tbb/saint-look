@@ -41,6 +41,8 @@ struct OutfitCoreChecks {
         shirt = try preparedFixture(shirt)
         jeans = try preparedFixture(jeans)
         try recommendationChecks(shirt: shirt, jeans: jeans, taxonomy: taxonomy)
+        try modelSpaceRecoveryChecks(shirt: shirt, jeans: jeans, file: file, taxonomy: taxonomy)
+        try compositionChecks(shirt: shirt, jeans: jeans, taxonomy: taxonomy)
         catalog.items = [shirt, jeans]
         try catalog.saveOutfit(outfit, taxonomy: taxonomy, availableCutouts: cutouts)
         try catalog.saveOutfit(outfit, taxonomy: taxonomy, availableCutouts: cutouts)
@@ -151,30 +153,22 @@ struct OutfitCoreChecks {
         precondition(afterDeletion == afterRemoval, "A stale gesture cannot target a different row")
         print("PASS: empty/single pools, removed candidates and stale row gestures keep the remaining composition safe")
 
-        // Shuffle respects stable slots and a pool containing items already pinned elsewhere.
+        // History also supports a manually constructed multi-place change.
         var shuffled = Outfit()
         let fixedBody = shuffled.slots[1].id
         let freeBody = shuffled.addBodyLayer()
         shuffled.selectItem(shirtID, for: fixedBody)
         shuffled.selectItem(hoodie.id, for: freeBody)
         let beforeShuffle = shuffled
-        shuffled.shuffle(pinnedSlotIDs: [fixedBody], candidates: [.body: [shirtID, hoodie.id, jacket.id], .bottom: [jeansID]])
-        precondition(shuffled.slots.first { $0.id == fixedBody }!.itemID == shirtID)
-        precondition(shuffled.slots.first { $0.id == freeBody }!.itemID == jacket.id)
-        precondition(shuffled.slots.first { $0.zone == .bottom }!.itemID == jeansID)
-        precondition(shuffled.selectedIDs.count == 3)
+        shuffled.selectItem(jacket.id, for: freeBody)
+        shuffled.selectItem(jeansID, for: shuffled.slots.first { $0.zone == .bottom }!.id)
         let allPinned = shuffled
-        shuffled.shuffle(pinnedSlotIDs: Set(shuffled.slots.map(\.id)), candidates: [.body: [shirtID, hoodie.id, jacket.id]])
-        precondition(shuffled == allPinned)
-        shuffled.shuffle(pinnedSlotIDs: [], candidates: [:])
-        precondition(shuffled == allPinned, "An empty wardrobe pool must not clear existing references")
-        print("PASS: shuffle changes only unlocked slots with eligible candidates without duplicates")
 
         var history = OutfitCompositionHistory()
         history.recordChange(from: beforeShuffle, to: allPinned)
         shuffled.name = "Название не отменяется"
         history.undo(in: &shuffled, availableItemIDs: [shirtID, hoodie.id, jacket.id, jeansID])
-        precondition(shuffled.slots == beforeShuffle.slots, "A whole shuffle is undone in one action")
+        precondition(shuffled.slots == beforeShuffle.slots, "A whole composition is undone in one action")
         precondition(shuffled.name == "Название не отменяется")
         let beforeClear = shuffled
         shuffled.selectItem(nil, for: fixedBody)
@@ -671,6 +665,114 @@ struct OutfitCoreChecks {
         print("PASS: migration never borrows a stale illustration from another photo version")
 
     }
+    static func compositionChecks(shirt: WardrobeItem, jeans: WardrobeItem, taxonomy: WardrobeTaxonomy) throws {
+        var alternative = WardrobeItem(id: UUID(), operationID: UUID(), photoVersionID: UUID())
+        alternative.status = .ready; alternative.type = "Футболка"; alternative.resultFilename = "compose.png"
+        alternative = try preparedFixture(alternative)
+        let items = [shirt, jeans, alternative]
+        let packets = try items.map { try RecommendationItem(item: $0, representationJSON: $0.publishedVersion!.representation!.response.representationJSON!) }
+        var original = Outfit(name: "Сохранённый лук")
+        original.slots[1].itemID = shirt.id; original.slots[2].itemID = jeans.id
+        let emptyPin = original.slots[0].id
+        let pins: Set<UUID> = [emptyPin]
+        var session = OutfitRecommendationSession(), history = OutfitCompositionHistory(), draft = original
+        func begin(_ mode: ComposeMode = .rebuild, current: Outfit? = nil) throws -> ComposeRecommendationRequest {
+            try session.beginComposition(draft: current ?? original, mode: mode, pinnedSlotIDs: pins,
+                items: items, preparedItems: packets, savedOutfit: original, activeSpaceID: "controlled-fixture-space")
+        }
+        func response(_ request: ComposeRecommendationRequest, placements: [ComposeRecommendationResponse.Placement]? = nil,
+                      outcome: ComposeRecommendationResponse.Outcome = .partial) -> ComposeRecommendationResponse {
+            .init(requestId: request.requestId, snapshotId: request.snapshotId, mode: request.mode, outcome: outcome,
+                modelMode: "controlled", placements: placements ?? original.slots.map {
+                    let itemID = $0.zone == .body ? alternative.id : $0.itemID
+                    return .init(slotId: $0.id, itemId: itemID, publishedVersionId: items.first { $0.id == itemID }?.publishedVersion?.versionID)
+                }, spaceID: "controlled-fixture-space", policyVersion: "outfit-placement-v1", reason: nil, conflictingSlotIds: [])
+        }
+        let request = try begin()
+        let wire = try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as! [String: Any]
+        precondition(wire["targetSlotId"] == nil && wire["mode"] as? String == "rebuild")
+        _ = try session.applyComposition(response(request), to: &draft, history: &history, pinnedSlotIDs: pins,
+            items: items, preparedItems: packets, savedOutfit: original, taxonomy: taxonomy)
+        precondition(draft.slots[1].itemID == alternative.id && draft.slots[0].itemID == nil)
+        precondition(draft.slots.map(\.id) == original.slots.map(\.id) && draft.name == original.name)
+        history.undo(in: &draft, availableItemIDs: Set(items.map(\.id)))
+        precondition(draft == original && !history.canUndo, "Whole composition is one atomic undo, never an implicit save")
+        // The complete response is validated before touching any place.
+        for invalid in ["pin", "fixed", "duplicate", "order", "version", "fewer"] {
+            let request = try begin(invalid == "fixed" ? .fillEmpty : .rebuild)
+            var placements = response(request).placements!
+            switch invalid {
+            case "pin": placements[0] = .init(slotId: original.slots[0].id, itemId: alternative.id, publishedVersionId: alternative.publishedVersion!.versionID)
+            case "duplicate": placements[2] = .init(slotId: original.slots[2].id, itemId: alternative.id, publishedVersionId: alternative.publishedVersion!.versionID)
+            case "order": placements.swapAt(0, 1)
+            case "version": placements[1] = .init(slotId: original.slots[1].id, itemId: alternative.id, publishedVersionId: UUID())
+            case "fewer": placements[2] = .init(slotId: original.slots[2].id, itemId: nil, publishedVersionId: nil)
+            default: break
+            }
+            do {
+                _ = try session.applyComposition(response(request, placements: placements), to: &draft, history: &history, pinnedSlotIDs: pins,
+                    items: items, preparedItems: packets, savedOutfit: original, taxonomy: taxonomy)
+                fatalError("Accepted invalid whole composition: \(invalid)")
+            } catch RecommendationError.invalidResponse { }
+            precondition(draft == original && !history.canUndo)
+        }
+        for change in ["edit", "pin", "delete", "version", "saved", "cancel", "single", "newCompose"] {
+            draft = original; let request = try begin()
+            var currentItems = items, currentPins = pins
+            var saved: Outfit? = original
+            switch change {
+            case "edit": draft.name = "Новая правка"
+            case "pin": currentPins.insert(original.slots[1].id)
+            case "delete": currentItems.removeLast()
+            case "version": currentItems[2] = try preparedFixture(alternative)
+            case "saved": saved = nil
+            case "cancel": session.cancel()
+            case "single": _ = try session.begin(draft: original, targetSlotID: original.slots[1].id, pinnedSlotIDs: pins,
+                items: items, preparedItems: packets, savedOutfit: original, activeSpaceID: "controlled-fixture-space")
+            case "newCompose": _ = try begin()
+            default: break
+            }
+            let before = draft
+            do {
+                _ = try session.applyComposition(response(request), to: &draft, history: &history, pinnedSlotIDs: currentPins,
+                    items: currentItems, preparedItems: packets, savedOutfit: saved, taxonomy: taxonomy)
+                fatalError("Accepted late compose after \(change)")
+            } catch RecommendationError.stale { }
+            precondition(draft == before && !history.canUndo)
+        }
+        // Fill only a vacant place: occupied selections and pinned emptiness remain exact.
+        var gap = original; gap.selectItem(nil, for: gap.slots[1].id)
+        draft = gap
+        let fill = try begin(.fillEmpty, current: gap)
+        _ = try session.applyComposition(response(fill), to: &draft, history: &history, pinnedSlotIDs: pins,
+            items: items, preparedItems: packets, savedOutfit: original, taxonomy: taxonomy)
+        precondition(draft.slots[1].itemID == alternative.id && draft.slots[2].itemID == jeans.id && draft.slots[0].itemID == nil)
+        history.undo(in: &draft, availableItemIDs: Set(items.map(\.id)))
+        precondition(draft == gap && !history.canUndo)
+        for outcome in [ComposeRecommendationResponse.Outcome.unchanged, .no_solution, .constraints_conflict] {
+            draft = original; let request = try begin()
+            let noChange = ComposeRecommendationResponse(requestId: request.requestId, snapshotId: request.snapshotId,
+                mode: request.mode, outcome: outcome, modelMode: "controlled", placements: nil,
+                spaceID: "controlled-fixture-space", policyVersion: "outfit-placement-v1", reason: nil, conflictingSlotIds: [])
+            _ = try session.applyComposition(noChange, to: &draft, history: &history, pinnedSlotIDs: pins,
+                items: items, preparedItems: packets, savedOutfit: original, taxonomy: taxonomy)
+            precondition(draft == original && !history.canUndo)
+        }
+        let allPins = Set(original.slots.map(\.id))
+        let allPinned = try session.beginComposition(draft: original, mode: .rebuild, pinnedSlotIDs: allPins,
+            items: items, preparedItems: packets, savedOutfit: original, activeSpaceID: "controlled-fixture-space")
+        let unchanged = ComposeRecommendationResponse(requestId: allPinned.requestId, snapshotId: allPinned.snapshotId,
+            mode: .rebuild, outcome: .unchanged, modelMode: "controlled", placements: nil,
+            spaceID: "controlled-fixture-space", policyVersion: "outfit-placement-v1", reason: "all_pinned", conflictingSlotIds: [])
+        _ = try session.applyComposition(unchanged, to: &draft, history: &history, pinnedSlotIDs: allPins,
+            items: items, preparedItems: packets, savedOutfit: original, taxonomy: taxonomy)
+        precondition(draft == original && !history.canUndo)
+        let empty = Outfit()
+        _ = try session.beginComposition(draft: empty, mode: .rebuild, pinnedSlotIDs: [], items: [], preparedItems: [], savedOutfit: nil, activeSpaceID: nil)
+        precondition(session.pendingComposition != nil, "Empty context/wardrobe is a supported explicit no-solution request")
+        print("PASS: composition modes preserve pins, structure, atomic undo and reject stale or invalid whole proposals")
+    }
+
     static func recommendationChecks(shirt: WardrobeItem, jeans: WardrobeItem, taxonomy: WardrobeTaxonomy) throws {
         var alternative = WardrobeItem(id: UUID(), operationID: UUID(), photoVersionID: UUID())
         alternative.status = .ready; alternative.type = "Футболка"; alternative.resultFilename = "alternate.png"
@@ -792,6 +894,44 @@ struct OutfitCoreChecks {
                 preparedItems: legacyPackets, savedOutfit: original, activeSpaceID: "controlled-fixture-space")
             fatalError("A legacy fixed context cannot be admitted")
         } catch RecommendationError.preparationRequired { }
+        // Similar is a separate intent in the same editor, with the actual
+        // published origin and observable attributes rather than draft edits.
+        let similar = try session.begin(draft: original, targetSlotID: target, intent: .similar, pinnedSlotIDs: pins,
+            items: items, preparedItems: packets, savedOutfit: original, activeSpaceID: "controlled-fixture-space")
+        precondition(similar.intent == .similar)
+        precondition(similar.items.contains(where: { $0.itemId == shirt.id }),
+                     "Similar replacement requires the prepared original, unlike complement")
+        precondition(similar.items.first(where: { $0.itemId == shirt.id })?.effectiveFeatures.traits == shirt.publishedVersion?.illustration?.response.effectiveFeatures?.traits)
+        draft = original; history = OutfitCompositionHistory()
+        do {
+            _ = try session.apply(response(similar), to: &draft, history: &history, pinnedSlotIDs: pins,
+                items: items, preparedItems: packets, savedOutfit: original, taxonomy: taxonomy)
+            fatalError("A complement response cannot satisfy a similar request")
+        } catch RecommendationError.invalidResponse { }
+        let similarAgain = try session.begin(draft: original, targetSlotID: target, intent: .similar, pinnedSlotIDs: pins,
+            items: items, preparedItems: packets, savedOutfit: original, activeSpaceID: "controlled-fixture-space")
+        var similarResponse = response(similarAgain)
+        similarResponse.intent = .similar; similarResponse.rankingVersion = "observable-context-v1"
+        _ = try session.apply(similarResponse, to: &draft, history: &history, pinnedSlotIDs: pins,
+            items: items, preparedItems: packets, savedOutfit: original, taxonomy: taxonomy)
+        precondition(draft.slots[1].itemID == alternative.id)
+        history.undo(in: &draft, availableItemIDs: Set(items.map(\.id)))
+        precondition(draft == original && !history.canUndo)
+        let originOnly = try session.begin(draft: emptyContext, targetSlotID: target, intent: .similar, pinnedSlotIDs: pins,
+            items: items, preparedItems: packets, savedOutfit: nil, activeSpaceID: "controlled-fixture-space")
+        precondition(originOnly.intent == .similar && originOnly.orderedSlots.filter { $0.itemId != nil }.count == 1)
+        do {
+            _ = try session.begin(draft: original, targetSlotID: target, intent: .similar, pinnedSlotIDs: pins,
+                items: legacyItems, preparedItems: legacyPackets, savedOutfit: original, activeSpaceID: "controlled-fixture-space")
+            fatalError("An exclusion-only legacy source cannot support similar replacement")
+        } catch RecommendationError.similaritySourceRequired { }
+        var editedSource = shirt
+        editedSource.manualType = "Пальто"; editedSource.manualColors = ["Чёрный"]
+        let observedPacket = try RecommendationItem(item: editedSource,
+            representationJSON: editedSource.publishedVersion!.representation!.response.representationJSON!)
+        precondition(observedPacket.effectiveFeatures.type == "Футболка" && observedPacket.effectiveFeatures.colors == ["Белый"],
+                     "Similarity transmits committed effective features, never newer editable draft traits")
+        print("PASS: distinct similar intent, prepared origin, published traits, origin-only start, response intent and one undo")
         precondition(RecommendationError.message(for: URLError(.notConnectedToInternet)) != RecommendationError.message(for: ClientError.resultUnavailable("model_failed")))
         print("PASS: single recommendation draft/undo/save, cached wire, pins, context, legacy target, versions and late response guards")
     }
@@ -806,6 +946,57 @@ struct OutfitCoreChecks {
         let response = preparationResponse(item: item, intent: intent)
         try catalog.stagePreparation(for: id, response: response, representationFilename: "representation.json",
             representationDigest: response.representationSHA256!, actualArtifacts: intent.artifacts, actualSourceDigest: intent.sourceSHA256)
+    }
+
+    static func modelSpaceRecoveryChecks(shirt: WardrobeItem, jeans: WardrobeItem,
+                                         file: WardrobeCatalogFile, taxonomy: WardrobeTaxonomy) throws {
+        var catalog = WardrobeCatalog(items: [shirt, jeans])
+        var look = Outfit()
+        look.selectItem(shirt.id, for: look.slots.first { $0.zone == .body }!.id)
+        look.selectItem(jeans.id, for: look.slots.first { $0.zone == .bottom }!.id)
+        _ = look.addBodyLayer()
+        try catalog.saveOutfit(look, taxonomy: taxonomy, availableCutouts: [shirt.id, jeans.id])
+        try catalog.editAttributes(for: shirt.id, type: "Куртка", colors: ["Чёрный"], taxonomy: taxonomy)
+        let old = catalog.items[0].publishedVersion!
+        let illustration = old.illustration!.response
+        let request = IllustrationRequest(operationID: illustration.operationId, photoVersionID: illustration.photoVersionId,
+            sourceSetVersionID: illustration.sourceSetVersionId, revision: illustration.revision,
+            manualType: illustration.manualType, manualColors: illustration.manualColors, status: .ready)
+        let packet = PendingItemPublication(publication: old, request: request, preparedPhotos: [])
+        var failed = try preparationIntent(item: catalog.items[0], candidate: packet,
+            space: "space-A", mode: .reusePublication)
+        failed.status = .failed; failed.error = "encoder_unavailable"; failed.submitted = true; failed.terminalFailure = true
+        try catalog.beginPreparation(for: shirt.id, intent: failed)
+        try file.save(catalog); catalog = try file.load()
+        precondition(!catalog.clearRejectedPreparationSpace(activeSpaceID: "space-A"), "Never automatically retry a terminal failure in the same space")
+        var transport = catalog
+        transport.items[0].preparation?.terminalFailure = false
+        precondition(!transport.clearRejectedPreparationSpace(activeSpaceID: "space-B"), "An uncertain response must first reconcile its original operation")
+        precondition(transport.items[0].preparation?.operationID == failed.operationID)
+        precondition(catalog.clearRejectedPreparationSpace(activeSpaceID: "space-B"), "A terminal old-space operation must not block preparation in the discovered space")
+        precondition(catalog.items[0].preparation == nil && catalog.items[0].publishedVersion?.versionID == old.versionID)
+        precondition(catalog.items[0].editedType == "Куртка" && catalog.items[0].displayedType == "Футболка")
+        precondition(catalog.outfits == [look] && catalog.items[0].hasPreparedVersion)
+        // Existing manual construction remains possible with the prior complete packet.
+        try catalog.saveOutfit(look, taxonomy: taxonomy, availableCutouts: [shirt.id, jeans.id])
+        let next = try preparationIntent(item: catalog.items[0], candidate: packet, space: "space-B", mode: .reusePublication)
+        try catalog.beginPreparation(for: shirt.id, intent: next)
+        let response = preparationResponse(item: catalog.items[0], intent: next)
+        try catalog.stagePreparation(for: shirt.id, response: response, representationFilename: "space-B.json",
+            representationDigest: response.representationSHA256!, actualArtifacts: next.artifacts, actualSourceDigest: next.sourceSHA256)
+        try file.save(catalog); catalog = try file.load()
+        precondition(catalog.items[0].publishedVersion?.versionID == old.versionID)
+        precondition(!catalog.clearRejectedPreparationSpace(activeSpaceID: "space-C"), "An uncertain commit cannot be discarded merely because config changed")
+        try catalog.resumePreparation(for: shirt.id)
+        precondition(catalog.items[0].preparation?.operationID == next.operationID)
+        try catalog.confirmPublication(for: shirt.id, operationID: request.operationID)
+        try file.save(catalog); catalog = try file.load()
+        precondition(catalog.items[0].publishedVersion?.representation?.response.spaceID == "space-B")
+        precondition(catalog.items[0].publishedVersion?.cutoutFilename == old.cutoutFilename)
+        precondition(catalog.items[0].displayedIllustration?.filename == old.illustration?.filename)
+        precondition(catalog.items[0].editedType == "Куртка" && catalog.outfits == [look])
+        precondition(catalog.items[0].preparation == nil && catalog.items[0].pendingPublication == nil)
+        print("PASS: changed-space terminal recovery, uncertain same-ID replay, atomic packet, manual drafts and saved layers survive restart")
     }
 
     static func preparationIntent(item: WardrobeItem, candidate: PendingItemPublication, space: String = "controlled-space", mode: ItemPreparation.Mode = .fromIllustration) throws -> ItemPreparation {

@@ -11,6 +11,20 @@ xcodebuild -quiet \
   build
 app="$build/Build/Products/Release-iphoneos/SaintLook.app"
 test -f "$app/SaintLook"
+# Embed public build provenance after compilation; no owner credentials are read.
+python3 - "$app/Info.plist" "$root" <<'PYINFO'
+from pathlib import Path
+import plistlib, re, subprocess, sys
+info_path, source_root = Path(sys.argv[1]), sys.argv[2]
+revision = subprocess.check_output(['git', '-C', source_root, 'rev-parse', 'HEAD'], text=True).strip()
+if not re.fullmatch(r'[0-9a-f]{40}', revision):
+    raise SystemExit('Build source revision is unavailable')
+tracked_changes = subprocess.check_output(['git', '-C', source_root, 'status', '--porcelain', '--untracked-files=no'], text=True)
+info = plistlib.loads(info_path.read_bytes())
+info['SaintLookBuildRevision'] = revision
+info['SaintLookBuildSourceClean'] = not tracked_changes.strip()
+info_path.write_bytes(plistlib.dumps(info, fmt=plistlib.FMT_BINARY))
+PYINFO
 # Inspect the actual shipped bundle, not only compilation flags.
 for fixture in TrialPhotos VisualFixtures; do
   if [[ -e "$app/$fixture" ]]; then

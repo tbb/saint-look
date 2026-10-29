@@ -228,13 +228,16 @@ extension WardrobeCatalog {
         items[index].pendingPublication?.error = nil
     }
 
-    /// An authoritative space rejection is not a lost acknowledgement. After fresh
-    /// server config arrives, retain the downloaded packet and allow a new CPU intent.
-    mutating func clearRejectedPreparationSpace() -> Bool {
+    /// A fresh config may replace a rejected or definitively terminated old-space
+    /// CPU intent. Uncertain commits retain their packet and identity for replay.
+    mutating func clearRejectedPreparationSpace(activeSpaceID: String? = nil) -> Bool {
         var changed = false
-        for index in items.indices where items[index].preparation?.status == .failed
-            && items[index].preparation?.error == "representation_space_changed"
-            && items[index].pendingPublication == nil {
+        for index in items.indices {
+            guard let intent = items[index].preparation, intent.status == .failed,
+                  items[index].pendingPublication == nil else { continue }
+            let terminatedOldSpace = intent.terminalFailure == true
+                && activeSpaceID.map { $0 != intent.spaceID } == true
+            guard intent.error == "representation_space_changed" || terminatedOldSpace else { continue }
             items[index].preparation = nil
             changed = true
         }
