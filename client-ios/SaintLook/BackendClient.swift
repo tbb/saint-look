@@ -23,7 +23,7 @@ struct BackendClient {
         if response.statusCode == 410 || response.statusCode == 503 || response.statusCode == 409 {
             struct Failure: Decodable { let error: String }
             if let failure = try? JSONDecoder().decode(Failure.self, from: data),
-               ["result_expired", "result_delivered", "illustration_unavailable", "processing_in_progress", "photos_locked", "operation_superseded", "item_deleted", "encoder_unavailable", "encoder_failed", "preparation_required", "preparation_incomplete", "incompatible_representations", "identity_conflict"].contains(failure.error) {
+               ["result_expired", "result_delivered", "illustration_unavailable", "processing_in_progress", "photos_locked", "operation_superseded", "item_deleted", "encoder_unavailable", "encoder_failed", "preparation_required", "preparation_incomplete", "incompatible_representations", "representation_space_changed", "identity_conflict"].contains(failure.error) {
                 throw ClientError.resultUnavailable(failure.error)
             }
         }
@@ -115,9 +115,9 @@ struct BackendClient {
                 "sourceSetVersionId": item.sourceSetVersionID.uuidString.lowercased(),
                 "observedFeatures": try JSONSerialization.jsonObject(with: JSONEncoder().encode(observed))
             ]
-            if let digest = previous.representation?.response.artifacts?.observedFeaturesSHA256 {
+            if let digest = previous.representation?.response.artifacts?.observedFeaturesSHA256 ?? result.response.observedFeaturesSHA256 {
                 reuse["observedFeaturesSHA256"] = digest
-            }
+            } else { reuse["legacyImport"] = true }
             payload["reuseObserved"] = reuse
         }
         let body = try JSONSerialization.data(withJSONObject: payload)

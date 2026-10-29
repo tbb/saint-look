@@ -576,7 +576,7 @@ enum PreparationFailure {
         switch code {
         case "offline": return "Нет связи. Подготовка продолжится при подключении. Предыдущая версия сохранена."
         case "encoder_unavailable", "preparation_required": return "Подготовка вещей пока недоступна на сервере. Фото и предыдущая версия сохранены."
-        case "incompatible_representations": return "Для подбора нужно обновить вещь. Предыдущая версия доступна в ручных луках."
+        case "incompatible_representations", "representation_space_changed": return "Для подбора нужно обновить вещь. Предыдущая версия доступна в ручных луках."
         case "prepared_source_missing", "local_artifact_missing": return "Не удалось прочитать сохранённый результат. Исходники и луки сохранены; нужна повторная подготовка недостающего результата."
         case "encoder_failed": return "Не удалось завершить подготовку. Предыдущая версия сохранена. Попробуйте ещё раз."
         default: return "Не удалось завершить подготовку. Фото и предыдущая версия сохранены."
