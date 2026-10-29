@@ -195,6 +195,15 @@ struct PendingItemPublication: Codable {
     var preparationMode: ItemPreparation.Mode {
         legacyReconciliation == true ? .legacyImport : .fromIllustration
     }
+
+    // CPU-upgrading the old visible snapshot may coexist with a newer manual
+    // draft. It may never consume or replace a different illustration operation.
+    func canPrepare(for item: WardrobeItem) -> Bool {
+        item.photoVersionID == publication.photoVersionID && item.sourceSetVersionID == publication.sourceSetVersionID
+            && item.illustration?.operationID == request.operationID
+            && (legacyReconciliation == true
+                || (item.manualType == request.manualType && item.manualColors == request.manualColors))
+    }
 }
 
 struct ResultAcknowledgement: Codable, Hashable {
@@ -582,7 +591,8 @@ struct ItemPreparation: Codable {
     func matches(_ item: WardrobeItem) -> Bool {
         item.photoVersionID == publication.photoVersionID && item.sourceSetVersionID == publication.sourceSetVersionID
             && item.manualType == manualType && item.manualColors == manualColors
-            && (mode != .fromIllustration || item.illustration?.operationID == request.operationID)
+            && ((mode != .fromIllustration && item.downloadedIllustration?.legacyReconciliation != true)
+                || item.illustration?.operationID == request.operationID)
     }
 }
 

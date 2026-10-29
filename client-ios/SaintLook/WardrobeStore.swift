@@ -1030,8 +1030,7 @@ extension WardrobeStore {
         let mode: ItemPreparation.Mode
         if let downloaded = item.downloadedIllustration {
             publication = downloaded.publication; request = downloaded.request; prepared = downloaded.preparedPhotos
-            guard item.illustration?.operationID == request.operationID,
-                  item.manualType == request.manualType, item.manualColors == request.manualColors else { throw CancellationError() }
+            guard downloaded.canPrepare(for: item) else { throw CancellationError() }
             mode = downloaded.preparationMode
         } else {
             guard let previous = item.publishedVersion, let result = previous.illustration,
