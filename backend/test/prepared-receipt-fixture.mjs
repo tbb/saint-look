@@ -3,6 +3,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { featureDigest } from '../src/publication-contract.mjs';
 const digest = value => createHash('sha256').update(value).digest('hex');
 
 export function clonePreparedPacket(item) {
@@ -24,7 +25,7 @@ export function installReceiptFixture(directory, items, mode = 'controlled') {
       const artifact = digest('synthetic final image receipt fixture');
       insert.run(item.publishedVersionId, item.itemId, item.photoVersionId, item.sourceSetVersionId, randomUUID(), randomUUID(),
         digest(item.itemId), representation.spaceID, mode, representation.sourceSHA256, digest(JSON.stringify(features)),
-        JSON.stringify({ cutoutSHA256: artifact, illustrationSHA256: artifact, observedFeaturesSHA256: artifact, effectiveFeaturesSHA256: artifact }),
+        JSON.stringify({ cutoutSHA256: artifact, illustrationSHA256: artifact, observedFeaturesSHA256: artifact, effectiveFeaturesSHA256: item.effectiveFeatures ? featureDigest(item.effectiveFeatures) : artifact }),
         item.representationSHA256, JSON.stringify({ sourceSHA256: representation.sourceSHA256, textSHA256: representation.textSHA256 }), Date.now());
     }
     database.exec('COMMIT');

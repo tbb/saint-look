@@ -21,9 +21,9 @@ export async function publishedItem(server, type, colors = ['red']) {
     manualType: taxonomy.types.find(entry => entry.id === type).label, manualColors: colors.map(id => taxonomy.colors.find(entry => entry.id === id).label),
     photos: [{ id: photo.photoVersionId, role: 'front', imageBase64: photo.imageBase64 }] };
   assert.equal((await postJSON(server, `/v1/items/${photo.itemId}/illustrations`, illustration)).status, 202);
-  await awaitReady(server, `/v1/items/${photo.itemId}/illustrations/${illustration.operationId}`);
+  const illustrationReady = await awaitReady(server, `/v1/items/${photo.itemId}/illustrations/${illustration.operationId}`);
   const { ready, response } = await commitIllustration(server, photo, illustration); assert.equal(response.status, 204);
-  return { photo, illustration, prepared: ready, item: { itemId: photo.itemId, publishedVersionId: ready.operationId,
+  return { photo, illustration, effectiveFeatures: illustrationReady.effectiveFeatures, prepared: ready, item: { itemId: photo.itemId, publishedVersionId: ready.operationId,
     photoVersionId: photo.photoVersionId, sourceSetVersionId: illustration.sourceSetVersionId,
     features: ready.effectiveFeatures, representationJSON: ready.representationJSON, representationSHA256: ready.representationSHA256 } };
 }

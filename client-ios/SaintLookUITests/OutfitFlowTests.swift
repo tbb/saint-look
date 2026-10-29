@@ -464,10 +464,8 @@ final class OutfitFlowTests: XCTestCase {
         XCTAssertFalse(app.buttons[new].isSelected)
         app.buttons["cancel-outfit-picker"].tap()
         XCTAssertTrue(pin.isSelected, "Undo changes composition, not pins")
-        tap(app.buttons["fitting-shuffle"], in: app)
-        XCTAssertTrue(app.staticTexts["fitting-action-message"].exists)
         let after = try await activityCounts()
-        XCTAssertEqual(after, before, "Pinning, manual choice, shuffle and undo must stay local")
+        XCTAssertEqual(after, before, "Pinning, manual choice and undo must stay local")
         app.buttons["cancel-outfit"].tap()
         app.alerts.buttons.matching(identifier: "discard-outfit-changes").firstMatch.tap()
         app.terminate()
@@ -772,6 +770,35 @@ final class OutfitFlowTests: XCTestCase {
         XCTAssertEqual(afterRecommendation, providerCounts, "Recommendation must not upload images or call image/attribute providers")
         tap(app.buttons["fitting-undo"], in: app)
         XCTAssertTrue(app.buttons[firstID].label.contains("Свитер"), "One undo restores the pre-proposal draft")
+        performSlotAction("similar-slot", slotID: cycleSlotID, in: app)
+        let similar = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS 'Футболка'"), object: app.buttons[firstID])
+        XCTAssertEqual(XCTWaiter.wait(for: [similar], timeout: 30), .completed,
+                       "Similar intent may offer the only eligible alternative without an exact type match")
+        XCTAssertTrue(app.buttons[secondID].label.contains("Худи"))
+        XCTAssertTrue(app.buttons[thirdID].label.contains("Куртка"))
+        tap(app.buttons["fitting-undo"], in: app)
+        XCTAssertTrue(app.buttons[firstID].label.contains("Свитер"))
+        let afterSimilar = try await activityCounts()
+        XCTAssertEqual(afterSimilar, providerCounts, "Both intentions reuse cached representations without provider or encoder calls")
+        // Actual HTTP composition uses the already prepared catalog. A pinned
+        // empty head and the existing occupied places survive fillEmpty.
+        let headRow = button(prefix: "outfit-slot-head-", in: app)
+        let headSlotID = String(headRow.identifier.dropFirst("outfit-slot-head-".count))
+        tap(app.buttons["pin-slot-\(headSlotID)"], in: app)
+        performSlotAction("clear-slot", slotID: cycleSlotID, in: app)
+        tap(app.buttons["fitting-fill-empty"], in: app)
+        let filled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "NOT (label CONTAINS 'Выбрать вещь')"), object: app.buttons[firstID])
+        XCTAssertEqual(XCTWaiter.wait(for: [filled], timeout: 30), .completed)
+        XCTAssertTrue(app.buttons[secondID].label.contains("Худи"))
+        XCTAssertTrue(app.buttons[thirdID].label.contains("Куртка"))
+        XCTAssertTrue(headRow.label.contains("Выбрать вещь"))
+        XCTAssertTrue(app.buttons["pin-slot-\(headSlotID)"].isSelected)
+        tap(app.buttons["fitting-undo"], in: app)
+        XCTAssertTrue(app.buttons[firstID].label.contains("Выбрать вещь"), "Whole fill is undone in one step")
+        tap(app.buttons["fitting-undo"], in: app)
+        XCTAssertTrue(app.buttons[firstID].label.contains("Свитер"), "The preceding manual clear has its own undo entry")
+        let afterComposition = try await activityCounts()
+        XCTAssertEqual(afterComposition, providerCounts, "Whole composition must not repeat image providers or encoder")
         tap(app.buttons["add-body-layer"], in: app)
         // A deliberately empty final layer is also durable.
         capture("outfit-04-independent-layers")
@@ -979,7 +1006,7 @@ final class OutfitFlowTests: XCTestCase {
         var counts: [String: Int] = [:]
         let endpoints = [
             ("http://127.0.0.1:8788/__control", "saint-look-ui-control-test-token-00000001", ["forwardedUploads", "acceptedOperations"]),
-            ("http://127.0.0.1:8789/__control", "saint-look-ui-provider-control-token-00000001", ["attributesCalls", "cutoutCalls"]),
+            ("http://127.0.0.1:8789/__control", "saint-look-ui-provider-control-token-00000001", ["attributesCalls", "cutoutCalls", "encoderPreparationCalls"]),
         ]
         for (address, credential, keys) in endpoints {
             var request = URLRequest(url: URL(string: address)!)

@@ -291,6 +291,14 @@ final class WardrobeStore: ObservableObject {
         modeTask = nil
     }
 
+    /// A foreground recommendation can discover a deployment before lifecycle
+    /// resume. Schedule the existing config/preparation queue without touching a look.
+    func refreshPreparationConfiguration(after error: Error) async {
+        guard case ClientError.resultUnavailable(let code) = error,
+              ["incompatible_representations", "representation_space_changed"].contains(code) else { return }
+        discoverMode()
+    }
+
     private func discoverMode() {
         guard modeTask == nil, isConnected else { return }
         let client = BackendClient(settings: settings)
@@ -1002,7 +1010,7 @@ extension WardrobeStore {
     private func restartPreparationAfterSpaceChange(_ config: RecommendationConfiguration) throws {
         guard config.encoder.available else { return }
         var updated = catalog
-        if updated.clearRejectedPreparationSpace() { try persist(updated.items); items = updated.items }
+        if updated.clearRejectedPreparationSpace(activeSpaceID: config.encoder.activeSpaceID) { try persist(updated.items); items = updated.items }
     }
 
     private func verifiedPreparedPhotos(_ photos: [IllustrationPreparedPhoto], for item: WardrobeItem,
@@ -1154,6 +1162,9 @@ extension WardrobeStore {
                     intent.terminalFailure = true
                     var updated = catalog; try updated.savePreparation(for: id, intent: intent)
                     try persist(updated.items); items = updated.items
+                    // Restarting into a different model terminates queued work for
+                    // the old space. Only fresh config can authorize a new intent.
+                    if intent.error == "encoder_unavailable" { discoverMode() }
                     return
                 }
                 if response.status == .ready {

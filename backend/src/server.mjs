@@ -15,6 +15,7 @@ import { createProviderBudget, ProviderBudgetError } from './provider-budget.mjs
 import { ProviderError } from './providers.mjs';
 import { createModelBridge } from './model-bridge.mjs';
 import { createSingleRecommendations } from './recommendations-single.mjs';
+import { createComposeRecommendations } from './recommendations-compose.mjs';
 import { createPreparations } from './preparations.mjs';
 import { publicationProtocol } from './publication-contract.mjs';
 import { createIllustrations } from './illustrations.mjs';
@@ -56,6 +57,7 @@ const illustrations = createIllustrations(database, process.env, retention, budg
 const model = createModelBridge(process.env, directory);
 const preparations = createPreparations(database, process.env, retention, illustrations, model);
 const recommendations = createSingleRecommendations(database, model);
+const compositions = createComposeRecommendations(database, model);
 
 function itemResponse(row) {
   return { itemId: row.item_id, operationId: row.operation_id, photoVersionId: row.photo_version_id,
@@ -76,8 +78,9 @@ const server = createServer(async (request, response) => {
     illustrations.sweep(); preparations.sweep();
     if (request.method === 'GET' && path === '/v1/recommendations/config') {
       const configuration = await preparations.config();
-      return send(response, 200, { ...configuration, recommendations: recommendations.capability(configuration.encoder) });
+      return send(response, 200, { ...configuration, recommendations: { ...recommendations.capability(configuration.encoder), strategies: [...recommendations.capability(configuration.encoder).strategies, 'compose'] } });
     }
+    if (request.method === 'POST' && path === '/v1/recommendations/compose') return send(response, 200, await compositions.recommend(request));
     if (request.method === 'POST' && path === '/v1/recommendations/single') return send(response, 200, await recommendations.recommend(request));
     const preparation = path.match(/^\/v1\/items\/([^/]+)\/preparations(?:\/([^/]+))?$/);
     if (preparation) {
