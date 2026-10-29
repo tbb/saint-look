@@ -304,6 +304,7 @@ final class WardrobeStore: ObservableObject {
                     let config = try await client.recommendationConfiguration()
                     try Task.checkCancellation()
                     self?.preparationConfiguration = config
+                    try self?.restartPreparationAfterSpaceChange(config)
                     self?.startNewItemIllustrations()
                     self?.startNextPreparation()
                     self?.modeTask = nil
@@ -687,6 +688,11 @@ extension WardrobeStore {
         guard let candidate = item.pendingPublication,
               let stored = candidate.publication.representation,
               let expectedArtifacts = stored.response.artifacts else { throw CancellationError() }
+        if item.preparation?.mode == .fromIllustration {
+            guard verifiedPreparedPhotos(candidate.preparedPhotos, for: item, publication: candidate.publication).count == item.additionalPhotos.count + 1 else {
+                throw ClientError.resultUnavailable("prepared_source_missing")
+            }
+        }
         let candidateFolder = directory.appendingPathComponent(item.directoryName)
         let representation = try Data(contentsOf: candidateFolder.appendingPathComponent(stored.filename))
         let original = try Data(contentsOf: candidateFolder.appendingPathComponent(item.uploadFilename))
@@ -824,12 +830,11 @@ extension WardrobeStore {
                 $0.photoID == source.id && $0.modelVersion == "fal-ai/nano-banana-pro/edit"
                     && $0.templateVersion == "front-360x560-proposed-v1" && $0.geometryVersion == "fitting-square-1024-v1"
             }) {
-                guard cached.sourceDigest == photoDigest(data),
-                      let prepared = try? Data(contentsOf: folder.appendingPathComponent(cached.filename)),
-                      cached.preparedDigest == photoDigest(prepared) else {
-                    throw ClientError.resultUnavailable("prepared_source_missing")
+                guard cached.sourceDigest == photoDigest(data) else { throw ClientError.resultUnavailable("source_changed") }
+                if let prepared = try? Data(contentsOf: folder.appendingPathComponent(cached.filename)),
+                   cached.preparedDigest == photoDigest(prepared), UIImage(data: prepared) != nil {
+                    photo["preparedBase64"] = prepared.base64EncodedString()
                 }
-                photo["preparedBase64"] = prepared.base64EncodedString()
             }
             return photo
         }
@@ -946,11 +951,19 @@ extension WardrobeStore {
 
     func finishPreparation(_ id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }), !items[index].isReconcilingLegacyPublication else { return }
-        if items[index].pendingPublication != nil { startNextPreparation(); return }
+        if items[index].pendingPublication != nil {
+            do {
+                var updated = catalog
+                try updated.resumePreparation(for: id)
+                try persist(updated.items); items = updated.items
+                startNextPreparation()
+            } catch { notice = "Не удалось сохранить повтор подтверждения." }
+            return
+        }
         if var intent = items[index].preparation, intent.matches(items[index]) {
             // A completed encoder failure gets a new CPU-only operation. A transport
             // failure reuses its already durable operation identity.
-            if intent.status == .failed && ["encoder_failed", "incompatible_representations", "operation_superseded", "result_expired", "result_delivered"].contains(intent.error ?? "") {
+            if intent.status == .failed && ["encoder_failed", "incompatible_representations", "representation_space_changed", "operation_superseded", "result_expired", "result_delivered"].contains(intent.error ?? "") {
                 var updated = items; updated[index].preparation = nil
                 do { try persist(updated); items = updated } catch { notice = "Не удалось сохранить повтор подготовки."; return }
             } else {
@@ -980,22 +993,32 @@ extension WardrobeStore {
               [.first, .last, .premultipliedFirst, .premultipliedLast].contains(cg.alphaInfo) else {
             throw ClientError.resultUnavailable("local_artifact_missing")
         }
+        return PreparationArtifacts(cutoutSHA256: photoDigest(cutout), illustrationSHA256: photoDigest(image),
+            observedFeaturesSHA256: publication.representation?.response.artifacts?.observedFeaturesSHA256 ?? illustration.response.observedFeaturesSHA256 ?? "",
+            effectiveFeaturesSHA256: publication.representation?.response.artifacts?.effectiveFeaturesSHA256 ?? illustration.response.effectiveFeaturesSHA256 ?? "")
+    }
+
+    private func restartPreparationAfterSpaceChange(_ config: RecommendationConfiguration) throws {
+        guard config.encoder.available else { return }
+        var updated = catalog
+        if updated.clearRejectedPreparationSpace() { try persist(updated.items); items = updated.items }
+    }
+
+    private func verifiedPreparedPhotos(_ photos: [IllustrationPreparedPhoto], for item: WardrobeItem,
+                                        publication: ItemPublication) -> [IllustrationPreparedPhoto] {
+        guard let directory, let illustration = publication.illustration else { return [] }
+        let folder = directory.appendingPathComponent(item.directoryName)
         let sources = illustrationSources(for: item)
-        guard preparedPhotos.count == sources.count, Set(preparedPhotos.map(\.photoID)) == Set(sources.map(\.id)) else {
-            throw ClientError.resultUnavailable("prepared_source_missing")
-        }
-        for saved in preparedPhotos {
+        return photos.filter { saved in
             guard let source = sources.first(where: { $0.id == saved.photoID }),
                   saved.modelVersion == illustration.response.modelVersion,
                   saved.templateVersion == illustration.response.templateVersion,
                   saved.geometryVersion == illustration.response.geometryVersion,
                   let original = try? Data(contentsOf: folder.appendingPathComponent(source.filename)), photoDigest(original) == saved.sourceDigest,
                   let prepared = try? Data(contentsOf: folder.appendingPathComponent(saved.filename)), photoDigest(prepared) == saved.preparedDigest,
-                  UIImage(data: prepared) != nil else { throw ClientError.resultUnavailable("prepared_source_missing") }
+                  UIImage(data: prepared) != nil else { return false }
+            return true
         }
-        return PreparationArtifacts(cutoutSHA256: photoDigest(cutout), illustrationSHA256: photoDigest(image),
-            observedFeaturesSHA256: publication.representation?.response.artifacts?.observedFeaturesSHA256 ?? illustration.response.observedFeaturesSHA256 ?? "",
-            effectiveFeaturesSHA256: publication.representation?.response.artifacts?.effectiveFeaturesSHA256 ?? illustration.response.effectiveFeaturesSHA256 ?? "")
     }
 
     private func makePreparation(for item: WardrobeItem, spaceID: String) throws -> ItemPreparation {
@@ -1023,13 +1046,20 @@ extension WardrobeStore {
         }
         let folder = directory.appendingPathComponent(item.directoryName)
         let source = try Data(contentsOf: folder.appendingPathComponent(item.uploadFilename))
-        let artifacts = try publicationArtifacts(publication, item: item, preparedPhotos: prepared)
+        let availablePrepared = verifiedPreparedPhotos(prepared, for: item, publication: publication)
+        if mode == .fromIllustration {
+            guard availablePrepared.count == item.additionalPhotos.count + 1,
+                  Set(availablePrepared.map(\.photoID)) == Set([item.photoVersionID] + item.additionalPhotos.map(\.id)) else {
+                throw ClientError.resultUnavailable("prepared_source_missing")
+            }
+        }
+        let artifacts = try publicationArtifacts(publication, item: item, preparedPhotos: availablePrepared)
         if let previousArtifacts = publication.representation?.response.artifacts, artifacts != previousArtifacts { throw ClientError.invalidResponse }
         if publication.cutoutFilename == item.resultFilename, let cutoutHash = item.resultSHA256, artifacts.cutoutSHA256 != cutoutHash { throw ClientError.invalidResponse }
         guard item.preparationRevision < 9_007_199_254_740_991 else { throw ClientError.invalidResponse }
         return ItemPreparation(operationID: UUID(), revision: item.preparationRevision + 1, spaceID: spaceID,
             mode: mode, cutoutOperationID: publication.cutoutOperationID ?? item.operationID, publication: publication, request: request,
-            preparedPhotos: prepared, features: try CanonicalItemFeatures(displayType: publication.type, colors: publication.colors),
+            preparedPhotos: availablePrepared, features: try CanonicalItemFeatures(displayType: publication.type, colors: publication.colors),
             sourceSHA256: photoDigest(source), artifacts: artifacts,
             provenance: mode == .reusePublication ? "reused" : mode == .legacyImport ? "legacyImport" : "pipeline",
             manualType: item.manualType, manualColors: item.manualColors)
@@ -1118,6 +1148,11 @@ extension WardrobeStore {
                     guard let json = response.representationJSON, let expected = response.representationSHA256 else { throw ClientError.invalidResponse }
                     let data = Data(json.utf8)
                     guard photoDigest(data) == expected else { throw ClientError.invalidResponse }
+                    if intent.mode == .fromIllustration {
+                        guard verifiedPreparedPhotos(intent.preparedPhotos, for: current, publication: intent.publication).count == current.additionalPhotos.count + 1 else {
+                            throw ClientError.resultUnavailable("prepared_source_missing")
+                        }
+                    }
                     let actualArtifacts = try publicationArtifacts(intent.publication, item: current, preparedPhotos: intent.preparedPhotos)
                     let original = try Data(contentsOf: directory.appendingPathComponent(item.directoryName).appendingPathComponent(item.uploadFilename))
                     let filename = "representation-\(intent.operationID.uuidString.lowercased()).json"
@@ -1143,14 +1178,14 @@ extension WardrobeStore {
                 do {
                     try updated.savePreparation(for: id, intent: intent)
                     if let index = updated.items.firstIndex(where: { $0.id == id }), updated.items[index].pendingPublication != nil {
-                        let definitive = ["operation_superseded", "item_deleted", "result_expired", "incompatible_representations"].contains(code)
+                        let definitive = ["operation_superseded", "item_deleted", "result_expired", "incompatible_representations", "representation_space_changed"].contains(code)
                             || (error as? ClientError).map { if case .server(404) = $0 { return true }; return false } == true
                         if definitive { updated.items[index].pendingPublication = nil }
                         else { updated.items[index].pendingPublication?.error = retryable ? "offline" : "confirmation_failed" }
                     }
                     try persist(updated.items); items = updated.items
                 } catch { notice = "Не удалось сохранить состояние подготовки."; return }
-                if code == "incompatible_representations" { discoverMode() }
+                if code == "representation_space_changed" || code == "incompatible_representations" { discoverMode() }
                 guard retryable else { return }
                 do { try await Task.sleep(nanoseconds: retrySeconds * 1_000_000_000) } catch { return }
                 retrySeconds = min(retrySeconds * 2, 10)
@@ -1163,6 +1198,11 @@ extension WardrobeStore {
               current.preparation?.operationID == intent.operationID else { throw CancellationError() }
         let folder = directory.appendingPathComponent(item.directoryName)
         let original = try Data(contentsOf: folder.appendingPathComponent(item.uploadFilename))
+        if intent.mode == .fromIllustration {
+            guard verifiedPreparedPhotos(intent.preparedPhotos, for: item, publication: intent.publication).count == item.additionalPhotos.count + 1 else {
+                throw ClientError.resultUnavailable("prepared_source_missing")
+            }
+        }
         guard photoDigest(original) == intent.sourceSHA256,
               try publicationArtifacts(intent.publication, item: item, preparedPhotos: intent.preparedPhotos) == intent.artifacts else { throw ClientError.invalidResponse }
         let cutout = intent.mode == .legacyImport ? try Data(contentsOf: folder.appendingPathComponent(intent.publication.cutoutFilename)) : nil
