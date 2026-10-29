@@ -493,6 +493,14 @@ final class VisualAcceptanceTests: XCTestCase {
         let shoeID = String(shoes.identifier.dropFirst("outfit-slot-shoes-".count))
         try tap(app.buttons["outfit-slot-menu-\(shoeID)"], in: app)
         try tapMenuAction("clear-slot-\(shoeID)", in: app)
+        let cleared = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            shoes.exists && shoes.label.contains("Выбрать вещь")
+        }, object: shoes)
+        guard XCTWaiter.wait(for: [cleared], timeout: 5) == .completed else {
+            try capture("footwear-clear-timeout")
+            try require(false, "Clearing the addressed footwear slot must expose its empty state")
+            return
+        }
         try require(shoes.label.contains("Выбрать вещь"))
         try tap(shoes, in: app)
         let footwear = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-candidate-' AND label CONTAINS 'Туфли'")).firstMatch
@@ -608,7 +616,7 @@ final class VisualAcceptanceTests: XCTestCase {
         try capture("05-multilayer-editor")
         try tap(app.buttons["outfit-slot-menu-\(secondID)"], in: app)
         try tapMenuAction("remove-body-layer-\(secondID)", in: app)
-        try require(!(second.exists))
+        try expectGone(second, "Removing the addressed body layer must finish before saving the outfit")
         try nativeTap(app.buttons["save-outfit"], in: app)
         let outfit = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).firstMatch
         try require(outfit.waitForExistence(timeout: 5))
