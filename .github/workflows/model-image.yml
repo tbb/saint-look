@@ -3,10 +3,6 @@ name: Real checkpoint image verification
 on:
   push:
     branches: [main]
-    paths:
-      - 'backend/**'
-      - '.dockerignore'
-      - '.github/workflows/model-image.yml'
   pull_request:
     paths:
       - 'backend/Dockerfile'

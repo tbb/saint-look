@@ -57,6 +57,27 @@ try {
   if (profile === 'live' && manifest.providerConfig !== 'photoroom-jev-1.14.0-taxonomy-1') {
     throw new Error('Selected release has an incompatible provider configuration.');
   }
+  if (manifest.dataVersion >= 4) {
+    for (const name of ['ios-outfits', 'ios-visual-iphone-light', 'ios-visual-iphone-dark', 'ios-visual-iphone-max-text', 'ios-visual-ipad-light']) {
+      const matches = checked.jobs?.filter(job => job.name === name) || [];
+      if (!matches.length || matches.some(job => job.status !== 'completed' || job.conclusion !== 'success')) {
+        throw new Error(`Required CI job did not pass: ${name}.`);
+      }
+    }
+  }
+  if (process.env.SAINT_LOOK_MODEL_PROFILE && process.env.SAINT_LOOK_MODEL_PROFILE !== 'disabled') {
+    if (profile !== 'live' || process.env.SAINT_LOOK_MODEL_PROFILE !== manifest.modelRuntime) throw new Error('Selected release has an incompatible model runtime.');
+    const images = await github(`/repos/${repository}/actions/workflows/model-image.yml/runs?head_sha=${sha}&branch=main&status=success&per_page=100`);
+    const imageRun = images.workflow_runs?.find(value => value.head_sha === sha && value.head_branch === 'main'
+      && value.event === 'push' && value.path === '.github/workflows/model-image.yml' && value.status === 'completed'
+      && value.conclusion === 'success' && value.head_repository?.full_name === repository && Number.isSafeInteger(value.id));
+    if (!imageRun) throw new Error('No successful real checkpoint image check for the selected main commit.');
+    const imageJobs = await github(`/repos/${repository}/actions/runs/${imageRun.id}/jobs?filter=latest&per_page=100`);
+    const matches = imageJobs.jobs?.filter(job => job.name === 'checkpoint-image') || [];
+    if (!matches.length || matches.some(job => job.status !== 'completed' || job.conclusion !== 'success')) {
+      throw new Error('Required real checkpoint image job did not pass.');
+    }
+  }
   try { git('show', `${sha}:fly.toml`); }
   catch { throw new Error('Selected release has no Fly deployment configuration.'); }
   if (git('ls-tree', '-r', sha).split('\n').some(entry => entry.startsWith('120000 '))) throw new Error('Release symlinks are not supported.');
