@@ -361,10 +361,14 @@ final class VisualAcceptanceTests: XCTestCase {
                 return
             }
             if attempt == 4 { break }
+            // The rounded popup bounds include bottom chrome outside its scroll
+            // indicators. Start inside content, not 16pt from that clipped edge.
+            let gestureInset = min(80, viewport.height * 0.2)
+            let distance = min(viewport.height * 0.6, viewport.height - 2 * gestureInset)
             let start = popup.coordinate(withNormalizedOffset: .zero)
                 .withOffset(CGVector(dx: viewport.midX - popup.frame.minX,
-                                     dy: viewport.maxY - 16 - popup.frame.minY))
-            let end = start.withOffset(CGVector(dx: 0, dy: -viewport.height * 0.6))
+                                     dy: viewport.maxY - gestureInset - popup.frame.minY))
+            let end = start.withOffset(CGVector(dx: 0, dy: -distance))
             let failures = testRun?.failureCount ?? 0
             start.press(forDuration: 0.05, thenDragTo: end)
             try requireEqual(testRun?.failureCount ?? 0, failures, "Native menu scroll failed")
