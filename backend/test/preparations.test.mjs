@@ -227,3 +227,50 @@ test('model configuration is authenticated and missing real assets never become 
   await assert.rejects(env.launch({ NODE_ENV: 'production', SAINT_LOOK_TEST_MODEL_ORIGIN: 'http://127.0.0.1:8789' }), /Invalid controlled model origin/);
   await assert.rejects(env.launch({ NODE_ENV: 'test', SAINT_LOOK_TEST_MODEL_ORIGIN: 'https://example.com' }), /Invalid controlled model origin/);
 });
+
+test('v3 delivered digest-less cutout and undelivered ready illustration complete through explicit legacy import', async t => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { join } = await import('node:path');
+  const state = await illustrated(t);
+  const cutout = Buffer.from(await (await state.server.request(state.cutout.resultPath)).arrayBuffer());
+  const image = Buffer.from(await (await state.server.request(state.result.resultPath)).arrayBuffer());
+  assert.equal((await state.server.request(`/v1/items/${state.photo.itemId}/operations/${state.photo.operationId}/ack`, { method: 'POST' })).status, 204);
+  const saved = structuredClone(state.result);
+  delete saved.resultSHA256; delete saved.observedFeaturesSHA256; delete saved.effectiveFeaturesSHA256;
+  await state.server.stop();
+  // Historical v3 input: ingestion delivered/cleared, illustration ready but not acknowledged.
+  const legacyDatabase = new DatabaseSync(join(state.env.directory, 'wardrobe.sqlite'));
+  legacyDatabase.exec(`PRAGMA user_version=3;
+    UPDATE operation_receipts SET result_digest=NULL,result_mode=NULL;
+    UPDATE illustrations SET result_digest=NULL,observed_digest=NULL,effective_digest=NULL;`);
+  legacyDatabase.close();
+  state.server = await state.env.launch(state.fixture.env);
+  const oldAck = await state.server.request(state.path + '/ack', { method: 'POST' });
+  assert.equal(oldAck.status, 409); assert.equal((await oldAck.json()).error, 'preparation_required');
+  const withoutPacket = await prepare(state);
+  assert.equal(withoutPacket.response.status, 409);
+  assert.equal((await withoutPacket.response.json()).error, 'artifacts_not_ready');
+  const legacy = { cutout: { imageBase64: cutout.toString('base64'), mode: state.cutout.mode },
+    illustration: { imageBase64: image.toString('base64'), response: saved }, preparedPhotos: [] };
+  const mutated = structuredClone(legacy);
+  mutated.illustration.response.observedFeatures.traits.silhouette = 'relaxed';
+  const bad = await prepare(state, { mode: 'legacyImport', legacy: mutated });
+  assert.equal(bad.response.status, 409);
+  assert.equal((await bad.response.json()).error, 'legacy_artifact_conflict');
+  const operation = await prepare(state, { mode: 'legacyImport', legacy });
+  const admitted = await operation.response.json();
+  console.log(JSON.stringify({ migration: 'v3-cutout-delivered-illustration-ready', bodylessAck: 'preparation_required',
+    noPacket: 'artifacts_not_ready', explicitPacketStatus: operation.response.status, explicitPacketError: admitted.error ?? null }));
+  assert.equal(operation.response.status, 202, JSON.stringify(admitted));
+  const prepared = await ready(state.server, operation.path);
+  assert.equal(prepared.provenance, 'legacyImport'); assert.equal(prepared.imageMode, 'test');
+  assert.equal((await state.server.request(state.path + '/ack', { method: 'POST' })).status, 409);
+  assert.equal((await state.server.request(state.result.resultPath)).status, 200);
+  const ack = { publicationProtocol: 'prepared-item-v1', preparationOperationId: operation.input.operationId };
+  assert.equal((await post(state.server, state.path + '/ack', ack)).status, 204);
+  assert.equal((await state.server.request(operation.path)).status, 410);
+  assert.equal((await post(state.server, state.path + '/ack', ack)).status, 204);
+  assert.equal(state.fixture.calls.preparation.length, 1); assert.equal(state.fixture.calls.attributes.length, 1); assert.equal(state.fixture.calls.generation.length, 1);
+  const replacement = { ...await photoRequest(), itemId: state.photo.itemId, revision: 1, action: 'replace' };
+  assert.equal((await post(state.server, `/v1/items/${state.photo.itemId}/attempts`, replacement)).status, 409);
+});

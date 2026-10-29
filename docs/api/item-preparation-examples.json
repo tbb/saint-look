@@ -104,7 +104,8 @@
           "templateVersion": "front-360x560-proposed-v1",
           "geometryVersion": "fitting-square-1024-v1",
           "observedFeatures": "<complete saved IllustrationFeatures>",
-          "effectiveFeatures": "<complete saved IllustrationFeatures>"
+          "effectiveFeatures": "<complete saved IllustrationFeatures>",
+          "revision": 1
         }
       },
       "preparedPhotos": [

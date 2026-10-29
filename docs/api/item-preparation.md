@@ -121,7 +121,7 @@ commit, DELETE или семидневного TTL.
 Старый ack удалял result/effective/observed без digest. Историческое
 криптографическое доказательство отсутствует. В single-owner архитектуре
 локальный каталог — авторитет уже полученных файлов. Явный legacy import
-принимает реальный пакет + matching delivered illustration receipt +
+принимает реальный пакет + matching ready или delivered illustration receipt +
 immutable originals; один boolean ready или filename недостаточен.
 
 Legacy содержит cutout `{imageBase64,mode}`, illustration
@@ -169,3 +169,17 @@ checkpoint на публичном фото через тот же HTTP путь
 Подробности и измеренный single-photo результат — в [ML README](../../backend/ml/README.md).
 Полная настоящая генерация, приёмка на устройстве и модельные рекомендации
 остаются критериями интеграции следующих задач; документ их не объявляет выполненными.
+
+
+### Обновление старого клиента до доставки иллюстрации
+
+Если старый клиент уже подтвердил ingestion (историческая receipt без cutout
+SHA), но ещё не подтвердил готовую иллюстрацию, bodyless ack по-прежнему даёт
+409 preparation_required. Клиент сохраняет старый candidate как downloaded
+legacy snapshot и отправляет explicit legacyImport с actual конечными файлами.
+Active ready иллюстрация проверяется по сохранившимся bytes/observed/effective,
+их digest и точным ID/revision/версии; изменённый пакет отклоняется. Delivered
+receipt сохраняет прежнюю explicit local-authority миграцию. Новая подготовка
+не начинает image providers и не фиксирует источники до normal full ack.
+Это не обходит latest-photo/source-set checks и не выдаёт legacy картинку за
+prepared без результата encoder.
