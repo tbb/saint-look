@@ -90,7 +90,7 @@ export function createModelBridge(env, directory) {
     async rank(context, candidates) {
       return enqueue(async () => {
         await boot; if (!descriptor || closed) throw unavailable();
-        if (!Array.isArray(context) || context.length < 1 || context.length > 32
+        if (!Array.isArray(context) || context.length > 32
           || !Array.isArray(candidates) || !candidates.length || candidates.length > 300) throw new Error('invalid_model_input');
         const result = await exchange('rank', { context, candidates });
         if (!Array.isArray(result?.scores) || result.scores.length !== candidates.length
