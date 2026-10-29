@@ -48,6 +48,7 @@ export function createPreparations(database, env, retention, illustrations, mode
     if (running || closing) return;
     running = true;
     try {
+      await model.waitForStartup();
       while (!closing) {
         sweep();
         const row = database.prepare("SELECT * FROM preparations WHERE status='pending' AND retention_state='active' ORDER BY rowid LIMIT 1").get();
@@ -186,7 +187,8 @@ export function createPreparations(database, env, retention, illustrations, mode
     const status = await model.status();
     const row = readable(itemId, operationId);
     if (row.status !== 'ready' || !row.representation || !row.representation_digest) throw new RequestError(409, 'preparation_required');
-    if (!status.available || row.space_id !== status.activeSpaceID) throw new RequestError(409, 'representation_space_changed');
+    if (!status.available) throw new RequestError(503, 'encoder_unavailable');
+    if (row.space_id !== status.activeSpaceID) throw new RequestError(409, 'representation_space_changed');
     database.exec('BEGIN IMMEDIATE');
     try {
       const artifacts = parse(row.artifacts);

@@ -5,7 +5,11 @@ export const controlledSpaceID = 'controlled-outfit-v2';
 export async function modelFixture(request, response, body, handlers = {}, calls = [], rankCalls = []) {
   if (!request.url.startsWith('/model/')) return false;
   response.setHeader('Content-Type', 'application/json');
-  if (request.url === '/model/describe') { response.end(JSON.stringify({ spaceID: handlers.spaceID ?? controlledSpaceID })); return true; }
+  if (request.url === '/model/describe') {
+    if (handlers.describe) await handlers.describe(request, response);
+    else response.end(JSON.stringify({ spaceID: handlers.spaceID ?? controlledSpaceID }));
+    return true;
+  }
   if (request.url === '/model/rank') {
     const input = JSON.parse(body); rankCalls.push(input);
     if (handlers.rank) await handlers.rank(request, response, input);

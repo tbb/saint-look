@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID, createHash } from 'node:crypto';
 import sharp from 'sharp';
-import { environment, upload, waitForItem } from './support.mjs';
+import { waitForModelConfiguration, environment, upload, waitForItem } from './support.mjs';
 import { illustrationFixture } from './providers/illustration.mjs';
 
 const post = (server, path, body) => server.request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -27,7 +27,7 @@ test('installed real checkpoint prepares a public photograph through HTTP and co
     const fixture = await illustrationFixture(t, { modelDisabled: true, colors: {} });
     const env = await environment(t), server = await env.launch({ ...fixture.env, SAINT_LOOK_TEST_MODEL_ORIGIN: '',
       SAINT_LOOK_MODEL_PROFILE: 'outfit-transformer-labse-v1', SAINT_LOOK_MODEL_THREADS: '1' });
-    const config = await (await server.request('/v1/recommendations/config')).json();
+    const config = await waitForModelConfiguration(server, 120_000);
     assert.equal(config.encoder.mode, 'real'); assert.equal(config.encoder.available, true);
     const photo = { itemId: randomUUID(), operationId: randomUUID(), photoVersionId: randomUUID(), imageBase64: png.toString('base64') };
     assert.equal((await upload(server, photo)).status, 202); const cutout = await waitForItem(server, photo.itemId);

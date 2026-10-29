@@ -1,10 +1,81 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID, createHash } from 'node:crypto';
-import { environment, photoRequest, upload, waitForItem } from './support.mjs';
+import { environment, waitForModelConfiguration, photoRequest, upload, waitForItem } from './support.mjs';
 import { illustrationFixture } from './providers/illustration.mjs';
+import { controlledSpaceID } from './providers/model.mjs';
+import { setImmediate as nextTurn } from 'node:timers/promises';
+import { createModelBridge } from '../src/model-bridge.mjs';
 
 const post = (server, path, body) => server.request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+test('startup has its own bounded deadline while inference keeps the shorter operational deadline', { timeout: 5000 }, async t => {
+  let releaseStartup, described, releaseInference, inferenceReached;
+  let startupGate = new Promise(resolve => { releaseStartup = resolve; });
+  let started = new Promise(resolve => { described = resolve; });
+  const inferenceGate = new Promise(resolve => { releaseInference = resolve; });
+  const preparing = new Promise(resolve => { inferenceReached = resolve; });
+  t.after(() => { releaseStartup(); releaseInference(); });
+  const fixture = await illustrationFixture(t, {
+    describe: async (_request, response) => { described(); await startupGate; response.end(JSON.stringify({ spaceID: controlledSpaceID })); },
+    model: async (_request, response) => { inferenceReached(); await inferenceGate; response.end('{}'); },
+  });
+  const env = await environment(t);
+  // Exercise the real bridge and HTTP ML boundary with elapsed time controlled
+  // by Node timers. Native AbortSignal.timeout uses a separate internal clock.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  t.mock.method(AbortSignal, 'timeout', milliseconds => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new Error('controlled deadline')), milliseconds);
+    return controller.signal;
+  });
+  const model = createModelBridge(fixture.env, env.directory); t.after(() => model.close());
+  await started;
+  await assert.rejects(model.rank([], [{}]), /encoder_unavailable/);
+  await assert.rejects(model.prepare(Buffer.from('unused'), randomUUID(), { type: 't_shirt', colors: [] }), /encoder_unavailable/);
+  let settled = false;
+  const boot = model.waitForStartup().then(() => { settled = true; });
+  t.mock.timers.tick(299_999); await nextTurn();
+  assert.equal(settled, false, 'Strict startup must survive the 120-second inference budget');
+  releaseStartup(); await boot; assert.equal((await model.status()).available, true);
+  let completed = false;
+  const operation = model.prepare(Buffer.from('fixture source'), randomUUID(), { type: 't_shirt', colors: [] });
+  const rejected = assert.rejects(operation, /controlled deadline/).then(() => { completed = true; });
+  await preparing;
+  t.mock.timers.tick(119_999); await nextTurn(); assert.equal(completed, false);
+  t.mock.timers.tick(1); await rejected;
+  model.close();
+  startupGate = new Promise(resolve => { releaseStartup = resolve; });
+  started = new Promise(resolve => { described = resolve; });
+  const failed = createModelBridge(fixture.env, env.directory); t.after(() => failed.close());
+  await started;
+  t.mock.timers.tick(300_000); await failed.waitForStartup();
+  assert.equal((await failed.status()).available, false, 'Hung startup must also terminate at its own bound');
+  releaseStartup(); releaseInference();
+});
+test('warming model keeps health and configuration responsive until describe succeeds', async t => {
+  let release, described;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { described = resolve; });
+  t.after(() => release());
+  const fixture = await illustrationFixture(t, { describe: async (_request, response) => {
+    described(); await gate; response.end(JSON.stringify({ spaceID: controlledSpaceID }));
+  } });
+  const env = await environment(t), server = await env.launch(fixture.env);
+  await started;
+  const health = await (await server.request('/health', { signal: AbortSignal.timeout(1000) })).json();
+  assert.equal(health.status, 'ok'); assert.equal(health.encoderAvailable, false);
+  const config = await server.request('/v1/recommendations/config', { signal: AbortSignal.timeout(1000) });
+  assert.equal(config.status, 503); assert.deepEqual(await config.json(), { error: 'encoder_unavailable' });
+  release();
+  for (let i = 0; i < 100; i++) {
+    const current = await (await server.request('/v1/recommendations/config')).json();
+    if (current.encoder?.available) {
+      assert.equal(current.encoder.activeSpaceID, controlledSpaceID); return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.fail('Successful describe must publish model availability');
+});
 async function ready(server, path, status = 'ready') {
   for (let i = 0; i < 150; i++) {
     const response = await server.request(path), value = await response.json();
@@ -28,7 +99,7 @@ async function illustrated(t, handlers = {}) {
 }
 async function prepare(state, changes = {}) {
   const { server, photo, illustration } = state;
-  const config = await (await server.request('/v1/recommendations/config')).json();
+  const config = await waitForModelConfiguration(server);
   const input = { operationId: randomUUID(), revision: 1, photoVersionId: photo.photoVersionId, sourceSetVersionId: illustration.sourceSetVersionId,
     illustrationOperationId: illustration.operationId, cutoutOperationId: photo.operationId, spaceID: config.encoder.activeSpaceID,
     mode: 'fromIllustration', imageBase64: photo.imageBase64, features: { type: 't_shirt', colors: ['red'] }, ...changes };
@@ -39,7 +110,7 @@ async function prepare(state, changes = {}) {
 
 test('disabled encoder reports unavailable and a ready illustration cannot bypass full preparation', async t => {
   const state = await illustrated(t, { modelDisabled: true });
-  const config = await (await state.server.request('/v1/recommendations/config')).json();
+  const config = await waitForModelConfiguration(state.server);
   assert.equal(config.encoder.available, false);
   assert.equal(config.newItemPreparation.available, false);
   assert.equal((await state.server.request(state.path + '/ack', { method: 'POST' })).status, 409);
@@ -72,7 +143,7 @@ test('encoder-only refresh reuses committed artifacts without image-provider cal
   const ack = { publicationProtocol: 'prepared-item-v1', preparationOperationId: first.input.operationId };
   assert.equal((await post(state.server, state.path + '/ack', ack)).status, 204);
   await state.server.stop(); state.server = await state.env.launch({ ...state.fixture.env, SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'false' });
-  const config = await (await state.server.request('/v1/recommendations/config')).json();
+  const config = await waitForModelConfiguration(state.server);
   assert.equal(config.newItemPreparation.available, false); assert.equal(config.encoderRefresh.available, true);
   const before = Object.fromEntries(Object.entries(state.fixture.calls).map(([key, values]) => [key, values.length]));
   const refresh = await prepare(state, { revision: 2, mode: 'reusePublication', reuse: { publicationId: first.input.operationId, artifacts: result.artifacts } });
@@ -217,11 +288,130 @@ test('accepted encoder work resumes after process death without repeating image 
   assert.equal(state.fixture.calls.attributes.length, 1); assert.equal(state.fixture.calls.generation.length, 1);
 });
 
+test('restart warming preserves a pending refresh and the previous publication until the same operation resumes', async t => {
+  let releaseModel, releaseStartup, startupReached, warming = false, holdModel = false;
+  const modelGate = new Promise(resolve => { releaseModel = resolve; });
+  const startupGate = new Promise(resolve => { releaseStartup = resolve; });
+  const started = new Promise(resolve => { startupReached = resolve; });
+  t.after(() => { releaseModel(); releaseStartup(); });
+  const { modelFixture } = await import('./providers/model.mjs');
+  const state = await illustrated(t, {
+    describe: async (_request, response) => {
+      if (warming) { startupReached(); await startupGate; }
+      response.end(JSON.stringify({ spaceID: controlledSpaceID }));
+    },
+    model: async (request, response, input) => {
+      if (holdModel) { holdModel = false; await modelGate; }
+      await modelFixture(request, response, Buffer.from(JSON.stringify(input)));
+    },
+  });
+  const first = await prepare(state), saved = await ready(state.server, first.path);
+  const imageCalls = Object.fromEntries(['preparation', 'attributes', 'generation', 'finalization'].map(stage => [stage, state.fixture.calls[stage].length]));
+  const firstAck = { publicationProtocol: 'prepared-item-v1', preparationOperationId: first.input.operationId };
+  assert.equal((await post(state.server, state.path + '/ack', firstAck)).status, 204);
+  holdModel = true;
+  const refresh = await prepare(state, { revision: 2, mode: 'reusePublication',
+    reuse: { publicationId: first.input.operationId, artifacts: saved.artifacts } });
+  assert.equal(refresh.response.status, 202);
+  for (let i = 0; i < 100 && state.fixture.calls.model.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(state.fixture.calls.model.length, 2);
+  await state.server.stop('SIGKILL'); warming = true;
+  state.server = await state.env.launch(state.fixture.env); await started;
+  assert.equal((await (await state.server.request('/health', { signal: AbortSignal.timeout(1000) })).json()).encoderAvailable, false);
+  const pending = await (await state.server.request(refresh.path)).json();
+  assert.equal(pending.status, 'pending'); assert.equal(pending.operationId, refresh.input.operationId);
+  assert.equal((await post(state.server, state.path + '/ack', firstAck)).status, 204, 'Previous publication receipt survives warming');
+  const submit = await state.server.request(`/v1/items/${state.photo.itemId}/preparations`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(refresh.input), signal: AbortSignal.timeout(1000),
+  });
+  assert.equal(submit.status, 503); assert.equal((await submit.json()).error, 'encoder_unavailable');
+  const target = randomUUID();
+  const rank = await state.server.request('/v1/recommendations/single', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(1000),
+    body: JSON.stringify({ requestId: randomUUID(), snapshotId: randomUUID(), targetSlotId: target,
+      orderedSlots: [{ slotId: target, zone: 'body', itemId: null, publishedVersionId: null }], pinnedSlotIds: [], excludedItemIds: [], items: [] }),
+  });
+  assert.equal(rank.status, 503); assert.equal((await rank.json()).error, 'model_unavailable');
+  assert.equal(state.fixture.calls.model.length, 2); assert.equal(state.fixture.calls.rank.length, 0);
+  releaseStartup();
+  const restored = await ready(state.server, refresh.path);
+  assert.equal(restored.operationId, refresh.input.operationId); assert.deepEqual(restored.artifacts, saved.artifacts);
+  assert.equal(state.fixture.calls.model.length, 3);
+  assert.equal((await post(state.server, state.path + '/ack', { ...firstAck, preparationOperationId: refresh.input.operationId })).status, 204);
+  assert.equal((await post(state.server, state.path + '/ack', firstAck)).status, 204);
+  for (const [stage, count] of Object.entries(imageCalls)) assert.equal(state.fixture.calls[stage].length, count);
+  releaseModel();
+});
+
+test('ready candidate acknowledgement during warming remains retryable without changing its representation', async t => {
+  let warming = false, release, described, spaceID = controlledSpaceID;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { described = resolve; });
+  t.after(() => release());
+  const state = await illustrated(t, { describe: async (_request, response) => {
+    if (warming) { described(); await gate; }
+    response.end(JSON.stringify({ spaceID }));
+  } });
+  const operation = await prepare(state), saved = await ready(state.server, operation.path);
+  await state.server.stop(); warming = true;
+  state.server = await state.env.launch(state.fixture.env); await started;
+  const ack = { publicationProtocol: 'prepared-item-v1', preparationOperationId: operation.input.operationId };
+  const reply = await state.server.request(state.path + '/ack', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ack), signal: AbortSignal.timeout(1000) });
+  assert.equal(reply.status, 503); assert.equal((await reply.json()).error, 'encoder_unavailable');
+  const restored = await (await state.server.request(operation.path)).json();
+  assert.equal(restored.status, 'ready'); assert.equal(restored.representationJSON, saved.representationJSON);
+  assert.equal((await state.server.request(state.result.resultPath)).status, 200);
+  release();
+  for (let i = 0; i < 100; i++) {
+    if ((await (await state.server.request('/v1/recommendations/config')).json()).encoder?.available) break;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.equal((await post(state.server, state.path + '/ack', ack)).status, 204);
+  assert.equal(state.fixture.calls.model.length, 1);
+  const next = await prepare(state, { revision: 2, mode: 'reusePublication',
+    reuse: { publicationId: operation.input.operationId, artifacts: saved.artifacts } });
+  await ready(state.server, next.path);
+  await state.server.stop(); spaceID = 'changed-space'; warming = false;
+  state.server = await state.env.launch(state.fixture.env);
+  for (let i = 0; i < 100; i++) {
+    if ((await (await state.server.request('/v1/recommendations/config')).json()).encoder?.available) break;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  const mismatch = await post(state.server, state.path + '/ack', { ...ack, preparationOperationId: next.input.operationId });
+  assert.equal(mismatch.status, 409); assert.equal((await mismatch.json()).error, 'representation_space_changed');
+});
+
+test('definitive startup failure settles recovered work as unavailable without retrying image providers', async t => {
+  let rejectStartup = false, release, called;
+  const gate = new Promise(resolve => { release = resolve; });
+  const preparing = new Promise(resolve => { called = resolve; });
+  t.after(() => release());
+  const state = await illustrated(t, {
+    describe: async (_request, response) => response.end(JSON.stringify(rejectStartup ? {} : { spaceID: controlledSpaceID })),
+    model: async (_request, response) => { called(); await gate; response.end('{}'); },
+  });
+  const operation = await prepare(state); assert.equal(operation.response.status, 202); await preparing;
+  const imageCalls = Object.fromEntries(['preparation', 'attributes', 'generation', 'finalization'].map(stage => [stage, state.fixture.calls[stage].length]));
+  await state.server.stop('SIGKILL'); rejectStartup = true;
+  state.server = await state.env.launch(state.fixture.env);
+  const failed = await ready(state.server, operation.path, 'failed');
+  assert.equal(failed.operationId, operation.input.operationId); assert.equal(failed.error, 'encoder_unavailable');
+  assert.equal((await (await state.server.request('/health', { signal: AbortSignal.timeout(1000) })).json()).encoderAvailable, false);
+  const configResponse = await state.server.request('/v1/recommendations/config');
+  assert.equal(configResponse.status, 200);
+  const config = await configResponse.json();
+  assert.equal(config.encoder.available, false); assert.equal(config.encoder.activeSpaceID, null);
+  assert.equal((await state.server.request(state.result.resultPath)).status, 200);
+  assert.equal(state.fixture.calls.model.length, 1);
+  for (const [stage, count] of Object.entries(imageCalls)) assert.equal(state.fixture.calls[stage].length, count);
+});
+
 test('model configuration is authenticated and missing real assets never become a controlled fallback', async t => {
   const env = await environment(t), server = await env.launch({ SAINT_LOOK_MODEL_PROFILE: 'outfit-transformer-labse-v1',
     SAINT_LOOK_MODEL_PYTHON: '/does/not/exist', SAINT_LOOK_MODEL_ASSETS: '/does/not/exist' });
   assert.equal((await fetch(server.url + '/v1/recommendations/config')).status, 401);
-  const config = await (await server.request('/v1/recommendations/config')).json();
+  const config = await waitForModelConfiguration(server);
   assert.equal(config.encoder.mode, 'real'); assert.equal(config.encoder.available, false); assert.equal(config.encoder.activeSpaceID, null);
   assert.equal((await (await server.request('/health')).json()).preparationAvailable, false);
   await assert.rejects(env.launch({ NODE_ENV: 'production', SAINT_LOOK_TEST_MODEL_ORIGIN: 'http://127.0.0.1:8789' }), /Invalid controlled model origin/);

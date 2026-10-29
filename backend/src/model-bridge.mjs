@@ -19,8 +19,8 @@ export function createModelBridge(env, directory) {
   const threads = Number(env.SAINT_LOOK_MODEL_THREADS || 1);
   if (!Number.isInteger(threads) || threads < 1 || threads > 8) throw new Error('Invalid model thread count');
   const mode = origin ? 'controlled' : profile === 'disabled' ? 'disabled' : 'real';
-  const timeout = 120_000, pending = new Map(), inputs = join(directory, 'model-inputs');
-  let child, closed = false, descriptor = null, queue = Promise.resolve(), queued = 0;
+  const timeout = 120_000, startupTimeout = 300_000, pending = new Map(), inputs = join(directory, 'model-inputs');
+  let child, closed = false, starting = mode !== 'disabled', descriptor = null, queue = Promise.resolve(), queued = 0;
   const unavailable = () => new Error('encoder_unavailable');
   function fail() {
     descriptor = null;
@@ -29,9 +29,10 @@ export function createModelBridge(env, directory) {
   }
   async function exchange(operation, values = {}) {
     if (closed) throw unavailable();
+    const deadline = operation === 'describe' ? startupTimeout : timeout;
     if (origin) {
       const response = await fetch(new URL('/model/' + operation, origin), { method: 'POST',
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values), signal: AbortSignal.timeout(timeout) });
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values), signal: AbortSignal.timeout(deadline) });
       if (!response.ok) throw new Error('model_failed');
       const text = await response.text();
       if (text.length > 2_000_000) throw new Error('model_failed');
@@ -40,13 +41,13 @@ export function createModelBridge(env, directory) {
     if (!child) throw unavailable();
     return new Promise((resolve, reject) => {
       const id = randomUUID();
-      pending.set(id, { resolve, reject, timer: setTimeout(() => fail(), timeout) });
+      pending.set(id, { resolve, reject, timer: setTimeout(() => fail(), deadline) });
       child.stdin.write(JSON.stringify({ id, operation, ...values }) + '\n', error => { if (error) fail(); });
     });
   }
   const boot = (async () => {
     await rm(inputs, { recursive: true, force: true }); await mkdir(inputs, { recursive: true, mode: 0o700 });
-    if (mode === 'disabled') return;
+    if (mode === 'disabled' || closed) return;
     if (!origin) {
       if (!env.SAINT_LOOK_MODEL_PYTHON || !env.SAINT_LOOK_MODEL_ASSETS) return;
       child = spawn(env.SAINT_LOOK_MODEL_PYTHON, ['-u', fileURLToPath(new URL('../ml/worker.py', import.meta.url)),
@@ -65,9 +66,9 @@ export function createModelBridge(env, directory) {
       });
     }
     const description = await exchange('describe');
-    if (typeof description.spaceID !== 'string' || !description.spaceID.length) throw unavailable();
+    if (closed || typeof description.spaceID !== 'string' || !description.spaceID.length) throw unavailable();
     descriptor = description;
-  })().catch(() => fail());
+  })().catch(() => fail()).finally(() => { starting = false; });
   function validateRepresentation(result, expected) {
     const vector = result?.vector;
     const norm = Array.isArray(vector) && vector.reduce((sum, x) => sum + x * x, 0);
@@ -78,7 +79,7 @@ export function createModelBridge(env, directory) {
     return result;
   }
   function enqueue(run) {
-    if (queued >= 8 || closed) return Promise.reject(unavailable());
+    if (queued >= 8 || closed || !descriptor) return Promise.reject(unavailable());
     queued++;
     const deadline = Date.now() + timeout;
     const task = queue.then(() => { if (Date.now() > deadline) throw unavailable(); return run(); })
@@ -86,10 +87,14 @@ export function createModelBridge(env, directory) {
     queue = task.catch(() => {}); return task;
   }
   return {
+    // Only durable background recovery waits for strict startup. HTTP callers
+    // observe unavailable immediately and never queue behind asset verification.
+    waitForStartup() { return boot; },
+    isStarting() { return starting && !closed; },
     readRepresentation(json, expected) { return validateRepresentation(JSON.parse(json), expected); },
     async rank(context, candidates) {
       return enqueue(async () => {
-        await boot; if (!descriptor || closed) throw unavailable();
+        if (!descriptor || closed) throw unavailable();
         if (!Array.isArray(context) || context.length > 32
           || !Array.isArray(candidates) || !candidates.length || candidates.length > 300) throw new Error('invalid_model_input');
         const result = await exchange('rank', { context, candidates });
@@ -99,13 +104,12 @@ export function createModelBridge(env, directory) {
       });
     },
     async status() {
-      await boot;
       return { available: Boolean(descriptor) && !closed, mode, activeSpaceID: descriptor?.spaceID ?? null,
         supportedSpaceIDs: descriptor ? [descriptor.spaceID] : [], reason: descriptor ? null : mode === 'disabled' ? 'encoder_disabled' : 'encoder_unavailable' };
     },
     async prepare(source, photoVersionID, features) {
       const run = async () => {
-        await boot; if (!descriptor || closed) throw unavailable();
+        if (!descriptor || closed) throw unavailable();
         const imagePath = join(inputs, randomUUID() + '.png');
         try {
           await writeFile(imagePath, source, { mode: 0o600 });
