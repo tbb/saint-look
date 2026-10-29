@@ -46,7 +46,7 @@ extension WardrobeCatalog {
         }
     }
 
-    mutating func reconcileLegacyPublication(_ acknowledgement: ResultAcknowledgement, committed: Bool) throws {
+    mutating func reconcileLegacyPublication(_ acknowledgement: ResultAcknowledgement, committed: Bool, requiresPreparation: Bool = false) throws {
         guard acknowledgement.illustration == true,
               let index = items.firstIndex(where: { $0.id == acknowledgement.itemID }),
               let candidate = items[index].pendingPublication, candidate.legacyReconciliation == true,
@@ -57,6 +57,7 @@ extension WardrobeCatalog {
             // A definitive server refusal preserves the visible legacy snapshot,
             // but never upgrades it to a confirmed publication or retries paid work.
             items[index].pendingPublication = nil
+            if requiresPreparation { items[index].downloadedIllustration = candidate }
         }
         pendingAcknowledgements?.remove(acknowledgement)
     }

@@ -552,6 +552,35 @@ struct OutfitCoreChecks {
         precondition(reconciledLegacy.items[0].displayedType == "Худи")
         precondition(reconciledLegacy.items[0].illustration?.operationID == migratedPublication.items[0].illustration?.operationID)
         precondition(reconciledLegacy.pendingAcknowledgements?.contains(legacyAck) == false)
+        // A v3 ready illustration whose old cutout receipt has no hash must
+        // upload its actual legacy packet after v4 refuses bodyless acknowledgement.
+        var uncommittedLegacy = migratedPublication
+        uncommittedLegacy.items[0].manualType = completed.manualType
+        uncommittedLegacy.items[0].manualColors = completed.manualColors
+        uncommittedLegacy.items[0].illustration = completed
+        try uncommittedLegacy.reconcileLegacyPublication(legacyAck, committed: false, requiresPreparation: true)
+        try file.save(uncommittedLegacy)
+        uncommittedLegacy = try file.load()
+        let historicalCandidate = uncommittedLegacy.items[0].downloadedIllustration!
+        precondition(historicalCandidate.preparationMode == .legacyImport,
+                     "An uncommitted historical packet must import actual final artifacts, not rely on unavailable old receipt hashes")
+        precondition(uncommittedLegacy.items[0].pendingPublication == nil)
+        precondition(!uncommittedLegacy.items[0].photosLocked && !uncommittedLegacy.items[0].hasPreparedVersion)
+        precondition(uncommittedLegacy.pendingAcknowledgements?.contains(legacyAck) == false)
+        let historicalIntent = try preparationIntent(item: uncommittedLegacy.items[0], candidate: historicalCandidate,
+                                                     mode: historicalCandidate.preparationMode)
+        precondition(historicalIntent.request.operationID == legacyAck.operationID)
+        precondition(historicalIntent.cutoutOperationID == migratedPublication.items[0].operationID)
+        try uncommittedLegacy.beginPreparation(for: shirtID, intent: historicalIntent)
+        let historicalResponse = preparationResponse(item: uncommittedLegacy.items[0], intent: historicalIntent)
+        try uncommittedLegacy.stagePreparation(for: shirtID, response: historicalResponse, representationFilename: "historical-representation.json",
+            representationDigest: historicalResponse.representationSHA256!, actualArtifacts: historicalIntent.artifacts,
+            actualSourceDigest: historicalIntent.sourceSHA256)
+        precondition(!uncommittedLegacy.items[0].hasPreparedVersion)
+        try uncommittedLegacy.confirmPublication(for: shirtID, operationID: legacyAck.operationID)
+        precondition(uncommittedLegacy.items[0].hasPreparedVersion && uncommittedLegacy.items[0].photosLocked)
+        precondition(uncommittedLegacy.outfits == [outfit])
+        print("PASS: historical uncommitted illustration imports final artifacts and requires full preparation commit")
         var rejectedLegacy = migratedPublication
         try rejectedLegacy.reconcileLegacyPublication(legacyAck, committed: false)
         try file.save(rejectedLegacy)
