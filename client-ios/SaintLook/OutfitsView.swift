@@ -370,6 +370,11 @@ struct OutfitEditorView: View {
     @State private var activeBodySlotID: UUID?
     @State private var pinnedSlotIDs: Set<UUID> = []
     @State private var compositionHistory = OutfitCompositionHistory()
+    @State private var recommendation = OutfitRecommendationSession()
+    @State private var recommendationTask: Task<Void, Never>?
+    @State private var recommendationSlotID: UUID?
+    @State private var recommendationMessage: String?
+
     @State private var actionMessage: String?
     @State private var errorMessage: String?
     @State private var saving = false
@@ -402,7 +407,7 @@ struct OutfitEditorView: View {
                             .accessibilityIdentifier("outfit-save-explanation")
                     }
                     fittingPreview
-                    TextField("Название — необязательно", text: $draft.name)
+                    TextField("Название — необязательно", text: Binding(get: { draft.name }, set: { cancelRecommendation(); draft.name = $0 }))
                         .focused($naming)
                         .submitLabel(.done)
                         .onSubmit { naming = false }
@@ -424,6 +429,19 @@ struct OutfitEditorView: View {
                                 slotMenu(slot)
                             }
                             slotSelection(slot)
+                            if recommendationSlotID == slot.id {
+                                if recommendation.pending != nil {
+                                    ViewThatFits(in: .horizontal) {
+                                        HStack(spacing: 16) { recommendationProgress }
+                                        VStack(alignment: .leading, spacing: 8) { recommendationProgress }
+                                    }
+                                }
+                                if let recommendationMessage {
+                                    Text(recommendationMessage).font(.footnote).foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .accessibilityIdentifier("recommendation-message")
+                                }
+                            }
                             if slot.id == draft.slots.last(where: { $0.zone == .body })?.id {
                                 Button("Добавить слой", systemImage: "plus") {
                                     addBodyLayer()
@@ -459,7 +477,7 @@ struct OutfitEditorView: View {
             .toolbar { editorToolbar }
             .interactiveDismissDisabled(dirty)
             .alert("Отбросить изменения?", isPresented: $confirmingDiscard) {
-                Button("Отбросить изменения", role: .destructive) { dismiss() }
+                Button("Отбросить изменения", role: .destructive) { cancelRecommendation(); dismiss() }
                     .accessibilityIdentifier("discard-outfit-changes")
                 Button("Остаться", role: .cancel) { }
                     .accessibilityLabel("Продолжить редактирование")
@@ -471,6 +489,19 @@ struct OutfitEditorView: View {
                     select(itemID, for: slot.id)
                     choosingSlot = nil
                 }
+            }
+            .onDisappear { cancelRecommendation() }
+            .onChange(of: draft) { _, _ in
+                if recommendation.pending != nil { cancelRecommendation(message: RecommendationError.stale.localizedDescription) }
+            }
+            .onChange(of: pinnedSlotIDs) { _, _ in cancelRecommendation(message: RecommendationError.stale.localizedDescription) }
+            .onChange(of: OutfitRecommendationSession.inventory(store.items)) { _, _ in
+                cancelRecommendation(message: RecommendationError.stale.localizedDescription)
+            }
+            .onChange(of: store.outfits) { _, _ in cancelRecommendation(message: RecommendationError.stale.localizedDescription) }
+            .onChange(of: [store.settings.baseURL, store.settings.token]) { _, _ in cancelRecommendation() }
+            .onChange(of: store.preparationConfiguration?.encoder.activeSpaceID) { _, _ in
+                cancelRecommendation(message: RecommendationError.preparationRequired.localizedDescription)
             }
             .onChange(of: store.items.map(\.id)) { old, current in
                 for id in Set(old).subtracting(current) {
@@ -558,7 +589,7 @@ struct OutfitEditorView: View {
             }
             if let slot = activeSlot {
                 if pinnedSlotIDs.contains(slot.id) {
-                    Label("Слот закреплён при перемешивании", systemImage: "pin.fill")
+                    Label("Закреплено при подборе", systemImage: "pin.fill")
                         .font(.footnote).foregroundStyle(SaintLookStyle.accent)
                 }
                 HStack {
@@ -603,6 +634,7 @@ struct OutfitEditorView: View {
     private func pinButton(_ slot: OutfitSlot) -> some View {
         let pinned = pinnedSlotIDs.contains(slot.id)
         return Button {
+            cancelRecommendation()
             if pinned { pinnedSlotIDs.remove(slot.id) } else { pinnedSlotIDs.insert(slot.id) }
             actionMessage = nil
         } label: {
@@ -615,6 +647,7 @@ struct OutfitEditorView: View {
     }
 
     private func shuffle() {
+        cancelRecommendation()
         guard draft.slots.contains(where: { !pinnedSlotIDs.contains($0.id) }) else {
             actionMessage = "Все зоны закреплены. Открепите одну, чтобы перемешать."
             return
@@ -630,6 +663,7 @@ struct OutfitEditorView: View {
     }
 
     private func undoComposition() {
+        cancelRecommendation()
         compositionHistory.undo(in: &draft, availableItemIDs: Set(store.items.map(\.id)))
         if !draft.slots.contains(where: { $0.id == activeSlotID }) {
             activeSlotID = draft.slots.first { $0.zone == .body }?.id
@@ -645,6 +679,7 @@ struct OutfitEditorView: View {
     }
 
     private func addBodyLayer() {
+        cancelRecommendation()
         let previous = draft
         let id = draft.addBodyLayer()
         compositionHistory.recordChange(from: previous, to: draft)
@@ -682,7 +717,13 @@ struct OutfitEditorView: View {
 
     private func slotMenu(_ slot: OutfitSlot) -> some View {
         Menu {
-            Button("Выбрать вещь", systemImage: "square.grid.2x2") { choosingSlot = slot }
+            Button(slot.itemID == nil ? "Подобрать вещь" : "Другое сочетание", systemImage: "sparkle") {
+                recommend(slot)
+            }
+            .disabled(pinnedSlotIDs.contains(slot.id) || recommendation.pending != nil)
+            .accessibilityIdentifier("recommend-slot-\(slot.id)")
+            if pinnedSlotIDs.contains(slot.id) { Text("Открепите это место для подбора") }
+            Button("Выбрать вручную", systemImage: "square.grid.2x2") { choosingSlot = slot }
             Button("Следующая вещь", systemImage: "chevron.right") { cycle(slot.id, forward: true) }
                 .disabled(!canCycle(slot))
                 .accessibilityIdentifier("next-slot-\(slot.id)")
@@ -696,6 +737,7 @@ struct OutfitEditorView: View {
             }
             if slot.zone == .body {
                 Button("Убрать слой", systemImage: "minus") {
+                    cancelRecommendation()
                     let previous = draft
                     draft.removeBodyLayer(slot.id)
                     compositionHistory.recordChange(from: previous, to: draft)
@@ -735,6 +777,7 @@ struct OutfitEditorView: View {
     private var editorToolbar: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) {
             Button {
+                cancelRecommendation()
                 if dirty { confirmingDiscard = true } else { dismiss() }
             } label: {
                 Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44)
@@ -757,6 +800,7 @@ struct OutfitEditorView: View {
     }
 
     private func select(_ itemID: UUID?, for slotID: UUID) {
+        cancelRecommendation()
         guard let slot = draft.slots.first(where: { $0.id == slotID }) else { return }
         if let itemID, !candidates(for: slot).contains(where: { $0.id == itemID }) { return }
         let previous = draft
@@ -777,6 +821,7 @@ struct OutfitEditorView: View {
     }
 
     private func cycle(_ slotID: UUID, forward: Bool) {
+        cancelRecommendation()
         guard let slot = draft.slots.first(where: { $0.id == slotID }) else { return }
         activate(slot)
         let previous = draft
@@ -787,7 +832,63 @@ struct OutfitEditorView: View {
         errorMessage = nil
     }
 
+    @ViewBuilder
+    private var recommendationProgress: some View {
+        ProgressView("Подбираем…")
+            .accessibilityIdentifier("recommendation-pending")
+        Button("Остановить подбор") { cancelRecommendation(message: "Подбор остановлен. Состав сохранён.") }
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("cancel-recommendation")
+    }
+
+    private func cancelRecommendation(message: String? = nil) {
+        let wasPending = recommendation.pending != nil
+        recommendation.cancel()
+        recommendationTask?.cancel()
+        recommendationTask = nil
+        recommendationMessage = wasPending ? (message ?? RecommendationError.stale.localizedDescription) : nil
+    }
+
+    private func recommend(_ slot: OutfitSlot) {
+        cancelRecommendation()
+        activate(slot)
+        recommendationSlotID = slot.id
+        recommendationMessage = nil
+        let started = Date()
+        do {
+            let packets = try store.recommendationItems(excluding: slot.itemID)
+            let request = try recommendation.begin(draft: draft, targetSlotID: slot.id, pinnedSlotIDs: pinnedSlotIDs,
+                items: store.items, preparedItems: packets, savedOutfit: store.outfits.first { $0.id == draft.id },
+                activeSpaceID: store.preparationConfiguration?.encoder.activeSpaceID)
+            let client = BackendClient(settings: store.settings)
+            recommendationTask = Task { @MainActor in
+                do {
+                    let response = try await client.recommendSingle(request)
+                    try Task.checkCancellation()
+                    guard recommendation.pending?.request.requestId == request.requestId else { return }
+                    let currentPackets = try store.recommendationItems(excluding: slot.itemID)
+                    let savedOutfit = store.outfits.first { $0.id == draft.id }
+                    let message = try recommendation.apply(response, to: &draft, history: &compositionHistory,
+                        pinnedSlotIDs: pinnedSlotIDs, items: store.items, preparedItems: currentPackets,
+                        savedOutfit: savedOutfit, taxonomy: .shared)
+                    recommendationMessage = response.mode == "controlled" ? "Тестовый подбор. " + message : message
+                    recommendationTask = nil
+                    #if DEBUG
+                    print("single_recommendation_applied_ms=\(Int(Date().timeIntervalSince(started) * 1000)) outcome=\(response.outcome.rawValue)")
+                    #endif
+                } catch {
+                    guard !Task.isCancelled,
+                          recommendation.pending == nil || recommendation.pending?.request.requestId == request.requestId else { return }
+                    recommendation.cancel()
+                    recommendationTask = nil
+                    recommendationMessage = RecommendationError.message(for: error)
+                }
+            }
+        } catch { recommendationMessage = RecommendationError.message(for: error) }
+    }
+
     private func save() {
+        cancelRecommendation()
         guard !saving else { return }
         saving = true
         do {
