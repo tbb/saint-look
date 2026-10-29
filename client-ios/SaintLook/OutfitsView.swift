@@ -366,6 +366,8 @@ struct OutfitEditorView: View {
     @State var draft: Outfit
     @Environment(\.dismiss) private var dismiss
     @State private var choosingSlot: OutfitSlot?
+    @State private var actionSlotID: UUID?
+    @State private var pendingPickerSlotID: UUID?
     @State private var activeSlotID: UUID?
     @State private var activeBodySlotID: UUID?
     @State private var pinnedSlotIDs: Set<UUID> = []
@@ -765,54 +767,82 @@ struct OutfitEditorView: View {
     }
 
     private func slotMenu(_ slot: OutfitSlot) -> some View {
-        Menu {
-            Button(slot.itemID == nil ? "Подобрать вещь" : "Другое сочетание", systemImage: "sparkle") {
-                recommend(slot)
-            }
-            .disabled(pinnedSlotIDs.contains(slot.id) || recommendation.hasPending)
-            .accessibilityIdentifier("recommend-slot-\(slot.id)")
-            if slot.itemID != nil {
-                Button("Похожая замена", systemImage: "arrow.triangle.2.circlepath") {
-                    recommend(slot, intent: .similar)
-                }
-                .disabled(pinnedSlotIDs.contains(slot.id) || recommendation.hasPending)
-                .accessibilityIdentifier("similar-slot-\(slot.id)")
-            }
-            if pinnedSlotIDs.contains(slot.id) { Text("Открепите это место для подбора") }
-            Button("Выбрать вручную", systemImage: "square.grid.2x2") { choosingSlot = slot }
-            Button("Следующая вещь", systemImage: "chevron.right") { cycle(slot.id, forward: true) }
-                .disabled(!canCycle(slot))
-                .accessibilityIdentifier("next-slot-\(slot.id)")
-            Button("Предыдущая вещь", systemImage: "chevron.left") { cycle(slot.id, forward: false) }
-                .disabled(!canCycle(slot))
-                .accessibilityIdentifier("previous-slot-\(slot.id)")
-            if slot.itemID != nil || slot.needsReplacement {
-                Button("Очистить", systemImage: "xmark") { select(nil, for: slot.id) }
-                    .accessibilityLabel("Очистить: \(outfitSlotTitle(slot, in: draft))")
-                    .accessibilityIdentifier("clear-slot-\(slot.id)")
-            }
-            if slot.zone == .body {
-                Button("Убрать слой", systemImage: "minus") {
-                    cancelRecommendation()
-                    let previous = draft
-                    draft.removeBodyLayer(slot.id)
-                    compositionHistory.recordChange(from: previous, to: draft)
-                    if !draft.slots.contains(where: { $0.id == activeSlotID }) {
-                        activeSlotID = draft.slots.first { $0.zone == .body }?.id
-                        activeBodySlotID = activeSlotID
-                    }
-                    errorMessage = nil
-                }
-                .accessibilityLabel("Убрать: \(outfitSlotTitle(slot, in: draft))")
-                .accessibilityIdentifier("remove-body-layer-\(slot.id)")
-            }
-        } label: {
+        Button { actionSlotID = slot.id } label: {
             Image(systemName: "ellipsis")
                 .frame(minWidth: 44, minHeight: 44)
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("Действия: \(outfitSlotTitle(slot, in: draft))")
         .accessibilityIdentifier("outfit-slot-menu-\(slot.id)")
+        // Anchor the system action sheet/popover to this place's button. Native
+        // Menu clips its collection at maximum text while retaining screen-height
+        // scroll bounds, so lower actions bounce out of reach after a drag.
+        .confirmationDialog("Действия: \(outfitSlotTitle(slot, in: draft))",
+            isPresented: actionPresentation(for: slot.id), titleVisibility: .visible) {
+                if let current = draft.slots.first(where: { $0.id == slot.id }) { slotActions(current) }
+                Button("Отмена", role: .cancel) { pendingPickerSlotID = nil }
+            } message: {
+                if pinnedSlotIDs.contains(slot.id) { Text("Открепите это место для подбора") }
+            }
+        .onChange(of: actionSlotID) { _, current in
+            guard current == nil, pendingPickerSlotID == slot.id else { return }
+            pendingPickerSlotID = nil
+            // Finish the dialog state before requesting the existing picker sheet.
+            choosingSlot = draft.slots.first(where: { $0.id == slot.id })
+        }
+    }
+
+    private func actionPresentation(for slotID: UUID) -> Binding<Bool> {
+        Binding(get: { actionSlotID == slotID }, set: { presented in
+            if !presented, actionSlotID == slotID { actionSlotID = nil }
+        })
+    }
+
+    @ViewBuilder
+    private func slotActions(_ slot: OutfitSlot) -> some View {
+        Button(slot.itemID == nil ? "Подобрать вещь" : "Другое сочетание", systemImage: "sparkle") {
+            recommend(slot)
+        }
+        .disabled(pinnedSlotIDs.contains(slot.id) || recommendation.hasPending)
+        .accessibilityIdentifier("recommend-slot-\(slot.id)")
+        if slot.itemID != nil {
+            Button("Похожая замена", systemImage: "arrow.triangle.2.circlepath") {
+                recommend(slot, intent: .similar)
+            }
+            .disabled(pinnedSlotIDs.contains(slot.id) || recommendation.hasPending)
+            .accessibilityIdentifier("similar-slot-\(slot.id)")
+        }
+        Button("Выбрать вручную", systemImage: "square.grid.2x2") {
+            pendingPickerSlotID = slot.id
+            actionSlotID = nil
+        }
+        Button("Следующая вещь", systemImage: "chevron.right") { cycle(slot.id, forward: true) }
+            .disabled(!canCycle(slot))
+            .accessibilityIdentifier("next-slot-\(slot.id)")
+        Button("Предыдущая вещь", systemImage: "chevron.left") { cycle(slot.id, forward: false) }
+            .disabled(!canCycle(slot))
+            .accessibilityIdentifier("previous-slot-\(slot.id)")
+        if slot.itemID != nil || slot.needsReplacement {
+            Button("Очистить", systemImage: "xmark") { select(nil, for: slot.id) }
+                .accessibilityLabel("Очистить: \(outfitSlotTitle(slot, in: draft))")
+                .accessibilityIdentifier("clear-slot-\(slot.id)")
+        }
+        if slot.zone == .body {
+            Button("Убрать слой", systemImage: "minus") {
+                guard draft.slots.contains(where: { $0.id == slot.id && $0.zone == .body }) else { return }
+                cancelRecommendation()
+                let previous = draft
+                draft.removeBodyLayer(slot.id)
+                compositionHistory.recordChange(from: previous, to: draft)
+                if !draft.slots.contains(where: { $0.id == activeSlotID }) {
+                    activeSlotID = draft.slots.first { $0.zone == .body }?.id
+                    activeBodySlotID = activeSlotID
+                }
+                errorMessage = nil
+            }
+            .accessibilityLabel("Убрать: \(outfitSlotTitle(slot, in: draft))")
+            .accessibilityIdentifier("remove-body-layer-\(slot.id)")
+        }
     }
 
     private var saveExplanation: String? {
