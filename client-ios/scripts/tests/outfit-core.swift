@@ -41,6 +41,7 @@ struct OutfitCoreChecks {
         shirt = try preparedFixture(shirt)
         jeans = try preparedFixture(jeans)
         try recommendationChecks(shirt: shirt, jeans: jeans, taxonomy: taxonomy)
+        try modelSpaceRecoveryChecks(shirt: shirt, jeans: jeans, file: file, taxonomy: taxonomy)
         catalog.items = [shirt, jeans]
         try catalog.saveOutfit(outfit, taxonomy: taxonomy, availableCutouts: cutouts)
         try catalog.saveOutfit(outfit, taxonomy: taxonomy, availableCutouts: cutouts)
@@ -806,6 +807,57 @@ struct OutfitCoreChecks {
         let response = preparationResponse(item: item, intent: intent)
         try catalog.stagePreparation(for: id, response: response, representationFilename: "representation.json",
             representationDigest: response.representationSHA256!, actualArtifacts: intent.artifacts, actualSourceDigest: intent.sourceSHA256)
+    }
+
+    static func modelSpaceRecoveryChecks(shirt: WardrobeItem, jeans: WardrobeItem,
+                                         file: WardrobeCatalogFile, taxonomy: WardrobeTaxonomy) throws {
+        var catalog = WardrobeCatalog(items: [shirt, jeans])
+        var look = Outfit()
+        look.selectItem(shirt.id, for: look.slots.first { $0.zone == .body }!.id)
+        look.selectItem(jeans.id, for: look.slots.first { $0.zone == .bottom }!.id)
+        _ = look.addBodyLayer()
+        try catalog.saveOutfit(look, taxonomy: taxonomy, availableCutouts: [shirt.id, jeans.id])
+        try catalog.editAttributes(for: shirt.id, type: "Куртка", colors: ["Чёрный"], taxonomy: taxonomy)
+        let old = catalog.items[0].publishedVersion!
+        let illustration = old.illustration!.response
+        let request = IllustrationRequest(operationID: illustration.operationId, photoVersionID: illustration.photoVersionId,
+            sourceSetVersionID: illustration.sourceSetVersionId, revision: illustration.revision,
+            manualType: illustration.manualType, manualColors: illustration.manualColors, status: .ready)
+        let packet = PendingItemPublication(publication: old, request: request, preparedPhotos: [])
+        var failed = try preparationIntent(item: catalog.items[0], candidate: packet,
+            space: "space-A", mode: .reusePublication)
+        failed.status = .failed; failed.error = "encoder_unavailable"; failed.submitted = true; failed.terminalFailure = true
+        try catalog.beginPreparation(for: shirt.id, intent: failed)
+        try file.save(catalog); catalog = try file.load()
+        precondition(!catalog.clearRejectedPreparationSpace(activeSpaceID: "space-A"), "Never automatically retry a terminal failure in the same space")
+        var transport = catalog
+        transport.items[0].preparation?.terminalFailure = false
+        precondition(!transport.clearRejectedPreparationSpace(activeSpaceID: "space-B"), "An uncertain response must first reconcile its original operation")
+        precondition(transport.items[0].preparation?.operationID == failed.operationID)
+        precondition(catalog.clearRejectedPreparationSpace(activeSpaceID: "space-B"), "A terminal old-space operation must not block preparation in the discovered space")
+        precondition(catalog.items[0].preparation == nil && catalog.items[0].publishedVersion?.versionID == old.versionID)
+        precondition(catalog.items[0].editedType == "Куртка" && catalog.items[0].displayedType == "Футболка")
+        precondition(catalog.outfits == [look] && catalog.items[0].hasPreparedVersion)
+        // Existing manual construction remains possible with the prior complete packet.
+        try catalog.saveOutfit(look, taxonomy: taxonomy, availableCutouts: [shirt.id, jeans.id])
+        let next = try preparationIntent(item: catalog.items[0], candidate: packet, space: "space-B", mode: .reusePublication)
+        try catalog.beginPreparation(for: shirt.id, intent: next)
+        let response = preparationResponse(item: catalog.items[0], intent: next)
+        try catalog.stagePreparation(for: shirt.id, response: response, representationFilename: "space-B.json",
+            representationDigest: response.representationSHA256!, actualArtifacts: next.artifacts, actualSourceDigest: next.sourceSHA256)
+        try file.save(catalog); catalog = try file.load()
+        precondition(catalog.items[0].publishedVersion?.versionID == old.versionID)
+        precondition(!catalog.clearRejectedPreparationSpace(activeSpaceID: "space-C"), "An uncertain commit cannot be discarded merely because config changed")
+        try catalog.resumePreparation(for: shirt.id)
+        precondition(catalog.items[0].preparation?.operationID == next.operationID)
+        try catalog.confirmPublication(for: shirt.id, operationID: request.operationID)
+        try file.save(catalog); catalog = try file.load()
+        precondition(catalog.items[0].publishedVersion?.representation?.response.spaceID == "space-B")
+        precondition(catalog.items[0].publishedVersion?.cutoutFilename == old.cutoutFilename)
+        precondition(catalog.items[0].displayedIllustration?.filename == old.illustration?.filename)
+        precondition(catalog.items[0].editedType == "Куртка" && catalog.outfits == [look])
+        precondition(catalog.items[0].preparation == nil && catalog.items[0].pendingPublication == nil)
+        print("PASS: changed-space terminal recovery, uncertain same-ID replay, atomic packet, manual drafts and saved layers survive restart")
     }
 
     static func preparationIntent(item: WardrobeItem, candidate: PendingItemPublication, space: String = "controlled-space", mode: ItemPreparation.Mode = .fromIllustration) throws -> ItemPreparation {
