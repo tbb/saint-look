@@ -20,7 +20,9 @@ func addressedNativeDialogAction(_ identifier: String, in app: XCUIApplication) 
     guard children.count == 1 else { throw NativeDialogActionFailure.ambiguous(identifier) }
     let child = children.element
     let frame = action.frame
-    guard !frame.isEmpty, frame == child.frame, action.label == child.label else {
+    let label = action.label
+    guard action.identifier == identifier, child.identifier == identifier,
+          !frame.isEmpty, frame == child.frame, !label.isEmpty, label == child.label else {
         throw NativeDialogActionFailure.ambiguous(identifier)
     }
     return action
