@@ -86,3 +86,99 @@ Reference source проверяется по SHA-256 до исполнения. 
 проверяет SHA-256 исходников и каждого преобразованного JPEG, сохраняет точный
 manifest и проверенный reference-model.py. Проверено с Pillow11.1.0 и13.0.0.
 При изменении источника или обработки команда останавливается, не меняя хеши.
+
+## Воспроизведение совместного замера памяти1/2GiB
+
+[measure_pipeline.py](measure_pipeline.py) — сохранённый сценарий, которым получены
+`outfit-transformer-pipeline-memory.json` и `...-2g.json`. Он запускает настоящий
+Node backend, существующий loopback fixture provider и настоящий ML worker.
+Первая вещь проходит cold encoder; затем два HTTP-клиента обрабатывают все16 вещей
+(загрузка → подготовка → иллюстрация → чтение результата), одновременно encoder
+последовательно готовит оставшиеся15. `--threads 1`, HTTP concurrency2,
+`SAINT_LOOK_STAGE_DELAY_MS=100`, timeout запроса30с, polling50мс, RSS polling20мс.
+Счётчики cgroup снимаются до остановки процессов; stdout systemd после остановки
+не заменяет сохранённый kernel `memory.peak`.
+
+Это тот же workload, перенесённый из временного скрипта: абсолютные пути заменены
+аргументами, добавлены проверки отдельного лимита cgroup/новой БД и cleanup при
+ошибке. Прежние результаты не пересчитаны после переноса. Никаких внешних AI
+запросов: credentials в сценарии — открытые dummy fixture-строки, оба origin
+loopback. Секреты не требуются. Запуск вручную, не обычный CI и не UI-стенд.
+
+Исторические версии: backend/fixture из `576591b5966c59f456646511a32856038b143a35`,
+ML-код `000eabd54820b1fcdb8351437bb9f32f5f8bfda9`; Node24.21.0, controller
+`/usr/bin/python3`3.12.3, worker Python3.12.14, зависимости из `requirements.txt`.
+Именно прежний backend нужен для сравнения с сохранёнными числами; более поздний
+backend будет новым измерением. Для повторения после изменения ML сохраните
+копию этого сценария рядом с `worker.py` из указанного ML SHA: сценарий запускает
+worker из собственного каталога. Этот PR содержит ту же версию ML.
+
+После установки/скачивания модели и16 фото по командам выше:
+
+```sh
+git worktree add --detach /tmp/saint-look-memory-backend 576591b5966c59f456646511a32856038b143a35
+npm ci --prefix /tmp/saint-look-memory-backend/backend
+mkdir -p /tmp/saint-look-memory
+```
+
+Как в исходном прогоне, до измерения подготовьте PNG для HTTP: endpoint
+иллюстраций принимает PNG, а encoder продолжает читать неизменные JPEG.
+Копия весов имеет отдельные файлы; оба сравниваемых запуска переиспользуют её.
+
+```sh
+/tmp/saint-look-ml/bin/python - <<'PY'
+import json
+import shutil
+from pathlib import Path
+from PIL import Image, ImageOps
+
+public = Path('/tmp/saint-look-public')
+png = Path('/tmp/saint-look-memory/png')
+png.mkdir(parents=True, exist_ok=True)
+for item in json.loads((public / 'manifest.json').read_text())['items']:
+    with Image.open(public / item['image']) as image:
+        ImageOps.exif_transpose(image).convert('RGB').save(png / (item['id'] + '.png'))
+assets = Path('/tmp/saint-look-weights')
+copy = Path('/tmp/saint-look-memory/assets')
+for source in assets.rglob('*'):
+    if source.is_file():
+        target = copy / source.relative_to(assets)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+PY
+```
+
+Используется Linux cgroupv2 и доступный systemd user manager. Команды ниже создают
+**отдельные** transient units; общий лимит хоста и Fly не меняется. `RuntimeMaxSec`
+ограничивает зависший эксперимент; запуск по1разу на каждом лимите, без автоматических
+повторов. После ошибки сначала выяснить её причину. Новая БД обязательна для каждого
+запуска. Абсолютный Node path нужен, поскольку PATH systemd отличается от shell.
+
+```sh
+run_memory_case() {
+  systemd-run --user --unit="saint-look-memory-$1" \
+    --property="MemoryMax=$2" --property=MemorySwapMax=0 \
+    --property=RuntimeMaxSec=180 --wait --pipe \
+    --working-directory="$PWD" \
+    /usr/bin/python3 "$PWD/backend/ml/measure_pipeline.py" \
+    --backend-repo /tmp/saint-look-memory-backend \
+    --assets /tmp/saint-look-memory/assets \
+    --dataset /tmp/saint-look-public/manifest.json \
+    --png-directory /tmp/saint-look-memory/png \
+    --output "/tmp/saint-look-memory/$1/result.json" \
+    --data-dir "/tmp/saint-look-memory/$1/database" \
+    --node "$(command -v node)" --python /tmp/saint-look-ml/bin/python \
+    --memory-mib "$3"
+}
+run_memory_case 1g 1G 1024
+run_memory_case 2g 2G 2048
+```
+
+Исторически файлы весов были скопированы внутри предыдущего idle1GiB unit, затем
+переиспользованы сравнительными прогонами. Здесь подготовка копии показана отдельно:
+это не обещание одинакового page-cache accounting. Ни прежний, ни повторяемый
+прогон не очищает page cache ОС и не включает ОС в лимит. Для сравнения сохраняйте
+условия, kernel counters и показатели всех процессов; одинаковые времена/пики
+на другом хосте не ожидаются. Сумма RSS повторно считает shared pages и не равна
+`memory.current`. При лимите1GiB допускается ошибка/OOM — это результат измерения,
+а не повод повторять до успешного исхода.
