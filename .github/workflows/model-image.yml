@@ -48,14 +48,14 @@ jobs:
             -v "$PWD/backend/test:/app/backend/test:ro" \
             -v "$PWD/client-ios/SaintLook/TrialPhotos/photo-1.png:/public-photo.png:ro" \
             saint-look-model node --test test/real-preparation.mjs | tee model-image-proof.txt
-      - name: Actual cached ranking through HTTP, including explicitly synthetic 300-item load
+      - name: Actual cached single and whole-outfit ranking through HTTP, including synthetic 300-item load
         run: |
           docker run --rm --network none --memory 2g --cpus 1 \
             -e NODE_ENV=test -e SAINT_LOOK_REAL_MODEL_TEST=1 \
             -e SAINT_LOOK_REAL_MODEL_PHOTOS_DIR=/public-photos \
             -v "$PWD/backend/test:/app/backend/test:ro" \
             -v "$PWD/client-ios/SaintLook/TrialPhotos:/public-photos:ro" \
-            saint-look-model node --test test/real-recommendation.mjs | tee model-rank-proof.txt
+            saint-look-model node --test --test-concurrency=1 test/real-recommendation.mjs test/real-compose.mjs | tee model-rank-proof.txt
       - name: Preserve actual model proof
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
