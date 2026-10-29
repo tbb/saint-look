@@ -48,7 +48,7 @@ try {
   let manifest;
   try { manifest = JSON.parse(git('show', `${sha}:backend/release.json`)); }
   catch { throw new Error('Selected commit has no supported release manifest.'); }
-  if (manifest.format !== 1 || manifest.profile !== 'controlled-http' || ![1, 2].includes(manifest.dataVersion)
+  if (manifest.format !== 1 || manifest.profile !== 'controlled-http' || ![1, 2, 3].includes(manifest.dataVersion)
     || manifest.minDataVersion !== manifest.dataVersion || manifest.maxDataVersion !== manifest.dataVersion) {
     throw new Error('Selected release is not supported by this deployment workflow.');
   }

@@ -298,5 +298,183 @@ struct OutfitCoreChecks {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
         print("PASS: stale editor cannot revive deletion, references survive retries, failed atomic write preserves saved catalog")
 
+        // Publication is observed through the same catalog commands used by the app.
+        var publishing = WardrobeCatalog(items: [shirt, jeans], outfits: [outfit])
+        let initialRequest = IllustrationRequest(operationID: UUID(), photoVersionID: shirt.photoVersionID,
+            sourceSetVersionID: shirt.sourceSetVersionID, revision: 1, manualType: nil, manualColors: nil, status: .ready)
+        publishing.items[0].illustration = initialRequest
+        let source = IllustrationPreparedPhoto(photoID: shirt.photoVersionID, filename: "prepared-original.png",
+            sourceDigest: "original-digest", preparedDigest: "prepared-digest", modelVersion: "fal-ai/nano-banana-pro/edit",
+            templateVersion: "front-360x560-proposed-v1", geometryVersion: "fitting-square-1024-v1")
+        let firstResult = illustrationResult(item: shirt, request: initialRequest, type: "Футболка", filename: "first-illustration.png")
+        try publishing.stageIllustration(for: shirtID, request: initialRequest, result: firstResult, preparedPhotos: [source])
+        precondition(!publishing.items[0].photosLocked, "Downloaded output is not yet a committed publication")
+        precondition(!publishing.items[0].canEditPhotos, "An uncertain commit freezes source editing until reconciliation")
+        try file.save(publishing)
+        publishing = try file.load()
+        precondition(publishing.items[0].pendingPublication != nil)
+        do {
+            try publishing.editAttributes(for: shirtID, type: "Куртка", colors: nil, taxonomy: taxonomy)
+            fatalError("An uncertain publication cannot change its input")
+        } catch ClientError.publicationInProgress { }
+        try publishing.confirmPublication(for: shirtID, operationID: initialRequest.operationID)
+        precondition(publishing.items[0].photosLocked)
+        precondition(publishing.items[0].publishedVersion?.completeness == .illustrated)
+        try publishing.editAttributes(for: shirtID, type: "Худи", colors: ["Чёрный"], taxonomy: taxonomy)
+        precondition(publishing.items[0].editedType == "Худи")
+        precondition(publishing.items[0].displayedType == "Футболка")
+        precondition(publishing.items[0].displayedColors == ["Белый"])
+        let next = IllustrationRequest(operationID: UUID(), photoVersionID: shirt.photoVersionID,
+            sourceSetVersionID: shirt.sourceSetVersionID, revision: 2, manualType: "Худи", manualColors: ["Чёрный"])
+        publishing.items[0].illustration = next
+        try file.save(publishing)
+        publishing = try file.load()
+        precondition(publishing.items[0].photosLocked && publishing.items[0].hasUsableImageVersion)
+        precondition(publishing.items[0].displayedIllustration?.filename == "first-illustration.png")
+        precondition(publishing.outfits == [outfit])
+        publishing.items[0].illustration?.status = .failed
+        publishing.items[0].illustration?.error = "offline"
+        try file.save(publishing)
+        publishing = try file.load()
+        precondition(publishing.items[0].displayedType == "Футболка")
+        precondition(publishing.items[0].editedType == "Худи")
+        precondition(publishing.items[0].displayedIllustration?.filename == "first-illustration.png")
+        var completed = next
+        completed.status = .ready
+        let newResult = illustrationResult(item: shirt, request: completed, type: "Худи", filename: "second-illustration.png")
+        do {
+            try publishing.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [])
+            fatalError("A partial package must not publish")
+        } catch ClientError.invalidResponse { }
+        precondition(publishing.items[0].displayedType == "Футболка")
+        try publishing.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
+        precondition(publishing.items[0].displayedType == "Футболка", "Staging is not visible publication")
+        try file.save(publishing)
+        publishing = try file.load()
+        try publishing.confirmPublication(for: shirtID, operationID: completed.operationID)
+        try file.save(publishing)
+        let published = try file.load()
+        precondition(published.items[0].displayedType == "Худи")
+        precondition(published.items[0].displayedColors == ["Чёрный"])
+        precondition(published.items[0].displayedIllustration?.filename == "second-illustration.png")
+        precondition(published.items[0].publishedVersion?.versionID == completed.operationID)
+        precondition(published.outfits == [outfit])
+        var deletingCommit = published
+        try deletingCommit.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
+        deletingCommit.removeItem(shirtID)
+        try file.save(deletingCommit)
+        deletingCommit = try file.load()
+        do {
+            try deletingCommit.confirmPublication(for: shirtID, operationID: completed.operationID)
+            fatalError("A late successful commit response must not restore deletion")
+        } catch is CancellationError { }
+        precondition(deletingCommit.pendingDeletionIDs.contains(shirtID))
+        precondition(deletingCommit.outfits[0].slots.first { $0.zone == .body }?.itemID == nil)
+        try publishing.editAttributes(for: shirtID, type: "Куртка", colors: nil, taxonomy: taxonomy)
+        do {
+            try publishing.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
+            fatalError("A late package must not cancel a newer edit")
+        } catch is CancellationError { }
+        publishing.removeItem(shirtID)
+        do {
+            try publishing.stageIllustration(for: shirtID, request: completed, result: newResult, preparedPhotos: [source])
+            fatalError("A late publication must not restore a deleted thing")
+        } catch is CancellationError { }
+        precondition(publishing.items.map(\.id) == [jeansID])
+        print("PASS: attribute updates publish atomically, partial/failed/offline updates retain the old version, stale results cannot restore edits or deletions")
+
+        // A legacy edited illustration is paired with its old effective attributes,
+        // while the newer manual input remains available in the editor.
+        var legacyPublication = published
+        legacyPublication.items[0].manualType = "Куртка"
+        legacyPublication.items[0].illustration = IllustrationRequest(operationID: UUID(), photoVersionID: shirt.photoVersionID,
+            sourceSetVersionID: shirt.sourceSetVersionID, revision: 3, manualType: "Куртка", manualColors: ["Чёрный"], submitted: true)
+        var legacyJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(legacyPublication)) as! [String: Any]
+        var legacyRecords = legacyJSON["items"] as! [[String: Any]]
+        for index in legacyRecords.indices {
+            legacyRecords[index].removeValue(forKey: "publishedVersion")
+            legacyRecords[index].removeValue(forKey: "photosLocked")
+        }
+        legacyJSON["items"] = legacyRecords
+        try JSONSerialization.data(withJSONObject: legacyJSON).write(to: catalogURL)
+        let migratedPublication = try file.load()
+        precondition(migratedPublication.items[0].displayedType == "Худи")
+        precondition(migratedPublication.items[0].editedType == "Куртка")
+        precondition(!migratedPublication.items[0].photosLocked,
+                     "A v2 local result is not proof of a server publication commit")
+        precondition(migratedPublication.items[0].publishedVersion?.completeness == .legacyIllustration)
+        precondition(migratedPublication.items[0].pendingPublication?.legacyReconciliation == true)
+        precondition(!migratedPublication.items[0].canEditPhotos)
+        let legacyAck = ResultAcknowledgement(itemID: shirtID, operationID: completed.operationID, illustration: true)
+        precondition(migratedPublication.pendingAcknowledgements?.contains(legacyAck) == true)
+        try file.save(migratedPublication)
+        var reconciledLegacy = try file.load()
+        try reconciledLegacy.reconcileLegacyPublication(legacyAck, committed: true)
+        precondition(reconciledLegacy.items[0].photosLocked)
+        precondition(reconciledLegacy.items[0].publishedVersion?.completeness == .illustrated)
+        precondition(reconciledLegacy.items[0].editedType == "Куртка")
+        precondition(reconciledLegacy.items[0].displayedType == "Худи")
+        precondition(reconciledLegacy.items[0].illustration?.operationID == migratedPublication.items[0].illustration?.operationID)
+        precondition(reconciledLegacy.pendingAcknowledgements?.contains(legacyAck) == false)
+        var rejectedLegacy = migratedPublication
+        try rejectedLegacy.reconcileLegacyPublication(legacyAck, committed: false)
+        try file.save(rejectedLegacy)
+        rejectedLegacy = try file.load()
+        precondition(rejectedLegacy.items[0].pendingPublication == nil)
+        precondition(!rejectedLegacy.items[0].isReconcilingLegacyPublication)
+        precondition(rejectedLegacy.items[0].illustration?.operationID == legacyPublication.items[0].illustration?.operationID)
+        precondition(rejectedLegacy.items[0].illustration?.status == .pending)
+        precondition(rejectedLegacy.items[0].illustration?.submitted == true,
+                     "Refusing the old receipt retains the existing submitted operation for resumption")
+        try rejectedLegacy.editAttributes(for: shirtID, type: "Пальто", colors: nil, taxonomy: taxonomy)
+        precondition(!rejectedLegacy.items[0].photosLocked)
+        precondition(rejectedLegacy.items[0].publishedVersion?.completeness == .legacyIllustration)
+        precondition(rejectedLegacy.items[0].displayedIllustration?.filename == "second-illustration.png")
+        precondition(rejectedLegacy.items[0].displayedType == "Худи")
+        precondition(rejectedLegacy.items[0].editedType == "Пальто")
+        precondition(rejectedLegacy.outfits == [outfit])
+        precondition(rejectedLegacy.pendingAcknowledgements?.contains(legacyAck) == false)
+        precondition(migratedPublication.items[1].publishedVersion?.completeness == .legacyImage)
+        precondition(!migratedPublication.items[1].photosLocked)
+        precondition(migratedPublication.outfits == [outfit])
+        var incompleteLegacy = legacyJSON
+        var incompleteRecords = legacyRecords
+        incompleteRecords[0].removeValue(forKey: "preparedPhotos")
+        incompleteLegacy["items"] = incompleteRecords
+        try JSONSerialization.data(withJSONObject: incompleteLegacy).write(to: catalogURL)
+        var incompleteMigration = try file.load()
+        try incompleteMigration.reconcileLegacyPublication(legacyAck, committed: true)
+        precondition(incompleteMigration.items[0].photosLocked)
+        precondition(incompleteMigration.items[0].publishedVersion?.completeness == .legacyIllustration,
+                     "A confirmed source lock does not invent missing locally prepared artifacts")
+        precondition(incompleteMigration.items[0].displayedIllustration?.filename == "second-illustration.png")
+        print("PASS: legacy migration preserves image/attribute consistency, manual edits, references and incomplete readiness")
+        // An old illustration from another photograph is never the fallback of a
+        // published image-only packet, even if the legacy result is still retained.
+        var replacedLegacy = legacyJSON
+        var replacedRecords = legacyRecords
+        replacedRecords[0]["photoVersionID"] = UUID().uuidString
+        replacedRecords[0]["sourceSetVersionID"] = UUID().uuidString
+        replacedLegacy["items"] = replacedRecords
+        try JSONSerialization.data(withJSONObject: replacedLegacy).write(to: catalogURL)
+        let replacedMigration = try file.load()
+        precondition(replacedMigration.items[0].publishedVersion?.completeness == .legacyImage)
+        precondition(replacedMigration.items[0].displayedIllustration == nil,
+                     "A publication with no illustration must not borrow one from another version")
+        print("PASS: migration never borrows a stale illustration from another photo version")
+
     }
+    static func illustrationResult(item: WardrobeItem, request: IllustrationRequest, type: String, filename: String) -> IllustrationResult {
+        let keys = ["silhouette", "body_length", "sleeves", "pattern", "pattern_location", "pattern_size", "neckline", "fastening", "surface", "hood", "kangaroo_pocket", "patch_pockets", "dropped_shoulders", "contrast_cuffs", "lettering"]
+        let features = IllustrationFeatures(version: "fitting-observable-v2-photoroom-sandbox", type: type,
+            colors: request.manualColors ?? ["Белый"], traits: Dictionary(uniqueKeysWithValues: keys.map { ($0, "unknown") }))
+        let response = IllustrationResponse(itemId: item.id, operationId: request.operationID,
+            photoVersionId: request.photoVersionID, sourceSetVersionId: request.sourceSetVersionID, revision: request.revision,
+            status: .ready, mode: "test", processing: [:], observedFeatures: features, effectiveFeatures: features,
+            manualType: request.manualType, manualColors: request.manualColors, modelVersion: "fal-ai/nano-banana-pro/edit",
+            templateVersion: "front-360x560-proposed-v1", geometryVersion: "fitting-square-1024-v1", resultPath: nil, error: nil,
+            preparedSources: [IllustrationPreparedSource(photoId: item.photoVersionID, preparedPath: "/prepared")])
+        return IllustrationResult(filename: filename, response: response)
+    }
+
 }

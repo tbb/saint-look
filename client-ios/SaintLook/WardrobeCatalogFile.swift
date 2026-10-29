@@ -18,6 +18,7 @@ struct WardrobeCatalog: Codable {
         self.pendingDeletionIDs = pendingDeletionIDs
         self.pendingAcknowledgements = pendingAcknowledgements
         self.outfits = outfits
+        queueLegacyPublicationAcknowledgements()
     }
 
     init(from decoder: Decoder) throws {
@@ -26,7 +27,112 @@ struct WardrobeCatalog: Codable {
         pendingDeletionIDs = try values.decode(Set<UUID>.self, forKey: .pendingDeletionIDs)
         pendingAcknowledgements = try values.decodeIfPresent(Set<ResultAcknowledgement>.self, forKey: .pendingAcknowledgements)
         outfits = try values.decodeIfPresent([Outfit].self, forKey: .outfits) ?? []
+        queueLegacyPublicationAcknowledgements()
     }
+}
+
+extension WardrobeCatalog {
+    var legacyPublicationAcknowledgements: Set<ResultAcknowledgement> {
+        Set(items.compactMap { item in
+            guard let candidate = item.pendingPublication, candidate.legacyReconciliation == true else { return nil }
+            return ResultAcknowledgement(itemID: item.id, operationID: candidate.request.operationID, illustration: true)
+        })
+    }
+
+    private mutating func queueLegacyPublicationAcknowledgements() {
+        // nil still means the pre-ack catalog needs its ordinary-image migration.
+        if let pendingAcknowledgements {
+            self.pendingAcknowledgements = pendingAcknowledgements.union(legacyPublicationAcknowledgements)
+        }
+    }
+
+    mutating func reconcileLegacyPublication(_ acknowledgement: ResultAcknowledgement, committed: Bool) throws {
+        guard acknowledgement.illustration == true,
+              let index = items.firstIndex(where: { $0.id == acknowledgement.itemID }),
+              let candidate = items[index].pendingPublication, candidate.legacyReconciliation == true,
+              candidate.request.operationID == acknowledgement.operationID else { return }
+        if committed {
+            try confirmPublication(for: acknowledgement.itemID, operationID: acknowledgement.operationID)
+        } else {
+            // A definitive server refusal preserves the visible legacy snapshot,
+            // but never upgrades it to a confirmed publication or retries paid work.
+            items[index].pendingPublication = nil
+        }
+        pendingAcknowledgements?.remove(acknowledgement)
+    }
+
+    mutating func editAttributes(for id: UUID, type: String?, colors: [String]?, taxonomy: WardrobeTaxonomy) throws {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        if let type, !taxonomy.contains(type: type) { throw ClientError.invalidAttributes }
+        if let colors, !taxonomy.contains(colors: colors) { throw ClientError.invalidAttributes }
+        var item = items[index]
+        guard item.canEditAttributes else { throw ClientError.publicationInProgress }
+        let oldType = item.manualType, oldColors = item.manualColors
+        // Capture the previous image/attributes before changing the editable input.
+        item.publishIngestion()
+        if let type { item.manualType = type }
+        if let colors { item.manualColors = colors }
+        if item.manualType != oldType || item.manualColors != oldColors {
+            if item.illustration?.status == .pending {
+                item.illustration?.status = .failed
+                item.illustration?.error = "source_changed"
+            }
+            // Legacy cutouts have no type-dependent illustration or encoder yet.
+            // Publishing these local attributes is atomic; this is not #68 readiness.
+            item.publishIngestion()
+        }
+        items[index] = item
+    }
+
+    mutating func stageIllustration(for id: UUID, request: IllustrationRequest, result: IllustrationResult,
+                                     preparedPhotos: [IllustrationPreparedPhoto]) throws {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { throw CancellationError() }
+        var item = items[index]
+        guard item.illustration?.operationID == request.operationID,
+              item.photoVersionID == request.photoVersionID, item.sourceSetVersionID == request.sourceSetVersionID,
+              item.manualType == request.manualType, item.manualColors == request.manualColors,
+              request.status == .ready, let filename = item.resultFilename else { throw CancellationError() }
+        try result.response.validate(for: item, request: request)
+        guard let features = result.response.effectiveFeatures, result.response.status == .ready,
+              preparedPhotos.count == item.additionalPhotos.count + 1,
+              Set(preparedPhotos.map(\.photoID)) == Set([item.photoVersionID] + item.additionalPhotos.map(\.id)) else {
+            throw ClientError.invalidResponse
+        }
+        let publication = ItemPublication(versionID: request.operationID, photoVersionID: item.photoVersionID,
+            sourceSetVersionID: item.sourceSetVersionID, cutoutFilename: filename, cutoutMode: item.resultMode,
+            illustration: result, type: features.type, colors: features.colors, completeness: .illustrated)
+        item.pendingPublication = PendingItemPublication(publication: publication, request: request, preparedPhotos: preparedPhotos)
+        item.illustration = request
+        item.illustration?.status = .pending
+        item.illustration?.readyForDelivery = true
+        items[index] = item
+    }
+
+    mutating func confirmPublication(for id: UUID, operationID: UUID) throws {
+        guard let index = items.firstIndex(where: { $0.id == id }),
+              let candidate = items[index].pendingPublication,
+              candidate.request.operationID == operationID,
+              items[index].photoVersionID == candidate.publication.photoVersionID,
+              items[index].sourceSetVersionID == candidate.publication.sourceSetVersionID else { throw CancellationError() }
+        if candidate.legacyReconciliation == true {
+            guard items[index].publishedVersion?.versionID == candidate.publication.versionID else { throw CancellationError() }
+            // The old result may precede newer editable inputs or another request.
+            // Reconciliation owns only its old snapshot, never those newer intents.
+        } else {
+            guard items[index].illustration?.operationID == operationID,
+                  items[index].manualType == candidate.request.manualType,
+                  items[index].manualColors == candidate.request.manualColors else { throw CancellationError() }
+            items[index].illustration = candidate.request
+            items[index].illustration?.status = .ready
+            items[index].illustration?.readyForDelivery = false
+            items[index].illustrationResult = candidate.publication.illustration
+            items[index].preparedPhotos = candidate.preparedPhotos
+        }
+        items[index].publishedVersion = candidate.publication
+        items[index].photosLocked = true
+        items[index].pendingPublication = nil
+    }
+
 }
 
 struct WardrobeCatalogFile {

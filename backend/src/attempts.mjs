@@ -44,6 +44,11 @@ export function acceptAttempt(database, input, provider, explicit = false, expir
     if (!explicit) throw new RequestError(409, 'identity_conflict');
     if (revision <= current.revision) throw new RequestError(409, 'stale_revision');
   }
+  const locked = database.prepare('SELECT * FROM published_sources WHERE item_id=?').get(input.itemId);
+  if (locked && (input.photoVersionId !== locked.photo_version_id
+    || sourceDigest !== JSON.parse(locked.photos)[0].normalizedDigest || action === 'replace')) {
+    throw new RequestError(409, 'photos_locked');
+  }
   const knownPhoto = database.prepare('SELECT source_digest FROM operation_receipts WHERE item_id=? AND photo_version_id=?')
     .get(input.itemId, input.photoVersionId);
   // A retry keeps the client's local photo. Its preceding replacement may never

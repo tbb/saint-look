@@ -10,4 +10,5 @@ trap 'rm -rf "$work"' EXIT
   "$root/client-ios/SaintLook/WardrobeCatalogFile.swift" \
   "$root/client-ios/scripts/tests/outfit-core.swift" \
   -o "$work/outfit-core-checks"
+cp "$root/shared/wardrobe-taxonomy.json" "$work/wardrobe-taxonomy.json"
 "$work/outfit-core-checks" "$root/shared/wardrobe-taxonomy.json"

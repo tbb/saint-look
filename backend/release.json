@@ -1,8 +1,8 @@
 {
   "format": 1,
-  "dataVersion": 2,
-  "minDataVersion": 2,
-  "maxDataVersion": 2,
+  "dataVersion": 3,
+  "minDataVersion": 3,
+  "maxDataVersion": 3,
   "profile": "controlled-http",
   "providerConfig": "photoroom-jev-1.14.0-taxonomy-1",
   "profiles": ["controlled-http", "live"]

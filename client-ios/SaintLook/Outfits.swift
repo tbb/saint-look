@@ -135,7 +135,7 @@ extension WardrobeCatalog {
             // Existing references remain valid during retries or manual type corrections.
             let unchanged = previous?.slots.contains { $0.id == slot.id && $0.itemID == itemID && $0.zone == slot.zone } == true
             if !unchanged {
-                guard item.status == .ready, item.resultFilename != nil,
+                guard item.hasUsableImageVersion, item.displayedCutoutFilename != nil,
                       availableCutouts.contains(itemID), slot.zone.accepts(item, taxonomy: taxonomy) else {
                     throw OutfitError.unavailableItem
                 }

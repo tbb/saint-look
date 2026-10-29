@@ -52,6 +52,8 @@ import Foundation
         _ = try VisualFixtures.prepare(environment: fittingEnvironment, support: support, resources: sources, taxonomy: taxonomy)
         let fitting = try WardrobeCatalogFile(directory: root).load()
         precondition(fitting.items.count == 4 && fitting.outfits.count == 1)
+        precondition(fitting.pendingAcknowledgements == [], "Prepared visual fixtures must not synthesize migration requests")
+        precondition(fitting.items.allSatisfy { $0.pendingPublication == nil })
         precondition(fitting.outfits[0].slots.filter { $0.zone == .body }.count == 2)
         precondition(fitting.outfits[0].selectedIDs == Set(fitting.items.map(\.id)))
         for item in fitting.items {
