@@ -1,6 +1,36 @@
 import XCTest
 import Foundation
 
+/// Shared by the existing flow and visual journeys. UIKit can expose a dialog
+/// action as an outer Button containing a second Button with the same identity.
+/// Resolve that one nested action, never an arbitrary first matching command.
+@MainActor
+func addressedNativeDialogAction(_ identifier: String, in app: XCUIApplication) throws -> XCUIElement {
+    let matches = app.buttons.matching(identifier: identifier)
+    guard matches.firstMatch.waitForExistence(timeout: 5) else {
+        throw NativeDialogActionFailure.missing(identifier)
+    }
+    if matches.count == 1 { return matches.element }
+    let parents = matches.containing(.button, identifier: identifier)
+    guard matches.count == 2, parents.count == 1 else {
+        throw NativeDialogActionFailure.ambiguous(identifier)
+    }
+    let action = parents.element
+    let children = action.descendants(matching: .button).matching(identifier: identifier)
+    guard children.count == 1 else { throw NativeDialogActionFailure.ambiguous(identifier) }
+    let child = children.element
+    let frame = action.frame
+    guard !frame.isEmpty, frame == child.frame, action.label == child.label else {
+        throw NativeDialogActionFailure.ambiguous(identifier)
+    }
+    return action
+}
+
+private enum NativeDialogActionFailure: Error {
+    case missing(String)
+    case ambiguous(String)
+}
+
 final class OutfitFlowTests: XCTestCase {
     private let token = "saint-look-ui-tests-owner-token-00000001"
     private let baseURL = "http://127.0.0.1:8788"
@@ -99,9 +129,13 @@ final class OutfitFlowTests: XCTestCase {
     @MainActor
     private func performSlotAction(_ action: String, slotID: String, in app: XCUIApplication) {
         tap(app.buttons["outfit-slot-menu-\(slotID)"], in: app)
-        let option = app.buttons["\(action)-\(slotID)"]
-        XCTAssertTrue(option.waitForExistence(timeout: 5))
-        option.tap()
+        do {
+            let option = try addressedNativeDialogAction("\(action)-\(slotID)", in: app)
+            option.tap()
+        } catch {
+            capture("ambiguous-native-dialog-action")
+            XCTFail("The addressed native dialog action must be unambiguous: \(error)")
+        }
     }
 
     @MainActor

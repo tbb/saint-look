@@ -338,8 +338,13 @@ final class VisualAcceptanceTests: XCTestCase {
 
     @MainActor
     private func tapMenuAction(_ identifier: String, in app: XCUIApplication) throws {
-        let action = app.buttons[identifier]
-        try require(action.waitForExistence(timeout: 5), "The addressed native menu action must exist")
+        let action: XCUIElement
+        do {
+            action = try addressedNativeDialogAction(identifier, in: app)
+        } catch {
+            diagnose("ambiguous-native-dialog-action", app: app, detail: "\(error)")
+            throw error
+        }
         // Resolve the visible native action container even when its action is
         // inside the application frame: a clipped popup can still hide that row.
         // Confirmation dialogs also expose nested Other containers on this runtime.
