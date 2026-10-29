@@ -5,6 +5,8 @@
 !backend/package-lock.json
 !backend/release.json
 !backend/REVISION
+!backend/ml/
+!backend/ml/**
 !backend/src/
 !backend/src/**
 !backend/test/
