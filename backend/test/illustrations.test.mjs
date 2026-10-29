@@ -69,7 +69,7 @@ test('single photo produces a separate transparent illustration with observed tr
   assert.equal((await server.request(ready.resultPath)).status, 410);
   assert.equal((await server.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}`)).status, 410);
   assert.equal((await requestIllustration(server, photo.itemId, input)).status, 410);
-  assert.equal((await server.request(`/v1/items/${photo.itemId}/result`)).status, 200);
+  assert.equal((await server.request(`/v1/items/${photo.itemId}/result`)).status, 410);
 });
 
 test('multiple views preserve manual type and colors, reuse prepared photos, and reject mutated identities', async t => {
