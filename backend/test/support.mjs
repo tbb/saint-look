@@ -57,6 +57,20 @@ export function upload(server, request) {
   return server.request('/v1/items', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) });
 }
 
+// Listening is no longer model readiness. Wait only for startup to settle via
+// read-only config; keep all caller assertions on the resulting capability.
+export async function waitForModelConfiguration(server, timeout = 3000) {
+  const deadline = Date.now() + timeout;
+  do {
+    const response = await server.request('/v1/recommendations/config', { signal: AbortSignal.timeout(5000) });
+    const config = await response.json();
+    if (response.status === 200) return config;
+    if (response.status !== 503 || config.error !== 'encoder_unavailable') throw new Error('Model configuration request failed');
+    await new Promise(resolve => setTimeout(resolve, 100));
+  } while (Date.now() < deadline);
+  throw new Error('Model startup did not settle within the evidence test budget');
+}
+
 export async function waitForItem(server, itemId, status = 'ready') {
   for (let attempt = 0; attempt < 100; attempt++) {
     const response = await server.request(`/v1/items/${itemId}`);

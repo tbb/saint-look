@@ -7,7 +7,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { join } from 'node:path';
 import os from 'node:os';
 import sharp from 'sharp';
-import { environment } from './support.mjs';
+import { environment, waitForModelConfiguration } from './support.mjs';
 import { slot, singleInput } from './recommendation-support.mjs';
 import { clonePreparedPacket, installReceiptFixture } from './prepared-receipt-fixture.mjs';
 import { createModelBridge } from '../src/model-bridge.mjs';
@@ -40,6 +40,7 @@ test('real HTTP rank chooses between two public items and handles 300 synthetic 
     t.after(preparationMemory);
     const prepareStart = performance.now(), model = createModelBridge({ ...process.env, ...modelEnv }, env.directory);
     t.after(() => model.close());
+    await model.waitForStartup();
     const status = await model.status(); assert.equal(status.available, true); assert.equal(status.mode, 'real');
     const modelStartupMilliseconds = milliseconds(prepareStart);
     const items = [], inputs = [];
@@ -63,7 +64,7 @@ test('real HTTP rank chooses between two public items and handles 300 synthetic 
     const startupStart = performance.now(), server = await env.launch(modelEnv), backendMemory = monitorTree(server.pid);
     t.after(backendMemory);
     const listeningMilliseconds = milliseconds(startupStart);
-    const config = await (await server.request('/v1/recommendations/config')).json();
+    const config = await waitForModelConfiguration(server, 120_000);
     assert.equal(config.encoder.available, true); assert.equal(config.encoder.mode, 'real');
     assert.equal(config.encoder.activeSpaceID, status.activeSpaceID);
     const modelReadyMilliseconds = milliseconds(startupStart);

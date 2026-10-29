@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { environment } from './support.mjs';
+import { environment, waitForModelConfiguration } from './support.mjs';
 import { illustrationFixture } from './providers/illustration.mjs';
 import { publishedItem, slot, singleInput, postJSON } from './recommendation-support.mjs';
 
@@ -61,7 +61,7 @@ test('empty context and missing or excluded alternatives are distinct no-op outc
   assert.equal((await (await postJSON(server, '/v1/recommendations/single', duplicate)).json()).reason, 'duplicate_item');
   assert.equal(fixture.calls.rank.length, 0);
   await server.stop(); const restarted = await env.launch({ ...fixture.env, SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'false' });
-  const config = await (await restarted.request('/v1/recommendations/config')).json();
+  const config = await waitForModelConfiguration(restarted);
   assert.equal(config.recommendations.available, true); assert.equal(config.newItemPreparation.available, false);
 });
 
@@ -167,6 +167,7 @@ test('used vectors require the active space, while an excluded original from an 
   const target = slot('body', original);
   let input = singleInput([candidate, trousers], [target, slot('bottom', trousers)], target);
   await server.stop(); controls.spaceID = 'controlled-outfit-next'; server = await env.launch(fixture.env);
+  await waitForModelConfiguration(server);
   const incompatible = await postJSON(server, '/v1/recommendations/single', input);
   assert.equal(incompatible.status, 409);
   assert.deepEqual(await incompatible.json(), { error: 'incompatible_representations', activeSpaceID: controls.spaceID });
@@ -197,6 +198,7 @@ test('300 synthetic prepared receipts fit one HTTP request and automatic context
   const baseline = await publishedItem(server, 't_shirt');
   const synthetic = Array.from({ length: 299 }, () => clonePreparedPacket(baseline.item));
   await server.stop(); installReceiptFixture(env.directory, synthetic); server = await env.launch(fixture.env);
+  await waitForModelConfiguration(server);
   const target = slot('body'), input = singleInput([baseline], [slot('body', baseline), target], target);
   input.items = [baseline.item, ...synthetic];
   const response = await postJSON(server, '/v1/recommendations/single', input), result = await response.json();

@@ -77,6 +77,9 @@ const server = createServer(async (request, response) => {
     retention.sweep();
     illustrations.sweep(); preparations.sweep();
     if (request.method === 'GET' && path === '/v1/recommendations/config') {
+      // A temporary failure keeps existing clients' discovery retry active;
+      // health remains responsive without advertising an unverified model.
+      if (model.isStarting()) throw new RequestError(503, 'encoder_unavailable');
       const configuration = await preparations.config();
       return send(response, 200, { ...configuration, recommendations: { ...recommendations.capability(configuration.encoder), strategies: [...recommendations.capability(configuration.encoder).strategies, 'compose'] } });
     }

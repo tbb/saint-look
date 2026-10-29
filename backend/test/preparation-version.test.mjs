@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { environment } from './support.mjs';
+import { environment, waitForModelConfiguration } from './support.mjs';
 import { illustrationFixture } from './providers/illustration.mjs';
 import { publishedItem, refreshedItem, slot, singleInput, postJSON, awaitReady } from './recommendation-support.mjs';
 
@@ -51,7 +51,7 @@ test('model restart terminates old-space CPU work and refreshes cached packets w
   controls.spaceID = 'space-B'; delete controls.model;
   server = await env.launch({ ...fixture.env, SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'false' });
   release();
-  const configuration = await (await server.request('/v1/recommendations/config')).json();
+  const configuration = await waitForModelConfiguration(server);
   assert.equal(configuration.encoder.activeSpaceID, 'space-B');
   assert.equal(configuration.encoderRefresh.available, true); assert.equal(configuration.newItemPreparation.available, false);
   const terminated = await failed(server, preparationPath(shirt, interrupted));
@@ -70,6 +70,7 @@ test('model restart terminates old-space CPU work and refreshes cached packets w
   assert.equal((await acknowledge(server, shirt, invalid)).status, 409);
   await server.stop(); delete controls.model;
   server = await env.launch({ ...fixture.env, SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'false' });
+  await waitForModelConfiguration(server);
   const next = refreshInput(shirt, 'space-B', 4);
   assert.equal((await submit(server, shirt, next)).status, 202);
   const prepared = await awaitReady(server, preparationPath(shirt, next));
@@ -91,6 +92,7 @@ test('model restart terminates old-space CPU work and refreshes cached packets w
   // process restart. This models a client that cannot know whether ack arrived.
   await acknowledge(server, shirt, next);
   await server.stop(); server = await env.launch({ ...fixture.env, SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'false' });
+  await waitForModelConfiguration(server);
   assert.equal((await acknowledge(server, shirt, next)).status, 204);
   assert.equal((await server.request(preparationPath(shirt, next))).status, 410);
   const result = await postJSON(server, '/v1/recommendations/single', updated), proposal = await result.json();

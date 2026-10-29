@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { environment } from './support.mjs';
+import { environment, waitForModelConfiguration } from './support.mjs';
 import { illustrationFixture } from './providers/illustration.mjs';
 import { publishedItem, slot, postJSON, refreshedItem } from './recommendation-support.mjs';
 const endpoint = '/v1/recommendations/compose';
@@ -110,6 +110,7 @@ test('coverage precedes sequential scores and 300 cached items stay inside the 6
   const tee = await publishedItem(server, 't_shirt');
   const clones = Array.from({ length: 299 }, () => clonePreparedPacket(tee.item));
   await server.stop(); installReceiptFixture(env.directory, clones); server = await env.launch(fixture.env);
+  await waitForModelConfiguration(server);
   const slots = Array.from({ length: 32 }, () => slot('body'));
   const request = input([tee], slots); request.items.push(...clones);
   const response = await postJSON(server, endpoint, request), result = await response.json();

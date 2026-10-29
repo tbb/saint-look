@@ -23,6 +23,25 @@ publicationProtocol; version/revision/deployment identity не меняют см
 недостаточно. Отсутствующие/повреждённые веса делают encoder unavailable,
 без случайного вектора или перехода к controlled.
 
+При запуске строгая проверка assets (`describe`) имеет отдельный предел 300 секунд.
+Лимиты рабочих `prepare`/`rank` остаются 120 секунд. `/health` во время проверки
+сразу отвечает 200 с `encoderAvailable=false`, без ожидания загрузки модели.
+Authenticated `GET /v1/recommendations/config` в этот период сразу отвечает
+503 `encoder_unavailable`: клиент продолжает существующий discovery retry,
+сохраняя прежнюю конфигурацию и публикации. После успешной проверки config
+возвращает 200 с available=true; после окончательного отказа или при disabled —
+200 с available=false. Запросы подбора/подготовки до готовности получают
+503 и не становятся в очередь за запуском модели.
+
+Уже принятая durable pending-подготовка после перезапуска ждёт завершения
+проверки в фоновом worker и продолжает тот же operationId. Окончательный отказ
+запуска оставляет явную ошибку encoder_unavailable; платные стадии не повторяются.
+Подтверждение готового пакета при недоступной модели получает 503
+encoder_unavailable и сохраняет candidate для повтора. Ошибка 409
+representation_space_changed означает известное несовпадение пространств,
+а не ещё незавершённый запуск. Повтор уже подтверждённого ack остаётся
+идемпотентным и не требует ожидания модели.
+
 Real runtime: SAINT_LOOK_MODEL_PROFILE=outfit-transformer-labse-v1,
 SAINT_LOOK_MODEL_PYTHON (путь executable venv), SAINT_LOOK_MODEL_ASSETS,
 SAINT_LOOK_MODEL_THREADS=1. Disabled — явный профиль disabled, также default.

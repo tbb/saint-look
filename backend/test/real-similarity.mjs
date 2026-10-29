@@ -5,7 +5,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import sharp from 'sharp';
-import { environment } from './support.mjs';
+import { environment, waitForModelConfiguration } from './support.mjs';
 import { slot, singleInput, postJSON } from './recommendation-support.mjs';
 import { installReceiptFixture } from './prepared-receipt-fixture.mjs';
 import { createModelBridge } from '../src/model-bridge.mjs';
@@ -22,7 +22,8 @@ test('public photographs exercise both replacement intentions with actual checkp
     const modelEnv = { SAINT_LOOK_MODEL_PROFILE: 'outfit-transformer-labse-v1', SAINT_LOOK_TEST_MODEL_ORIGIN: '',
       SAINT_LOOK_MODEL_ASSETS: process.env.SAINT_LOOK_MODEL_ASSETS, SAINT_LOOK_MODEL_PYTHON: process.env.SAINT_LOOK_MODEL_PYTHON, SAINT_LOOK_MODEL_THREADS: '1' };
     const env = await environment(t), model = createModelBridge({ ...process.env, ...modelEnv }, env.directory);
-    t.after(() => model.close()); const status = await model.status(); assert.equal(status.mode, 'real'); assert.equal(status.available, true);
+    t.after(() => model.close()); await model.waitForStartup();
+    const status = await model.status(); assert.equal(status.mode, 'real'); assert.equal(status.available, true);
     const items = [], examples = [];
     // These explicit, agent-reviewed observations are input fixtures, not JEV
     // output, a production publication, human taste ratings or training labels.
@@ -48,7 +49,7 @@ test('public photographs exercise both replacement intentions with actual checkp
     model.close();
     const initial = await env.launch({ SAINT_LOOK_MODEL_PROFILE: 'disabled', SAINT_LOOK_TEST_MODEL_ORIGIN: '' }); await initial.stop();
     installReceiptFixture(env.directory, items, 'real');
-    const server = await env.launch(modelEnv), config = await (await server.request('/v1/recommendations/config')).json();
+    const server = await env.launch(modelEnv), config = await waitForModelConfiguration(server, 120_000);
     assert.equal(config.encoder.activeSpaceID, status.activeSpaceID);
     const target = slot('body', { item: items[0] }), context = slot('bottom', { item: items[1] });
     const results = [];
