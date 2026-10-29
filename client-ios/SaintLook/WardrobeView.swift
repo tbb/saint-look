@@ -353,7 +353,11 @@ private struct ItemDetailView: View {
             #if DEBUG
             if ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1",
                ProcessInfo.processInfo.environment["SAINT_LOOK_VISUAL_SCENARIO"] == nil {
-                Button("Заменить тестовым фото") { store.replacePhoto(itemID, with: PhotoData.demoPhoto(replacement: true)) }
+                Button("Заменить тестовым фото") {
+                    store.traceMenu596("menu-entry", id: itemID)
+                    store.replacePhoto(itemID, with: PhotoData.demoPhoto(replacement: true))
+                    store.traceMenu596("menu-return", id: itemID)
+                }
                     .accessibilityIdentifier("replace-demo-photo")
             }
             #endif

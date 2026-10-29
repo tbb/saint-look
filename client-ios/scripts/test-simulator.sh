@@ -52,6 +52,12 @@ cleanup() {
     [[ "$(xcrun simctl ui "$simulator_id" content_size)" == "$previous_content_size" ]] || test_status=1
     echo "Restored Simulator Dynamic Type: $previous_content_size"
   fi
+  if [[ "${SAINT_LOOK_MENU596_TRACE:-0}" == 1 && -n "${simulator_id:-}" ]]; then
+    # Read only the tagged fixture metadata; keep the original test exit status.
+    xcrun simctl spawn "$simulator_id" log show --style compact --last 20m \
+      --predicate 'eventMessage CONTAINS "[DEBUG-menu596]"' > build/menu596.log 2>&1 || true
+    cat build/menu596.log || true
+  fi
   if [[ -n "$remote_manifest" ]]; then rm -f "$remote_manifest"; fi
   rm -rf "$work_directory"
   exit "$test_status"
@@ -248,6 +254,10 @@ if [[ -n "${SAINT_LOOK_UI_TEST_ONLY:-}" ]]; then
     [[ -z "$test_selector" ]] && continue
     test_options+=("-only-testing:$test_selector")
   done <<< "$SAINT_LOOK_UI_TEST_ONLY"
+fi
+if [[ "${SAINT_LOOK_MENU596_TRACE:-0}" == 1 ]]; then
+  # Fixed two observations, never retry-until-pass or stop-at-first-pass.
+  test_options+=(-test-iterations 2 -test-repetition-relaunch-enabled YES)
 fi
 if [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" && "${SAINT_LOOK_OBSERVE_VISUAL_STALLS:-0}" == 1 ]]; then
   # Observe the existing 60-second XCTest warning; do not retry or change its verdict.

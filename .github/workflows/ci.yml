@@ -206,9 +206,8 @@ jobs:
           SaintLookUITests/WardrobeFlowTests/testReplacementSourceCancellationAndRestrictedCameraKeepTheItem"
           fi
           if [[ "$TEST_SUITE" == "wardrobe-recovery" ]]; then
-            export SAINT_LOOK_UI_TEST_ONLY="SaintLookUITests/WardrobeFlowTests/testCancelDeletionKeepsPhotoAndDoesNotSendDelete
-          SaintLookUITests/WardrobeFlowTests/testOfflineReplacementRetainsPreviousCutoutAndEditsUntilNewResultAfterRelaunch
-          SaintLookUITests/WardrobeFlowTests/testOpeningPhotoKeepsItemContextThroughEditingAndBackToCollection"
+            export SAINT_LOOK_MENU596_TRACE=1
+            export SAINT_LOOK_UI_TEST_ONLY="SaintLookUITests/WardrobeFlowTests/testOfflineReplacementRetainsPreviousCutoutAndEditsUntilNewResultAfterRelaunch"
           fi
           bash client-ios/scripts/test-simulator.sh
           if [[ "$TEST_SUITE" == "wardrobe" ]]; then

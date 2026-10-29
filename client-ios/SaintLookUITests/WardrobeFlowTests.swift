@@ -65,6 +65,9 @@ final class WardrobeFlowTests: XCTestCase {
         app.launchEnvironment["SAINT_LOOK_BASE_URL"] = baseURL
         app.launchEnvironment["SAINT_LOOK_OWNER_TOKEN"] = testToken
         app.launchEnvironment["SAINT_LOOK_UI_TESTING"] = "1"
+        if name.contains("testOfflineReplacementRetainsPreviousCutoutAndEditsUntilNewResultAfterRelaunch") {
+            app.launchEnvironment["SAINT_LOOK_MENU596_TRACE"] = "1"
+        }
         app.launchEnvironment["SAINT_LOOK_RESET_DATA"] = reset ? "1" : "0"
         if let cameraProblem { app.launchEnvironment["SAINT_LOOK_CAMERA_TEST_PROBLEM"] = cameraProblem }
         if let trialIndex {
@@ -1134,9 +1137,20 @@ final class WardrobeFlowTests: XCTestCase {
     private func assertRecoveryDidNotOpenPhotoPicker(in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         // Accessibility still exposes the underlying card while a system picker covers it.
         // The detail toolbar must remain tappable after retry/debug replacement.
-        XCTAssertTrue(app.navigationBars.buttons["item-actions"].firstMatch.isHittable,
+        let detailIsHittable = app.navigationBars.buttons["item-actions"].firstMatch.isHittable
+        XCTAssertTrue(detailIsHittable,
                       "Recovery must leave the item detail interactive, without opening PhotosPicker",
                       file: file, line: line)
+        if !detailIsHittable {
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "DEBUG-menu596-recovery-hierarchy"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+            let screen = XCTAttachment(screenshot: app.screenshot())
+            screen.name = "DEBUG-menu596-recovery-screen"
+            screen.lifetime = .keepAlways
+            add(screen)
+        }
     }
 
     private enum InteractionError: Error { case buttonNotVisible(String) }

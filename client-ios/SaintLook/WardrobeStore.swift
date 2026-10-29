@@ -151,8 +151,24 @@ final class WardrobeStore: ObservableObject {
     }
 
     func replacePhoto(_ id: UUID, with original: Data) {
+        #if DEBUG
+        traceMenu596("replace-entry", id: id)
+        #endif
         beginAttempt(id, original: original)
     }
+
+    #if DEBUG
+    // Temporary read-only probe for the native menu596 experiment; remove after diagnosis.
+    func traceMenu596(_ event: String, id: UUID, candidate: WardrobeItem? = nil) {
+        guard ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1",
+              ProcessInfo.processInfo.environment["SAINT_LOOK_MENU596_TRACE"] == "1" else { return }
+        let item = candidate ?? items.first { $0.id == id }
+        NSLog("[DEBUG-menu596] event=%@ item=%@ revision=%@ operation=%@ photo=%@ status=%@",
+              event, id.uuidString, item.map { String($0.revision) } ?? "missing",
+              item?.operationID.uuidString ?? "missing", item?.photoVersionID.uuidString ?? "missing",
+              item?.status.rawValue ?? "missing")
+    }
+    #endif
 
     private func beginAttempt(_ id: UUID, original: Data?) {
         guard let directory, storageAvailable,
@@ -194,8 +210,17 @@ final class WardrobeStore: ObservableObject {
             var updated = items
             updated[index] = item
             let removedPrepared = items[index].preparedPhotos.filter { cached in !item.preparedPhotos.contains(where: { $0.filename == cached.filename }) }
+            #if DEBUG
+            traceMenu596("before-persist", id: id, candidate: item)
+            #endif
             try persist(updated)
+            #if DEBUG
+            traceMenu596("persisted", id: id, candidate: item)
+            #endif
             items = updated
+            #if DEBUG
+            traceMenu596("published", id: id)
+            #endif
             for cached in removedPrepared {
                 try? FileManager.default.removeItem(at: directory.appendingPathComponent(item.directoryName).appendingPathComponent(cached.filename))
             }
@@ -203,6 +228,10 @@ final class WardrobeStore: ObservableObject {
             tasks[id] = nil
             if observing { start(id) }
         } catch {
+            #if DEBUG
+            let failure = error as NSError
+            traceMenu596("failed:\(failure.domain):\(failure.code)", id: id)
+            #endif
             notice = (error as? ClientError)?.localizedDescription
                 ?? "Не удалось сохранить новую попытку. Предыдущая карточка и фото сохранены."
         }
