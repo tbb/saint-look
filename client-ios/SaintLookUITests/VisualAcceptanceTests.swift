@@ -340,12 +340,9 @@ final class VisualAcceptanceTests: XCTestCase {
     private func tapMenuAction(_ identifier: String, in app: XCUIApplication) throws {
         let action = app.buttons[identifier]
         try require(action.waitForExistence(timeout: 5), "The addressed native menu action must exist")
-        if action.isHittable && app.frame.contains(action.frame) {
-            try nativeTap(action, in: app)
-            return
-        }
-        // At maximum text size UIKit's menu collection extends beyond its clipped popup.
-        // Its smallest public Other ancestor supplies the real menu viewport.
+        // Resolve the visible native action container even when its action is
+        // inside the application frame: a clipped popup can still hide that row.
+        // Confirmation dialogs also expose nested Other containers on this runtime.
         for attempt in 0...4 {
             let ancestors = app.otherElements.containing(.button, identifier: identifier).allElementsBoundByIndex
                 .filter { $0.exists && !$0.frame.intersection(app.frame).isEmpty }
@@ -356,7 +353,12 @@ final class VisualAcceptanceTests: XCTestCase {
             }
             let viewport = popup.frame.intersection(app.frame)
             try require(viewport.width > 80 && viewport.height > 80, "Native menu viewport must allow scrolling")
-            if action.exists && action.isHittable && viewport.contains(action.frame) {
+            let actionFrame = action.exists ? action.frame : .zero
+            if !actionFrame.isEmpty && viewport.contains(actionFrame) {
+                // Visibility and native hit readiness are different gates. A
+                // visible dialog action must settle through the existing strict
+                // waitVisible, never be dragged because isHittable is still false.
+                // Dragging that state can activate a different dialog command.
                 try nativeTap(action, in: app)
                 return
             }
@@ -444,11 +446,27 @@ final class VisualAcceptanceTests: XCTestCase {
         // accessibility when scrolled into view, so reveal it before counting.
         try reveal(layers.firstMatch, in: app)
         try requireEqual(layers.count, 2)
-        try tap(layers.element(boundBy: 0), in: app)
-        try require(layers.element(boundBy: 0).isSelected)
-        try tap(layers.element(boundBy: 1), in: app)
-        try require(layers.element(boundBy: 1).isSelected)
-        let outerID = String(layers.element(boundBy: 1).identifier.dropFirst("fitting-layer-".count))
+        let layerIDs = (0..<2).map { layers.element(boundBy: $0).identifier }
+        let activeLayer = app.buttons["fitting-choose-active"]
+        for (index, identifier) in layerIDs.enumerated() {
+            let layer = app.buttons[identifier]
+            let expectedTitle = "Тело · слой \(index + 1)"
+            try tap(layer, in: app)
+            // One native tap; observe the resulting state with the same bounded
+            // transition timeout as waitVisible, rather than retrying the action.
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                layer.exists && layer.isSelected && activeLayer.exists && activeLayer.label.contains(expectedTitle)
+            }, object: layer)
+            guard XCTWaiter.wait(for: [selected], timeout: 10) == .completed else {
+                diagnose("layer-selection-not-observed", app: app,
+                         detail: "Expected selected \(identifier), active title \(expectedTitle); active label: \(activeLayer.exists ? activeLayer.label : "missing")")
+                try require(false, "The tapped layer must become selected and active after one native tap")
+                return
+            }
+            try require(layer.isSelected)
+            try require(activeLayer.label.contains(expectedTitle))
+        }
+        let outerID = String(layerIDs[1].dropFirst("fitting-layer-".count))
         let pin = app.buttons["pin-slot-\(outerID)"]
         try tap(pin, in: app)
         try require(pin.isSelected)
