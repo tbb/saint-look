@@ -1155,10 +1155,13 @@ final class WardrobeFlowTests: XCTestCase {
     @MainActor
     private func assertRecoveryDidNotOpenPhotoPicker(in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         // Accessibility still exposes the underlying card while a system picker covers it.
-        // The detail toolbar must remain tappable after retry/debug replacement.
-        XCTAssertTrue(app.navigationBars.buttons["item-actions"].firstMatch.isHittable,
-                      "Recovery must leave the item detail interactive, without opening PhotosPicker",
-                      file: file, line: line)
+        // Observe the completed menu transition without repeating the user action.
+        let toolbar = app.navigationBars.buttons["item-actions"].firstMatch
+        let interactive = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND hittable == true"), object: toolbar)
+        XCTAssertEqual(XCTWaiter.wait(for: [interactive], timeout: 5), .completed,
+                       "Recovery must leave the item detail interactive, without opening PhotosPicker",
+                       file: file, line: line)
     }
 
     private enum InteractionError: Error { case buttonNotVisible(String) }
