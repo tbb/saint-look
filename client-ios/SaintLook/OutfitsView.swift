@@ -732,6 +732,13 @@ struct OutfitEditorView: View {
             }
             .disabled(pinnedSlotIDs.contains(slot.id) || recommendation.pending != nil)
             .accessibilityIdentifier("recommend-slot-\(slot.id)")
+            if slot.itemID != nil {
+                Button("Похожая замена", systemImage: "arrow.triangle.2.circlepath") {
+                    recommend(slot, intent: .similar)
+                }
+                .disabled(pinnedSlotIDs.contains(slot.id) || recommendation.pending != nil)
+                .accessibilityIdentifier("similar-slot-\(slot.id)")
+            }
             if pinnedSlotIDs.contains(slot.id) { Text("Открепите это место для подбора") }
             Button("Выбрать вручную", systemImage: "square.grid.2x2") { choosingSlot = slot }
             Button("Следующая вещь", systemImage: "chevron.right") { cycle(slot.id, forward: true) }
@@ -859,15 +866,15 @@ struct OutfitEditorView: View {
         recommendationMessage = wasPending ? (message ?? RecommendationError.stale.localizedDescription) : nil
     }
 
-    private func recommend(_ slot: OutfitSlot) {
+    private func recommend(_ slot: OutfitSlot, intent: RecommendationIntent = .complement) {
         cancelRecommendation()
         activate(slot)
         recommendationSlotID = slot.id
         recommendationMessage = nil
         let started = Date()
         do {
-            let packets = try store.recommendationItems(excluding: slot.itemID)
-            let request = try recommendation.begin(draft: draft, targetSlotID: slot.id, pinnedSlotIDs: pinnedSlotIDs,
+            let packets = try store.recommendationItems(excluding: intent == .complement ? slot.itemID : nil)
+            let request = try recommendation.begin(draft: draft, targetSlotID: slot.id, intent: intent, pinnedSlotIDs: pinnedSlotIDs,
                 items: store.items, preparedItems: packets, savedOutfit: store.outfits.first { $0.id == draft.id },
                 activeSpaceID: store.preparationConfiguration?.encoder.activeSpaceID)
             let client = BackendClient(settings: store.settings)
@@ -876,7 +883,7 @@ struct OutfitEditorView: View {
                     let response = try await client.recommendSingle(request)
                     try Task.checkCancellation()
                     guard recommendation.pending?.request.requestId == request.requestId else { return }
-                    let currentPackets = try store.recommendationItems(excluding: slot.itemID)
+                    let currentPackets = try store.recommendationItems(excluding: intent == .complement ? slot.itemID : nil)
                     let savedOutfit = store.outfits.first { $0.id == draft.id }
                     let message = try recommendation.apply(response, to: &draft, history: &compositionHistory,
                         pinnedSlotIDs: pinnedSlotIDs, items: store.items, preparedItems: currentPackets,
@@ -892,6 +899,7 @@ struct OutfitEditorView: View {
                     recommendation.cancel()
                     recommendationTask = nil
                     recommendationMessage = RecommendationError.message(for: error)
+                    await store.refreshPreparationConfiguration(after: error)
                 }
             }
         } catch { recommendationMessage = RecommendationError.message(for: error) }

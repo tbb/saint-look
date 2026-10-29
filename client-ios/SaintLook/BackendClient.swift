@@ -23,7 +23,7 @@ struct BackendClient {
         if [400, 409, 410, 503].contains(response.statusCode) {
             struct Failure: Decodable { let error: String }
             if let failure = try? JSONDecoder().decode(Failure.self, from: data),
-               ["result_expired", "result_delivered", "illustration_unavailable", "processing_in_progress", "photos_locked", "operation_superseded", "item_deleted", "encoder_unavailable", "encoder_failed", "preparation_required", "preparation_incomplete", "incompatible_representations", "representation_space_changed", "identity_conflict", "snapshot_stale", "model_unavailable", "model_failed", "context_too_large", "invalid_prepared_item"].contains(failure.error) {
+               ["result_expired", "result_delivered", "illustration_unavailable", "processing_in_progress", "photos_locked", "operation_superseded", "item_deleted", "encoder_unavailable", "encoder_failed", "preparation_required", "preparation_incomplete", "incompatible_representations", "representation_space_changed", "identity_conflict", "snapshot_stale", "model_unavailable", "model_failed", "context_too_large", "invalid_prepared_item", "similarity_source_required", "similarity_features_required"].contains(failure.error) {
                 throw ClientError.resultUnavailable(failure.error)
             }
         }
