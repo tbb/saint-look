@@ -27,6 +27,7 @@ export function createPreparedSnapshots(database, model) {
   }
   return {
     capture(items, target, status) {
+      const references = Array.isArray(target) ? target : [target];
       const prepared = new Map();
       for (const item of items) {
         const receipt = current(item.itemId, item.publishedVersionId);
@@ -42,12 +43,12 @@ export function createPreparedSnapshots(database, model) {
         } catch { throw new RequestError(400, 'invalid_prepared_item'); }
         prepared.set(item.itemId, { ...item, representation });
       }
-      if (target.itemId && !prepared.has(target.itemId)) current(target.itemId, target.publishedVersionId, true);
+      for (const reference of references) if (reference.itemId && !prepared.has(reference.itemId)) current(reference.itemId, reference.publishedVersionId, true);
       return {
         items: prepared,
         recheck() {
           for (const item of items) current(item.itemId, item.publishedVersionId);
-          if (target.itemId) current(target.itemId, target.publishedVersionId, !prepared.has(target.itemId));
+          for (const reference of references) if (reference.itemId) current(reference.itemId, reference.publishedVersionId, !prepared.has(reference.itemId));
         },
       };
     },
