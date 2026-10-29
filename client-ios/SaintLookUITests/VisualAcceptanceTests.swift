@@ -319,8 +319,22 @@ final class VisualAcceptanceTests: XCTestCase {
             let distance = min(viewport.height - 2 * gestureInset,
                                min(viewport.height * 0.65, element.exists ? max(40, abs(viewport.midY - frame.midY)) : viewport.height * 0.65))
             let y = direction < 0 ? viewport.maxY - gestureInset : viewport.minY + gestureInset
+            let bounds = container.frame
+            let isConstructor = ["Собрать лук", "Изменить лук"].contains(bar.identifier)
+            // Constructor controls have 16pt horizontal padding. A centre drag
+            // can select a fitting zone and remove the layer we are revealing.
+            // Use the same 8pt ScrollView gutter as the outfit-flow checks.
+            let x = isConstructor ? bounds.minX + 8 : viewport.midX
+            if isConstructor {
+                let origin = CGPoint(x: x, y: y)
+                let destination = CGPoint(x: x, y: y + direction * distance)
+                guard [bounds, viewport, app.frame].allSatisfy({ $0.contains(origin) && $0.contains(destination) }) else {
+                    diagnose("invalid-constructor-scroll-path", app: app, detail: last)
+                    throw JourneyFailure.failed
+                }
+            }
             let start = container.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: viewport.midX - container.frame.minX, dy: y - container.frame.minY))
+                .withOffset(CGVector(dx: x - bounds.minX, dy: y - bounds.minY))
             let end = start.withOffset(CGVector(dx: 0, dy: direction * distance))
             let failures = testRun?.failureCount ?? 0
             start.press(forDuration: 0.05, thenDragTo: end)
