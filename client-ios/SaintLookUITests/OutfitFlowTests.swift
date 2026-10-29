@@ -111,8 +111,38 @@ final class OutfitFlowTests: XCTestCase {
             guard attempt < 7 else { break }
             let distance = present ? viewport.midY - frame.midY : (towardTop ? 180 : -180)
             let movement = (distance < 0 ? -1.0 : 1.0) * min(180, max(100, abs(distance)))
-            let start = app.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: viewport.midX, dy: viewport.midY))
+            let start: XCUICoordinate
+            if let bar = foregroundBar, ["Собрать лук", "Изменить лук"].contains(bar.identifier) {
+                let navigationFrame = bar.frame
+                let containers = app.scrollViews.containing(.textField, identifier: "outfit-name").allElementsBoundByIndex.filter {
+                    guard $0.exists else { return false }
+                    let bounds = $0.frame
+                    return !bounds.intersection(viewport).isEmpty && bounds.maxY > navigationFrame.maxY
+                        && bounds.minX < navigationFrame.maxX && bounds.maxX > navigationFrame.minX
+                }
+                guard bar.isHittable, containers.count == 1, let container = containers.first else {
+                    capture("ambiguous-constructor-scroll-surface")
+                    XCTFail("Constructor scrolling requires one visible surface under its foreground navigation bar")
+                    return false
+                }
+                let bounds = container.frame
+                // Rows have 16pt horizontal padding. The fixed viewport center can
+                // land on a row's gesture recognizer at maximum text; its 8pt gutter
+                // remains inside the actual ScrollView without targeting that row.
+                let origin = CGPoint(x: bounds.minX + 8, y: viewport.midY)
+                let destination = CGPoint(x: origin.x, y: origin.y + movement)
+                guard bounds.contains(origin), bounds.contains(destination),
+                      app.frame.contains(origin), app.frame.contains(destination) else {
+                    capture("invalid-constructor-scroll-path")
+                    XCTFail("Both constructor scroll endpoints must remain inside its visible ScrollView")
+                    return false
+                }
+                start = container.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: origin.x - bounds.minX, dy: origin.y - bounds.minY))
+            } else {
+                start = app.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: viewport.midX, dy: viewport.midY))
+            }
             let end = start.withOffset(CGVector(dx: 0, dy: movement))
             start.press(forDuration: 0.05, thenDragTo: end)
         }
