@@ -487,6 +487,18 @@ struct OutfitCoreChecks {
             precondition(cacheless.items[0].hasPreparedVersion && cacheless.items[0].preparedPhotos.isEmpty)
             precondition(cacheless.items[0].publishedVersion?.representation?.response.provenance == intent.provenance)
         }
+        var transportUnavailable = preparation
+        transportUnavailable.status = .failed; transportUnavailable.error = "encoder_unavailable"
+        precondition(!transportUnavailable.needsNewAttempt, "A transport503 does not prove an accepted operation failed")
+        var terminalUnavailable = transportUnavailable
+        terminalUnavailable.terminalFailure = true
+        var stoppedWorker = published
+        try stoppedWorker.beginPreparation(for: shirtID, intent: terminalUnavailable)
+        try file.save(stoppedWorker)
+        stoppedWorker = try file.load()
+        precondition(stoppedWorker.items[0].preparation?.needsNewAttempt == true,
+                     "A persisted failed server row requires a new CPU operation when the model becomes available")
+        precondition(stoppedWorker.items[0].publishedVersion?.versionID == published.items[0].publishedVersion?.versionID)
         var strictNew = published
         let cachelessNew = PendingItemPublication(publication: strictNew.items[0].publishedVersion!, request: completed, preparedPhotos: [])
         do {
