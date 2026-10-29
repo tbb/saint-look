@@ -1219,6 +1219,7 @@ final class WardrobeFlowTests: XCTestCase {
             try openFirstItem(in: app)
             let visibleAction = app.buttons[identifier].firstMatch
             if identifier != "edit-item", !visibleAction.exists || !visibleAction.isHittable {
+                let viewport = app.frame
                 app.buttons["item-actions"].tap()
                 let action = app.collectionViews.buttons.matching(identifier: identifier).firstMatch
                 var previousFrame: CGRect?
@@ -1227,21 +1228,26 @@ final class WardrobeFlowTests: XCTestCase {
                     let frame = action.frame
                     guard frame.origin.x.isFinite, frame.origin.y.isFinite,
                           frame.width.isFinite, frame.height.isFinite,
-                          !frame.isEmpty, app.frame.contains(frame) else {
+                          !frame.isEmpty, viewport.contains(frame) else {
                         previousFrame = nil
                         return false
                     }
                     defer { previousFrame = frame }
-                    // Ask AX for an activation point only after menu geometry settles.
-                    return previousFrame == frame && action.isHittable
+                    return previousFrame == frame
                 }, object: nil)
                 // Native menu entries can exist before presentation finishes. Wait
                 // for that one command rather than repeating an action with side effects.
                 guard XCTWaiter.wait(for: [ready], timeout: 5) == .completed else {
-                    XCTFail("The item menu must offer a stable, hittable \(identifier)")
+                    XCTFail("The item menu must offer a stable, fully visible \(identifier)")
                     throw InteractionError.buttonNotVisible(identifier)
                 }
+                // Native press computes its own hittable point after geometry settles.
+                let failures = testRun?.failureCount ?? 0
                 action.press(forDuration: 0.1)
+                guard (testRun?.failureCount ?? 0) == failures else {
+                    XCTFail("Native item menu press failed; stop before further actions")
+                    throw InteractionError.buttonNotVisible(identifier)
+                }
                 return
             }
         }
