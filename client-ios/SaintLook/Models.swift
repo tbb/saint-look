@@ -563,6 +563,15 @@ struct ItemPreparation: Codable {
     var status: WardrobeItem.Status = .pending
     var submitted = false
     var error: String? = nil
+    // Only a failed operation body proves the server accepted and terminated work.
+    // A503 before acceptance remains a retry of the same durable request.
+    var terminalFailure: Bool? = nil
+
+    var needsNewAttempt: Bool {
+        status == .failed && (["encoder_failed", "incompatible_representations", "representation_space_changed",
+            "operation_superseded", "result_expired", "result_delivered"].contains(error ?? "")
+            || (error == "encoder_unavailable" && terminalFailure == true))
+    }
 
     func matches(_ item: WardrobeItem) -> Bool {
         item.photoVersionID == publication.photoVersionID && item.sourceSetVersionID == publication.sourceSetVersionID

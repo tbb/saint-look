@@ -560,6 +560,7 @@ final class WardrobeStore: ObservableObject {
                     completed.errorCode = nil
                     try replace(completed, acknowledgement: ResultAcknowledgement(itemID: item.id, operationID: item.operationID))
                     startNewItemIllustrations()
+                    startNextPreparation()
                     return
                 }
                 item.errorMessage = nil
@@ -963,7 +964,7 @@ extension WardrobeStore {
         if var intent = items[index].preparation, intent.matches(items[index]) {
             // A completed encoder failure gets a new CPU-only operation. A transport
             // failure reuses its already durable operation identity.
-            if intent.status == .failed && ["encoder_failed", "incompatible_representations", "representation_space_changed", "operation_superseded", "result_expired", "result_delivered"].contains(intent.error ?? "") {
+            if intent.needsNewAttempt {
                 var updated = items; updated[index].preparation = nil
                 do { try persist(updated); items = updated } catch { notice = "Не удалось сохранить повтор подготовки."; return }
             } else {
@@ -1037,12 +1038,23 @@ extension WardrobeStore {
                   result.response.photoVersionId == item.photoVersionID,
                   result.response.sourceSetVersionId == item.sourceSetVersionID,
                   item.illustration?.status != .pending else { throw CancellationError() }
-            publication = previous
+            let folder = directory.appendingPathComponent(item.directoryName)
+            if !FileManager.default.fileExists(atPath: folder.appendingPathComponent(previous.cutoutFilename).path),
+               item.status == .ready, let replacement = item.resultFilename, replacement != previous.cutoutFilename,
+               FileManager.default.fileExists(atPath: folder.appendingPathComponent(replacement).path) {
+                // The user explicitly retried the missing cutout through ingestion.
+                // Reuse the intact illustration/traits; import the new same-photo
+                // cutout receipt instead of regenerating those unchanged stages.
+                publication = ItemPublication(versionID: previous.versionID, photoVersionID: previous.photoVersionID,
+                    sourceSetVersionID: previous.sourceSetVersionID, cutoutFilename: replacement, cutoutMode: item.resultMode,
+                    illustration: previous.illustration, type: previous.type, colors: previous.colors,
+                    completeness: .legacyIllustration, cutoutOperationID: item.operationID)
+            } else { publication = previous }
             request = IllustrationRequest(operationID: result.response.operationId, photoVersionID: result.response.photoVersionId,
                 sourceSetVersionID: result.response.sourceSetVersionId, revision: result.response.revision,
                 manualType: result.response.manualType, manualColors: result.response.manualColors, status: .ready, submitted: true)
             prepared = item.preparedPhotos
-            mode = previous.representation == nil ? .legacyImport : .reusePublication
+            mode = publication.representation == nil ? .legacyImport : .reusePublication
         }
         let folder = directory.appendingPathComponent(item.directoryName)
         let source = try Data(contentsOf: folder.appendingPathComponent(item.uploadFilename))
@@ -1140,6 +1152,7 @@ extension WardrobeStore {
                       current.preparation?.operationID == intent.operationID else { return }
                 if response.status == .failed {
                     intent.status = .failed; intent.error = response.error ?? "encoder_failed"
+                    intent.terminalFailure = true
                     var updated = catalog; try updated.savePreparation(for: id, intent: intent)
                     try persist(updated.items); items = updated.items
                     return
@@ -1174,6 +1187,7 @@ extension WardrobeStore {
                 if case ClientError.resultUnavailable(let reason) = error { code = reason }
                 else { code = retryable ? "offline" : "invalid_provider_response" }
                 intent.error = code; intent.status = retryable ? .pending : .failed
+                intent.terminalFailure = false
                 var updated = catalog
                 do {
                     try updated.savePreparation(for: id, intent: intent)
