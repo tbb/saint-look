@@ -41,6 +41,14 @@ struct BackendClient {
         return try JSONDecoder().decode(SingleRecommendationResponse.self, from: data)
     }
 
+    func compose(_ snapshot: ComposeRecommendationRequest) async throws -> ComposeRecommendationResponse {
+        let body = try JSONEncoder().encode(snapshot)
+        guard body.count <= 4 * 1024 * 1024 else { throw RecommendationError.wardrobeTooLarge }
+        var operation = try request(path: "v1/recommendations/compose", method: "POST", body: body)
+        operation.timeoutInterval = 60
+        return try JSONDecoder().decode(ComposeRecommendationResponse.self, from: await send(operation, expectedStatus: 200))
+    }
+
     func acknowledge(_ acknowledgement: ResultAcknowledgement) async throws {
         let resource = acknowledgement.illustration == true ? "illustrations" : "operations"
         let path = "v1/items/\(acknowledgement.itemID.uuidString.lowercased())/\(resource)/\(acknowledgement.operationID.uuidString.lowercased())/ack"

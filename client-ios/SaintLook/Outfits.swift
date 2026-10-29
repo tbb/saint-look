@@ -159,33 +159,6 @@ extension WardrobeCatalog {
     }
 }
 
-extension Outfit {
-    /// One local composition operation. Reserve pinned and unavailable selections,
-    /// then assign occupied slots before empty ones so a scarce item isn't stolen by a gap.
-    mutating func shuffle(pinnedSlotIDs: Set<UUID>, candidates: [OutfitZone: [UUID]]) {
-        let mutable = slots.indices.filter {
-            !pinnedSlotIDs.contains(slots[$0].id) && !(candidates[slots[$0].zone] ?? []).isEmpty
-        }
-        var occupied = Set(slots.indices.filter { !mutable.contains($0) }.compactMap { slots[$0].itemID })
-        let ordered = mutable.filter { slots[$0].itemID != nil } + mutable.filter { slots[$0].itemID == nil }
-        for index in ordered {
-            let available = (candidates[slots[index].zone] ?? []).filter { !occupied.contains($0) }
-            let alternatives = available.filter { $0 != slots[index].itemID }
-            if let choice = (alternatives.isEmpty ? available : alternatives).randomElement() {
-                slots[index].itemID = choice
-                slots[index].needsReplacement = false
-                occupied.insert(choice)
-            } else if let current = slots[index].itemID {
-                if occupied.contains(current) {
-                    slots[index].itemID = nil
-                } else {
-                    occupied.insert(current)
-                }
-            }
-        }
-    }
-}
-
 /// Editor-only history. Names and pins are intentionally outside composition snapshots.
 struct OutfitCompositionHistory {
     private var previous: [[OutfitSlot]] = []
@@ -310,8 +283,52 @@ struct SingleRecommendationResponse: Codable {
     }
 }
 
+enum ComposeMode: String, Codable { case fillEmpty, rebuild }
+
+struct ComposeRecommendationRequest: Codable, Equatable {
+    let requestId: UUID
+    let snapshotId: UUID
+    let mode: ComposeMode
+    let orderedSlots: [SingleRecommendationRequest.Slot]
+    let pinnedSlotIds: [UUID]
+    let excludedItemIds: [UUID]
+    let items: [RecommendationItem]
+}
+
+struct ComposeRecommendationResponse: Codable {
+    enum Outcome: String, Codable { case proposed, partial, unchanged, no_solution, constraints_conflict }
+    struct Placement: Codable {
+        let slotId: UUID
+        let itemId: UUID?
+        let publishedVersionId: UUID?
+    }
+    let requestId: UUID
+    let snapshotId: UUID
+    let mode: ComposeMode
+    let outcome: Outcome
+    let modelMode: String
+    let placements: [Placement]?
+    let spaceID: String?
+    let policyVersion: String
+    let reason: String?
+    let conflictingSlotIds: [UUID]
+
+    var message: String {
+        if reason == "all_pinned" { return "Все места закреплены. Открепите место, чтобы изменить лук." }
+        if reason == "nothing_to_fill" { return "Свободных мест нет." }
+        if reason == "preparation_required" { return RecommendationError.preparationRequired.localizedDescription }
+        switch outcome {
+        case .proposed: return "Лук подобран. Сохраните его, если результат подходит."
+        case .partial: return "Для некоторых мест не удалось подобрать вещи. Вы можете заполнить их вручную."
+        case .unchanged: return "Другой подходящий состав не найден. Текущий лук сохранён."
+        case .no_solution: return "Не удалось подобрать лук из доступных вещей. Текущий лук сохранён."
+        case .constraints_conflict: return "Не удалось подобрать с текущими ограничениями. Проверьте места и закрепления. Состав сохранён."
+        }
+    }
+}
+
 enum RecommendationError: LocalizedError {
-    case stale, targetPinned, emptyContext, preparationRequired, similaritySourceRequired, contextTooLarge, wardrobeTooLarge, invalidResponse
+    case compositionTooLarge, stale, targetPinned, emptyContext, preparationRequired, similaritySourceRequired, contextTooLarge, wardrobeTooLarge, invalidResponse
     var errorDescription: String? {
         switch self {
         case .stale: return "Лук или гардероб изменился. Запустите подбор снова."
@@ -319,6 +336,7 @@ enum RecommendationError: LocalizedError {
         case .emptyContext: return "Добавьте хотя бы одну вещь в другое место, чтобы подобрать сочетание."
         case .similaritySourceRequired: return "Для похожей замены нужно завершить подготовку исходной вещи. Откройте её в гардеробе."
         case .preparationRequired: return "Для подбора нужно завершить или обновить подготовку вещей. Откройте гардероб."
+        case .compositionTooLarge: return "Подбор лука доступен для структуры до 32 мест. Ручная сборка остаётся доступна."
         case .contextTooLarge: return "Подбор одной вещи доступен для контекста до 32 вещей. Ручная сборка остаётся доступна."
         case .wardrobeTooLarge: return "Этот подбор поддерживает до 300 подготовленных вещей. Состав сохранён."
         case .invalidResponse: return "Не удалось применить предложение. Состав сохранён. Попробуйте ещё раз."
@@ -337,7 +355,7 @@ enum RecommendationError: LocalizedError {
             case "incompatible_representations", "representation_space_changed", "similarity_features_required": return RecommendationError.preparationRequired.localizedDescription
             case "similarity_source_required": return RecommendationError.similaritySourceRequired.localizedDescription
             case "model_unavailable": return "Подбор временно недоступен. Состав сохранён. Попробуйте позже."
-            case "model_failed": return "Модель не смогла подобрать вещь. Состав сохранён. Попробуйте ещё раз."
+            case "model_failed": return "Модель не смогла выполнить подбор. Состав сохранён. Попробуйте ещё раз."
             case "context_too_large": return RecommendationError.contextTooLarge.localizedDescription
             default: break
             }
@@ -363,7 +381,16 @@ struct OutfitRecommendationSession {
         let savedOutfit: Outfit?
         let spaceID: String
     }
+    struct CompositionSnapshot {
+        let request: ComposeRecommendationRequest
+        let draft: Outfit
+        let inventory: [ItemIdentity]
+        let savedOutfit: Outfit?
+        let spaceID: String?
+    }
     private(set) var pending: Snapshot?
+    private(set) var pendingComposition: CompositionSnapshot?
+    var hasPending: Bool { pending != nil || pendingComposition != nil }
 
     static func inventory(_ items: [WardrobeItem]) -> [ItemIdentity] {
         items.map { ItemIdentity(id: $0.id, publication: $0.publishedVersion?.versionID,
@@ -371,7 +398,7 @@ struct OutfitRecommendationSession {
             .sorted { $0.id.uuidString < $1.id.uuidString }
     }
 
-    mutating func cancel() { pending = nil }
+    mutating func cancel() { pending = nil; pendingComposition = nil }
 
     mutating func begin(draft: Outfit, targetSlotID: UUID, intent: RecommendationIntent = .complement, pinnedSlotIDs: Set<UUID>, excludedItemIDs: Set<UUID> = [],
                         items: [WardrobeItem], preparedItems: [RecommendationItem], savedOutfit: Outfit?, activeSpaceID: String?) throws -> SingleRecommendationRequest {
@@ -443,6 +470,82 @@ struct OutfitRecommendationSession {
         let previous = draft
         draft.selectItem(proposal.itemId, for: slot.id)
         history.recordChange(from: previous, to: draft)
+        return response.message
+    }
+}
+
+extension OutfitRecommendationSession {
+    mutating func beginComposition(draft: Outfit, mode: ComposeMode, pinnedSlotIDs: Set<UUID>, excludedItemIDs: Set<UUID> = [],
+                                  items: [WardrobeItem], preparedItems: [RecommendationItem], savedOutfit: Outfit?, activeSpaceID: String?) throws -> ComposeRecommendationRequest {
+        cancel()
+        guard draft.slots.count <= 32 else { throw RecommendationError.compositionTooLarge }
+        guard preparedItems.count <= 300 else { throw RecommendationError.wardrobeTooLarge }
+        let packets = Dictionary(uniqueKeysWithValues: preparedItems.map { ($0.itemId, $0) })
+        let spaces = Set(preparedItems.compactMap { packet in
+            items.first(where: { $0.id == packet.itemId })?.publishedVersion?.representation?.response.spaceID
+        })
+        guard spaces.count <= 1, spaces.first == nil || activeSpaceID == nil || spaces.first == activeSpaceID else {
+            throw RecommendationError.preparationRequired
+        }
+        let slots = try draft.slots.map { slot -> SingleRecommendationRequest.Slot in
+            let item = items.first { $0.id == slot.itemID }
+            guard slot.itemID == nil || item != nil else { throw RecommendationError.stale }
+            if let itemID = slot.itemID, mode == .fillEmpty || pinnedSlotIDs.contains(slot.id) {
+                guard packets[itemID] != nil else { throw RecommendationError.preparationRequired }
+            }
+            return .init(slotId: slot.id, zone: slot.zone, itemId: slot.itemID, publishedVersionId: item?.publishedVersion?.versionID)
+        }
+        let request = ComposeRecommendationRequest(requestId: UUID(), snapshotId: UUID(), mode: mode, orderedSlots: slots,
+            pinnedSlotIds: pinnedSlotIDs.sorted { $0.uuidString < $1.uuidString },
+            excludedItemIds: excludedItemIDs.sorted { $0.uuidString < $1.uuidString },
+            items: preparedItems.sorted { $0.itemId.uuidString < $1.itemId.uuidString })
+        pendingComposition = CompositionSnapshot(request: request, draft: draft, inventory: Self.inventory(items),
+            savedOutfit: savedOutfit, spaceID: spaces.first)
+        return request
+    }
+
+    mutating func applyComposition(_ response: ComposeRecommendationResponse, to draft: inout Outfit,
+                                  history: inout OutfitCompositionHistory, pinnedSlotIDs: Set<UUID>, excludedItemIDs: Set<UUID> = [],
+                                  items: [WardrobeItem], preparedItems: [RecommendationItem], savedOutfit: Outfit?, taxonomy: WardrobeTaxonomy) throws -> String {
+        guard let snapshot = pendingComposition, snapshot.request.requestId == response.requestId,
+              snapshot.request.snapshotId == response.snapshotId else { throw RecommendationError.stale }
+        defer { cancel() }
+        guard snapshot.draft == draft, snapshot.savedOutfit == savedOutfit, snapshot.inventory == Self.inventory(items),
+              Set(snapshot.request.pinnedSlotIds) == pinnedSlotIDs, Set(snapshot.request.excludedItemIds) == excludedItemIDs,
+              snapshot.request.items == preparedItems.sorted(by: { $0.itemId.uuidString < $1.itemId.uuidString }) else {
+            throw RecommendationError.stale
+        }
+        guard response.mode == snapshot.request.mode, response.policyVersion == "outfit-placement-v1",
+              ["real", "controlled"].contains(response.modelMode) else { throw RecommendationError.invalidResponse }
+        guard response.outcome == .proposed || response.outcome == .partial else {
+            guard response.placements == nil else { throw RecommendationError.invalidResponse }
+            return response.message
+        }
+        guard let placements = response.placements, placements.map(\.slotId) == draft.slots.map(\.id),
+              response.spaceID == snapshot.spaceID, snapshot.spaceID != nil else { throw RecommendationError.invalidResponse }
+        let ids = placements.compactMap(\.itemId)
+        guard Set(ids).count == ids.count, ids.count >= draft.slots.compactMap(\.itemID).count else { throw RecommendationError.invalidResponse }
+        var proposed = draft
+        for (index, placement) in placements.enumerated() {
+            let slot = draft.slots[index], original = snapshot.request.orderedSlots[index]
+            let fixed = pinnedSlotIDs.contains(slot.id) || (snapshot.request.mode == .fillEmpty && slot.itemID != nil)
+            if fixed {
+                guard placement.itemId == original.itemId, placement.publishedVersionId == original.publishedVersionId else {
+                    throw RecommendationError.invalidResponse
+                }
+            } else if let id = placement.itemId {
+                guard !excludedItemIDs.contains(id), let packet = preparedItems.first(where: { $0.itemId == id }),
+                      packet.publishedVersionId == placement.publishedVersionId,
+                      let item = items.first(where: { $0.id == id }), item.hasPreparedVersion,
+                      slot.zone.accepts(item, taxonomy: taxonomy) else { throw RecommendationError.invalidResponse }
+            } else if placement.publishedVersionId != nil { throw RecommendationError.invalidResponse }
+            proposed.slots[index].itemID = placement.itemId
+            if placement.itemId != slot.itemID || placement.itemId != nil { proposed.slots[index].needsReplacement = false }
+        }
+        guard proposed.slots != draft.slots else { throw RecommendationError.invalidResponse }
+        let before = draft
+        draft = proposed
+        history.recordChange(from: before, to: draft)
         return response.message
     }
 }
