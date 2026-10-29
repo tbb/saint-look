@@ -1142,6 +1142,28 @@ final class WardrobeFlowTests: XCTestCase {
                       "Recovery must leave the item detail interactive, without opening PhotosPicker",
                       file: file, line: line)
         if !detailIsHittable {
+            // The original assertion above stays failed. Observe eventual dismissal
+            // with a five-second deadline, without tapping or retrying the command.
+            let started = ProcessInfo.processInfo.systemUptime
+            let toolbar = app.navigationBars.buttons["item-actions"].firstMatch
+            let menuCommand = app.collectionViews.buttons.matching(identifier: "replace-demo-photo").firstMatch
+            var samples = ["initial assertion: toolbarHittable=false"]
+            let observation = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                let elapsed = ProcessInfo.processInfo.systemUptime - started
+                guard elapsed < 5 else { return true }
+                let toolbarExists = toolbar.exists
+                let toolbarHittable = toolbarExists && toolbar.isHittable
+                let menuExists = menuCommand.exists
+                let finished = ProcessInfo.processInfo.systemUptime - started
+                samples.append("elapsed=\(elapsed)...\(finished) toolbarExists=\(toolbarExists) toolbarHittable=\(toolbarHittable) menuCommandExists=\(menuExists)")
+                return false
+            }, object: nil)
+            let observationResult = XCTWaiter.wait(for: [observation], timeout: 5)
+            samples.append("observationFinished=\(ProcessInfo.processInfo.systemUptime - started) waiter=\(observationResult.rawValue)")
+            let timing = XCTAttachment(string: samples.joined(separator: "\n"))
+            timing.name = "DEBUG-menu596-after-failure-observation"
+            timing.lifetime = .keepAlways
+            add(timing)
             let hierarchy = XCTAttachment(string: app.debugDescription)
             hierarchy.name = "DEBUG-menu596-recovery-hierarchy"
             hierarchy.lifetime = .keepAlways

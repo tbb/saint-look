@@ -207,7 +207,28 @@ jobs:
           fi
           if [[ "$TEST_SUITE" == "wardrobe-recovery" ]]; then
             export SAINT_LOOK_MENU596_TRACE=1
-            export SAINT_LOOK_UI_TEST_ONLY="SaintLookUITests/WardrobeFlowTests/testOfflineReplacementRetainsPreviousCutoutAndEditsUntilNewResultAfterRelaunch"
+            # One pass through the observed main596 prefix, preserving its test order.
+            # Later thirteen cases cannot affect the already reached failure.
+            export SAINT_LOOK_UI_TEST_ONLY="SaintLookUITests/WardrobeFlowTests/testAdditionalPhotoDraftCancellationAndSaveDoNotGenerate
+          SaintLookUITests/WardrobeFlowTests/testCancelDeletionKeepsPhotoAndDoesNotSendDelete
+          SaintLookUITests/WardrobeFlowTests/testDeletingTwoOfflineThingsSurvivesRelaunchAndNeverUploadsTheirPhotos
+          SaintLookUITests/WardrobeFlowTests/testDeniedCameraOffersSettingsAndGalleryWithoutCreatingAnItem
+          SaintLookUITests/WardrobeFlowTests/testEmptyNewColorSelectionCannotFinishAndDoneOnlyUpdatesDraft
+          SaintLookUITests/WardrobeFlowTests/testExpiredUndeliveredResultKeepsOriginalAndRequiresExplicitRetryAfterRelaunch
+          SaintLookUITests/WardrobeFlowTests/testExplicitRetryKeepsOneThingAndPreviousCutoutWithManualValuesAcrossRelaunch
+          SaintLookUITests/WardrobeFlowTests/testFailedThingCanBeDeletedOfflineAndItsCommandSurvivesRelaunch
+          SaintLookUITests/WardrobeFlowTests/testForeignIllustrationIsRejectedWithoutAutomaticRegeneration
+          SaintLookUITests/WardrobeFlowTests/testIllustrationDeliverySurvivesOfflineRestartAndLostAcknowledgement
+          SaintLookUITests/WardrobeFlowTests/testIllustrationManualEditsAreExplicitAndFailedUpdateKeepsPriorImage
+          SaintLookUITests/WardrobeFlowTests/testIllustrationUnavailablePreservesOriginalAndCutout
+          SaintLookUITests/WardrobeFlowTests/testLateIllustrationCannotRestoreDeletedThing
+          SaintLookUITests/WardrobeFlowTests/testLegacyLabelsSurviveUntouchedSaveAndExplicitSelectionReplacesOnlyEditedField
+          SaintLookUITests/WardrobeFlowTests/testLostUploadResponseReconcilesWithoutCreatingAnotherThing
+          SaintLookUITests/WardrobeFlowTests/testManualColorsWinOverInFlightResultAndReadyEditsDoNotSubmitAgain
+          SaintLookUITests/WardrobeFlowTests/testManualEditDraftCanContinueOrDiscardAndOnlySavePersists
+          SaintLookUITests/WardrobeFlowTests/testManualTypeSurvivesAutomaticResultAndOfflineColorEditsPersistWithoutUploadingAgain
+          SaintLookUITests/WardrobeFlowTests/testMultipleOfflinePhotosSurviveRelaunchAndAutomaticallyResumeInForeground
+          SaintLookUITests/WardrobeFlowTests/testOfflineReplacementRetainsPreviousCutoutAndEditsUntilNewResultAfterRelaunch"
           fi
           bash client-ios/scripts/test-simulator.sh
           if [[ "$TEST_SUITE" == "wardrobe" ]]; then
