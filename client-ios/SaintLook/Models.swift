@@ -189,6 +189,12 @@ struct PendingItemPublication: Codable {
     let preparedPhotos: [IllustrationPreparedPhoto]
     var legacyReconciliation: Bool? = nil
     var error: String? = nil
+
+    // Historical ready results may predate durable artifact digests. Their actual
+    // final files must be imported before encoder preparation and the full commit.
+    var preparationMode: ItemPreparation.Mode {
+        legacyReconciliation == true ? .legacyImport : .fromIllustration
+    }
 }
 
 struct ResultAcknowledgement: Codable, Hashable {
