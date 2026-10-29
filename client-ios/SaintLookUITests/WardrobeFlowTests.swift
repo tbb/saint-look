@@ -246,7 +246,7 @@ final class WardrobeFlowTests: XCTestCase {
         let restored = launch(reset: false, baseURL: testURL)
         await waitForSummary(restored, ready: 1, pending: 0)
         try openFirstItem(in: restored)
-        XCTAssertFalse(restored.buttons["show-illustration"].isEnabled)
+        XCTAssertFalse(restored.buttons["show-illustration"].isEnabled, "Restart must preserve the unconfirmed candidate without publishing it")
         XCTAssertTrue(restored.images["item-photo"].firstMatch.exists)
         try await control(mode: "drop-next-ack-response")
         let acknowledged = try await waitForTransportCount("illustrationAcknowledgements", equalTo: 1, timeout: 30)
@@ -255,6 +255,22 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertEqual(cleaned.status, 410)
         let after = try await transportState()
         XCTAssertEqual(after["illustrationOperations"] as? Int, 1, "Restart and acknowledgement never regenerate")
+        XCTAssertTrue(restored.staticTexts["illustration-saved"].waitForExistence(timeout: 30),
+                      "A successful replay must publish the durable candidate locally")
+        XCTAssertTrue(restored.buttons["show-illustration"].isEnabled)
+        try tapVisibleButton("show-illustration", in: restored)
+        XCTAssertTrue(restored.images["item-photo"].firstMatch.exists)
+        try await control(mode: "offline")
+        restored.terminate()
+        let committed = launch(reset: false, baseURL: testURL)
+        await waitForSummary(committed, ready: 1, pending: 0)
+        try openFirstItem(in: committed)
+        XCTAssertTrue(committed.buttons["show-illustration"].isEnabled,
+                      "The committed illustration remains available after an offline restart")
+        try tapVisibleButton("show-illustration", in: committed)
+        XCTAssertTrue(committed.images["item-photo"].firstMatch.exists)
+        let finalState = try await transportState()
+        XCTAssertEqual(finalState["illustrationOperations"] as? Int, 1)
     }
 
     @MainActor
