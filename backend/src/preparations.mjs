@@ -79,7 +79,9 @@ export function createPreparations(database, env, retention, illustrations, dire
   }
   async function legacyArtifacts(input, row, cutout, features) {
     const packet = input.legacy, saved = packet?.illustration?.response;
-    if (row.retention_state !== 'delivered' || !saved || saved.itemId !== row.item_id || saved.operationId !== row.operation_id
+    const ready = row.retention_state === 'active' && row.status === 'ready' && row.result && row.observed && row.effective;
+    if ((!ready && row.retention_state !== 'delivered') || !saved || saved.itemId !== row.item_id || saved.operationId !== row.operation_id
+      || saved.revision !== row.revision
       || saved.photoVersionId !== row.photo_version_id || saved.sourceSetVersionId !== row.source_set_version_id || saved.status !== 'ready'
       || saved.mode !== row.mode || !['live', 'demo', 'test'].includes(packet.cutout?.mode)
       || (cutout.result_mode && packet.cutout.mode !== cutout.result_mode)
@@ -91,7 +93,13 @@ export function createPreparations(database, env, retention, illustrations, dire
     if (!primary.metadata.hasAlpha || !image.metadata.hasAlpha) throw new RequestError(400, 'invalid_image');
     const artifacts = { cutoutSHA256: sha256(primary.raw), illustrationSHA256: sha256(image.raw),
       observedFeaturesSHA256: featureDigest(saved.observedFeatures), effectiveFeaturesSHA256: featureDigest(saved.effectiveFeatures) };
-    if ((cutout.result_digest && cutout.result_digest !== artifacts.cutoutSHA256) || (row.result_digest && row.result_digest !== artifacts.illustrationSHA256)
+    // An old client may have acknowledged only ingestion before upgrading. Its
+    // ready illustration is still authoritative: compare available bytes/traits,
+    // in addition to receipts, before accepting the explicit legacy packet.
+    if ((ready && (sha256(row.result) !== artifacts.illustrationSHA256
+      || featureDigest(parse(row.observed)) !== artifacts.observedFeaturesSHA256
+      || featureDigest(parse(row.effective)) !== artifacts.effectiveFeaturesSHA256))
+      || (cutout.result_digest && cutout.result_digest !== artifacts.cutoutSHA256) || (row.result_digest && row.result_digest !== artifacts.illustrationSHA256)
       || (row.observed_digest && row.observed_digest !== artifacts.observedFeaturesSHA256) || (row.effective_digest && row.effective_digest !== artifacts.effectiveFeaturesSHA256)) throw new RequestError(409, 'legacy_artifact_conflict');
     const photos = parse(row.photos);
     // Prepared source PNGs are a generation cache, not encoder input or final output.
