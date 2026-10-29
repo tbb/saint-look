@@ -24,7 +24,7 @@ FROM application AS model-runtime
 # shared-library dependencies without replacing the already pinned Node runtime.
 COPY --from=python-runtime /usr/local/ /usr/local/
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libbz2-1.0 libexpat1 libffi8 libgdbm6 liblzma5 libncursesw6 libreadline8 \
+    ca-certificates libbz2-1.0 libexpat1 libffi8 libgdbm6 liblzma5 libncursesw6 libreadline8 \
     libsqlite3-0 libssl3 zlib1g libgomp1 \
     && rm -rf /var/lib/apt/lists/* && ldconfig
 RUN python3.12 -m venv /opt/saint-look-ml \
