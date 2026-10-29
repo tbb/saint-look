@@ -18,6 +18,7 @@ struct WardrobeCatalog: Codable {
         self.pendingDeletionIDs = pendingDeletionIDs
         self.pendingAcknowledgements = pendingAcknowledgements
         self.outfits = outfits
+        queueLegacyPublicationAcknowledgements()
     }
 
     init(from decoder: Decoder) throws {
@@ -26,10 +27,40 @@ struct WardrobeCatalog: Codable {
         pendingDeletionIDs = try values.decode(Set<UUID>.self, forKey: .pendingDeletionIDs)
         pendingAcknowledgements = try values.decodeIfPresent(Set<ResultAcknowledgement>.self, forKey: .pendingAcknowledgements)
         outfits = try values.decodeIfPresent([Outfit].self, forKey: .outfits) ?? []
+        queueLegacyPublicationAcknowledgements()
     }
 }
 
 extension WardrobeCatalog {
+    var legacyPublicationAcknowledgements: Set<ResultAcknowledgement> {
+        Set(items.compactMap { item in
+            guard let candidate = item.pendingPublication, candidate.legacyReconciliation == true else { return nil }
+            return ResultAcknowledgement(itemID: item.id, operationID: candidate.request.operationID, illustration: true)
+        })
+    }
+
+    private mutating func queueLegacyPublicationAcknowledgements() {
+        // nil still means the pre-ack catalog needs its ordinary-image migration.
+        if let pendingAcknowledgements {
+            self.pendingAcknowledgements = pendingAcknowledgements.union(legacyPublicationAcknowledgements)
+        }
+    }
+
+    mutating func reconcileLegacyPublication(_ acknowledgement: ResultAcknowledgement, committed: Bool) throws {
+        guard acknowledgement.illustration == true,
+              let index = items.firstIndex(where: { $0.id == acknowledgement.itemID }),
+              let candidate = items[index].pendingPublication, candidate.legacyReconciliation == true,
+              candidate.request.operationID == acknowledgement.operationID else { return }
+        if committed {
+            try confirmPublication(for: acknowledgement.itemID, operationID: acknowledgement.operationID)
+        } else {
+            // A definitive server refusal preserves the visible legacy snapshot,
+            // but never upgrades it to a confirmed publication or retries paid work.
+            items[index].pendingPublication = nil
+        }
+        pendingAcknowledgements?.remove(acknowledgement)
+    }
+
     mutating func editAttributes(for id: UUID, type: String?, colors: [String]?, taxonomy: WardrobeTaxonomy) throws {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         if let type, !taxonomy.contains(type: type) { throw ClientError.invalidAttributes }
@@ -81,20 +112,27 @@ extension WardrobeCatalog {
         guard let index = items.firstIndex(where: { $0.id == id }),
               let candidate = items[index].pendingPublication,
               candidate.request.operationID == operationID,
-              items[index].illustration?.operationID == operationID,
               items[index].photoVersionID == candidate.publication.photoVersionID,
-              items[index].sourceSetVersionID == candidate.publication.sourceSetVersionID,
-              items[index].manualType == candidate.request.manualType,
-              items[index].manualColors == candidate.request.manualColors else { throw CancellationError() }
+              items[index].sourceSetVersionID == candidate.publication.sourceSetVersionID else { throw CancellationError() }
+        if candidate.legacyReconciliation == true {
+            guard items[index].publishedVersion?.versionID == candidate.publication.versionID else { throw CancellationError() }
+            // The old result may precede newer editable inputs or another request.
+            // Reconciliation owns only its old snapshot, never those newer intents.
+        } else {
+            guard items[index].illustration?.operationID == operationID,
+                  items[index].manualType == candidate.request.manualType,
+                  items[index].manualColors == candidate.request.manualColors else { throw CancellationError() }
+            items[index].illustration = candidate.request
+            items[index].illustration?.status = .ready
+            items[index].illustration?.readyForDelivery = false
+            items[index].illustrationResult = candidate.publication.illustration
+            items[index].preparedPhotos = candidate.preparedPhotos
+        }
         items[index].publishedVersion = candidate.publication
         items[index].photosLocked = true
-        items[index].illustration = candidate.request
-        items[index].illustration?.status = .ready
-        items[index].illustration?.readyForDelivery = false
-        items[index].illustrationResult = candidate.publication.illustration
-        items[index].preparedPhotos = candidate.preparedPhotos
         items[index].pendingPublication = nil
     }
+
 }
 
 struct WardrobeCatalogFile {

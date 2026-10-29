@@ -93,11 +93,26 @@ struct WardrobeItem: Codable, Identifiable {
                 cutoutFilename: filename, cutoutMode: resultMode, illustration: matching,
                 type: matching?.response.effectiveFeatures?.type ?? manualType ?? type,
                 colors: matching?.response.effectiveFeatures?.colors ?? manualColors ?? colors,
-                completeness: matching == nil ? .legacyImage : .illustrated)
+                completeness: matching == nil ? .legacyImage : .legacyIllustration)
+            if let matching, var candidate = publishedVersion {
+                // v2 published before delivery acknowledgement. Preserve its visible
+                // snapshot, but reconcile the original receipt before claiming a lock.
+                let expectedSources = Set([photoVersionID] + additionalPhotos.map(\.id))
+                if preparedPhotos.count == expectedSources.count && Set(preparedPhotos.map(\.photoID)) == expectedSources {
+                    candidate.completeness = .illustrated
+                }
+                let response = matching.response
+                let request = IllustrationRequest(operationID: response.operationId, photoVersionID: response.photoVersionId,
+                    sourceSetVersionID: response.sourceSetVersionId, revision: response.revision,
+                    manualType: response.manualType, manualColors: response.manualColors, status: .ready, submitted: true)
+                pendingPublication = PendingItemPublication(publication: candidate, request: request,
+                    preparedPhotos: preparedPhotos, legacyReconciliation: true)
+            }
         }
         photosLocked = photosLocked || publishedVersion?.completeness == .illustrated
     }
 
+    var isReconcilingLegacyPublication: Bool { pendingPublication?.legacyReconciliation == true }
     var canEditPhotos: Bool { !photosLocked && pendingPublication == nil }
     var canEditAttributes: Bool { pendingPublication == nil }
     var editedType: String? { manualType ?? publishedVersion?.type ?? type }
@@ -110,7 +125,7 @@ struct WardrobeItem: Codable, Identifiable {
 
     mutating func publishIngestion() {
         guard status == .ready, let filename = resultFilename,
-              publishedVersion?.completeness != .illustrated else { return }
+              publishedVersion?.illustration == nil else { return }
         publishedVersion = ItemPublication(versionID: operationID, photoVersionID: photoVersionID,
             sourceSetVersionID: sourceSetVersionID, cutoutFilename: filename, cutoutMode: resultMode,
             illustration: nil, type: manualType ?? type, colors: manualColors ?? colors, completeness: .legacyImage)
@@ -121,7 +136,7 @@ struct WardrobeItem: Codable, Identifiable {
 /// A single publication is the consumer boundary. Neither legacy image data nor
 /// an illustrated package proves encoder readiness; #68 adds that required result here.
 struct ItemPublication: Codable {
-    enum Completeness: String, Codable { case legacyImage, illustrated }
+    enum Completeness: String, Codable { case legacyImage, legacyIllustration, illustrated }
     let versionID: UUID
     let photoVersionID: UUID
     let sourceSetVersionID: UUID
@@ -130,7 +145,7 @@ struct ItemPublication: Codable {
     let illustration: IllustrationResult?
     let type: String?
     let colors: [String]
-    let completeness: Completeness
+    var completeness: Completeness
 }
 
 /// Durable candidate saved before the server publication commit. It remains hidden
@@ -139,6 +154,8 @@ struct PendingItemPublication: Codable {
     let publication: ItemPublication
     let request: IllustrationRequest
     let preparedPhotos: [IllustrationPreparedPhoto]
+    var legacyReconciliation: Bool? = nil
+    var error: String? = nil
 }
 
 struct ResultAcknowledgement: Codable, Hashable {
@@ -320,10 +337,16 @@ extension WardrobeItem {
     }
 
     var illustrationStatusMessage: String? {
+        if pendingPublication?.error == "confirmation_failed" {
+            return "Не удалось подтвердить сохранение. Проверьте подключение к серверу. Изображение и луки сохранены."
+        }
         if pendingPublication != nil {
-            let progress = illustration?.error == "offline" ? "Завершаем сохранение. Продолжим при подключении."
+            let progress = (pendingPublication?.error ?? illustration?.error) == "offline" ? "Завершаем сохранение. Продолжим при подключении."
                 : "Сохраняем готовую вещь…"
             return progress + (photosLocked ? " В луках пока используется предыдущая версия." : "")
+        }
+        if publishedVersion?.completeness == .legacyIllustration && !photosLocked {
+            return "Не удалось подтвердить старую версию на сервере. Изображение и луки сохранены на устройстве."
         }
         if illustration?.status == .pending {
             return photosLocked ? "Обновляем вещь. В луках пока используется предыдущая версия."

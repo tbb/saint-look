@@ -387,6 +387,8 @@ struct OutfitCoreChecks {
         // while the newer manual input remains available in the editor.
         var legacyPublication = published
         legacyPublication.items[0].manualType = "Куртка"
+        legacyPublication.items[0].illustration = IllustrationRequest(operationID: UUID(), photoVersionID: shirt.photoVersionID,
+            sourceSetVersionID: shirt.sourceSetVersionID, revision: 3, manualType: "Куртка", manualColors: ["Чёрный"], submitted: true)
         var legacyJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(legacyPublication)) as! [String: Any]
         var legacyRecords = legacyJSON["items"] as! [[String: Any]]
         for index in legacyRecords.indices {
@@ -398,10 +400,46 @@ struct OutfitCoreChecks {
         let migratedPublication = try file.load()
         precondition(migratedPublication.items[0].displayedType == "Худи")
         precondition(migratedPublication.items[0].editedType == "Куртка")
-        precondition(migratedPublication.items[0].photosLocked)
+        precondition(!migratedPublication.items[0].photosLocked,
+                     "A v2 local result is not proof of a server publication commit")
+        precondition(migratedPublication.items[0].publishedVersion?.completeness == .legacyIllustration)
+        precondition(migratedPublication.items[0].pendingPublication?.legacyReconciliation == true)
+        precondition(!migratedPublication.items[0].canEditPhotos)
+        let legacyAck = ResultAcknowledgement(itemID: shirtID, operationID: completed.operationID, illustration: true)
+        precondition(migratedPublication.pendingAcknowledgements?.contains(legacyAck) == true)
+        try file.save(migratedPublication)
+        var reconciledLegacy = try file.load()
+        try reconciledLegacy.reconcileLegacyPublication(legacyAck, committed: true)
+        precondition(reconciledLegacy.items[0].photosLocked)
+        precondition(reconciledLegacy.items[0].publishedVersion?.completeness == .illustrated)
+        precondition(reconciledLegacy.items[0].editedType == "Куртка")
+        precondition(reconciledLegacy.items[0].displayedType == "Худи")
+        precondition(reconciledLegacy.items[0].illustration?.operationID == migratedPublication.items[0].illustration?.operationID)
+        precondition(reconciledLegacy.pendingAcknowledgements?.contains(legacyAck) == false)
+        var rejectedLegacy = migratedPublication
+        try rejectedLegacy.reconcileLegacyPublication(legacyAck, committed: false)
+        try rejectedLegacy.editAttributes(for: shirtID, type: "Пальто", colors: nil, taxonomy: taxonomy)
+        precondition(!rejectedLegacy.items[0].photosLocked)
+        precondition(rejectedLegacy.items[0].publishedVersion?.completeness == .legacyIllustration)
+        precondition(rejectedLegacy.items[0].displayedIllustration?.filename == "second-illustration.png")
+        precondition(rejectedLegacy.items[0].displayedType == "Худи")
+        precondition(rejectedLegacy.items[0].editedType == "Пальто")
+        precondition(rejectedLegacy.outfits == [outfit])
+        precondition(rejectedLegacy.pendingAcknowledgements?.contains(legacyAck) == false)
         precondition(migratedPublication.items[1].publishedVersion?.completeness == .legacyImage)
         precondition(!migratedPublication.items[1].photosLocked)
         precondition(migratedPublication.outfits == [outfit])
+        var incompleteLegacy = legacyJSON
+        var incompleteRecords = legacyRecords
+        incompleteRecords[0].removeValue(forKey: "preparedPhotos")
+        incompleteLegacy["items"] = incompleteRecords
+        try JSONSerialization.data(withJSONObject: incompleteLegacy).write(to: catalogURL)
+        var incompleteMigration = try file.load()
+        try incompleteMigration.reconcileLegacyPublication(legacyAck, committed: true)
+        precondition(incompleteMigration.items[0].photosLocked)
+        precondition(incompleteMigration.items[0].publishedVersion?.completeness == .legacyIllustration,
+                     "A confirmed source lock does not invent missing locally prepared artifacts")
+        precondition(incompleteMigration.items[0].displayedIllustration?.filename == "second-illustration.png")
         print("PASS: legacy migration preserves image/attribute consistency, manual edits, references and incomplete readiness")
         // An old illustration from another photograph is never the fallback of a
         // published image-only packet, even if the legacy result is still retained.

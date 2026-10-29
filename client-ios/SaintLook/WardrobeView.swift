@@ -334,7 +334,7 @@ private struct ItemDetailView: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("generate-illustration")
-                .disabled(item.status != .ready || (store.illustrationAvailable == false && !item.canResumeIllustrationDelivery) || !store.storageAvailable)
+                .disabled(item.isReconcilingLegacyPublication || item.status != .ready || (store.illustrationAvailable == false && !item.canResumeIllustrationDelivery) || !store.storageAvailable)
             }
             if item.illustrationResult != nil {
                 Text(item.illustrationIsStale ? "Показана предыдущая версия иллюстрации." : "Иллюстрация сохранена на устройстве.")

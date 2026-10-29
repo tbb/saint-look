@@ -57,7 +57,7 @@ final class WardrobeStore: ObservableObject {
                     guard item.status == .ready, let filename = item.resultFilename,
                           UIImage(contentsOfFile: root.appendingPathComponent(item.directoryName).appendingPathComponent(filename).path) != nil else { return nil }
                     return ResultAcknowledgement(itemID: item.id, operationID: item.operationID)
-                })
+                }).union(saved.legacyPublicationAcknowledgements)
                 // A legacy ready card is acknowledged only when its local image is usable,
                 // and only after the inferred delivery intent itself has been saved.
                 try persist(items, pendingAcknowledgements: acknowledgements)
@@ -259,7 +259,7 @@ final class WardrobeStore: ObservableObject {
         for id in pendingDeletionIDs { startDeletion(id) }
         for acknowledgement in pendingAcknowledgements { startAcknowledgement(acknowledgement) }
         for item in items where item.status == .pending { start(item.id) }
-        for item in items where item.illustration?.status == .pending || item.pendingPublication != nil { startIllustration(item.id) }
+        for item in items where !item.isReconcilingLegacyPublication && (item.illustration?.status == .pending || item.pendingPublication != nil) { startIllustration(item.id) }
     }
 
     func stopObserving() {
@@ -371,14 +371,47 @@ final class WardrobeStore: ObservableObject {
                 try await BackendClient(settings: settings).acknowledge(acknowledgement)
                 try Task.checkCancellation()
                 guard pendingAcknowledgements.contains(acknowledgement) else { return }
-                var remaining = pendingAcknowledgements
+                var updated = catalog
+                try updated.reconcileLegacyPublication(acknowledgement, committed: true)
+                var remaining = updated.pendingAcknowledgements ?? pendingAcknowledgements
                 remaining.remove(acknowledgement)
-                // Keep edits, replacements and other commands made during the request.
-                try persist(items, pendingAcknowledgements: remaining)
+                // Reconcile only the migrated snapshot; preserve newer manual inputs,
+                // in-flight requests, other commands and saved outfit references.
+                try persist(updated.items, pendingAcknowledgements: remaining)
+                items = updated.items
                 pendingAcknowledgements = remaining
+                if observing, items.first(where: { $0.id == acknowledgement.itemID })?.illustration?.status == .pending {
+                    startIllustration(acknowledgement.itemID)
+                }
                 return
             } catch {
                 guard !Task.isCancelled else { return }
+                let refused: Bool
+                if case ClientError.resultUnavailable(let code) = error {
+                    refused = ["operation_superseded", "item_deleted", "result_expired"].contains(code)
+                } else if case ClientError.server(404) = error { refused = true }
+                else { refused = false }
+                if let index = items.firstIndex(where: { $0.id == acknowledgement.itemID }),
+                   items[index].pendingPublication?.legacyReconciliation == true,
+                   items[index].pendingPublication?.request.operationID == acknowledgement.operationID {
+                    do {
+                        var updated = catalog
+                        if refused { try updated.reconcileLegacyPublication(acknowledgement, committed: false) }
+                        else { updated.items[index].pendingPublication?.error = error is URLError ? "offline" : "confirmation_failed" }
+                        try persist(updated.items, pendingAcknowledgements: updated.pendingAcknowledgements ?? [])
+                        items = updated.items
+                        pendingAcknowledgements = updated.pendingAcknowledgements ?? []
+                    } catch { notice = "Не удалось сохранить подтверждение старой версии вещи."; return }
+                    if refused { return }
+                } else if acknowledgement.illustration == true && refused {
+                    // An obsolete legacy receipt may coexist with a newer one. Its
+                    // authoritative refusal must not leave an endless background retry.
+                    var remaining = pendingAcknowledgements
+                    remaining.remove(acknowledgement)
+                    do { try persist(items, pendingAcknowledgements: remaining); pendingAcknowledgements = remaining }
+                    catch { notice = "Не удалось сохранить состояние доставки." }
+                    return
+                }
                 do { try await Task.sleep(nanoseconds: retrySeconds * 1_000_000_000) }
                 catch { return }
                 retrySeconds = min(retrySeconds * 2, 10)
@@ -535,6 +568,7 @@ extension WardrobeStore {
 
     func requestIllustration(_ id: UUID) {
         guard storageAvailable, let index = items.firstIndex(where: { $0.id == id }),
+              !items[index].isReconcilingLegacyPublication,
               items[index].status == .ready, items[index].illustration?.status != .pending else { return }
         var updated = items
         let item = updated[index]
@@ -577,7 +611,8 @@ extension WardrobeStore {
 
     private func startIllustration(_ id: UUID) {
         guard illustrationTasks[id] == nil,
-              let operationID = items.first(where: { $0.id == id })?.illustration?.operationID else { return }
+              let item = items.first(where: { $0.id == id }), !item.isReconcilingLegacyPublication,
+              let operationID = item.illustration?.operationID else { return }
         let generation = UUID()
         let task = Task { [weak self] in
             guard let self else { return }
