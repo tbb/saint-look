@@ -1,5 +1,8 @@
 #if DEBUG
 import Foundation
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 
 /// Initial data only. After loading, all edits, selection and persistence use the normal store.
 enum VisualFixtures {
@@ -8,6 +11,10 @@ enum VisualFixtures {
 
     static func prepare(environment: [String: String], support: URL, resources: URL,
                         taxonomy: WardrobeTaxonomy) throws -> URL? {
+        if let flag = environment["SAINT_LOOK_BENCHMARK"], flag != "0" {
+            guard flag == "1" else { throw FixtureError.invalidConfiguration }
+            return try prepareBenchmark(environment: environment, support: support, resources: resources, taxonomy: taxonomy)
+        }
         guard let name = environment["SAINT_LOOK_VISUAL_SCENARIO"] else { return nil }
         guard environment["SAINT_LOOK_UI_TESTING"] == "1", let scenario = Scenario(rawValue: name),
               ["0", "1"].contains(environment["SAINT_LOOK_RESET_DATA"] ?? "") else {
@@ -82,6 +89,210 @@ enum VisualFixtures {
             }
         }
         try WardrobeCatalogFile(directory: root).save(WardrobeCatalog(items: items, pendingAcknowledgements: []))
+        return root
+    }
+
+    private struct BenchmarkManifest: Decodable {
+        struct Asset: Decodable { let name: String; let sha256: String; let bytes: Int }
+        struct Entry: Decodable {
+            let itemId: UUID
+            let cutoutOperationId: UUID
+            let photoVersionId: UUID
+            let sourceSetVersionId: UUID
+            let sourceFile: String
+            let cutoutFile: String
+            let illustrationFile: String
+            let preparedSourceFile: String
+            let representationFile: String
+            let illustration: IllustrationEvidence
+            let preparation: PreparationResponse
+        }
+        struct IllustrationEvidence: Decodable {
+            struct Source: Decodable {
+                struct Versions: Decodable { let modelVersion: String; let templateVersion: String; let geometryVersion: String }
+                let photoId: UUID
+                let sourceSHA256: String
+                let preparedSHA256: String
+                let versions: Versions
+            }
+            let response: IllustrationResponse
+            let preparedSources: [Source]
+            private enum CodingKeys: String, CodingKey { case preparedSources }
+            init(from decoder: Decoder) throws {
+                response = try IllustrationResponse(from: decoder)
+                preparedSources = try decoder.container(keyedBy: CodingKeys.self).decode([Source].self, forKey: .preparedSources)
+            }
+        }
+        let schemaVersion: Int
+        let count: Int
+        let uniqueSources: Int
+        let sourceRevision: String
+        let benchmarkRevision: String
+        let spaceID: String
+        let tokenSHA256: String
+        let assets: [Asset]
+        let items: [Entry]
+    }
+
+    private static func benchmarkDigest(_ data: Data) throws -> String {
+        #if canImport(CryptoKit)
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        #else
+        throw FixtureError.invalidConfiguration
+        #endif
+    }
+
+    /// Explicit synthetic load data, kept out of the owner's catalog and Release resources.
+    private static func prepareBenchmark(environment: [String: String], support: URL, resources: URL,
+                                         taxonomy: WardrobeTaxonomy) throws -> URL {
+        func matches(_ value: String?, _ pattern: String) -> Bool {
+            value?.range(of: pattern, options: .regularExpression) != nil
+        }
+        let token = environment["SAINT_LOOK_BENCHMARK_TOKEN"] ?? ""
+        guard environment["SAINT_LOOK_BENCHMARK"] == "1", environment["SAINT_LOOK_UI_TESTING"] == "1",
+              ["0", "1"].contains(environment["SAINT_LOOK_RESET_DATA"] ?? ""),
+              environment["SAINT_LOOK_VISUAL_SCENARIO"] == nil,
+              let rawOrigin = environment["SAINT_LOOK_BENCHMARK_ORIGIN"], let origin = URL(string: rawOrigin),
+              origin.scheme == "https", let host = origin.host, host.hasSuffix(".trycloudflare.com"),
+              host != "trycloudflare.com", origin.user == nil, origin.password == nil,
+              origin.query == nil, origin.fragment == nil, ["", "/"].contains(origin.path), origin.port == nil || origin.port == 443,
+              environment["SAINT_LOOK_BASE_URL"] == rawOrigin, environment["SAINT_LOOK_OWNER_TOKEN"] == token,
+              matches(token, "^bench-[a-f0-9]{64}$"),
+              matches(environment["SAINT_LOOK_BENCHMARK_MANIFEST_SHA256"], "^[a-f0-9]{64}$"),
+              matches(environment["SAINT_LOOK_BENCHMARK_REVISION"], "^[a-f0-9]{40}$"),
+              token != (Bundle.main.object(forInfoDictionaryKey: "SaintLookDefaultOwnerToken") as? String) else {
+            throw FixtureError.invalidConfiguration
+        }
+        let bundle = resources.appendingPathComponent("VisualFixtures/benchmark", isDirectory: true)
+        let manifestBytes = try Data(contentsOf: bundle.appendingPathComponent("manifest.json"))
+        guard manifestBytes.count <= 16 * 1024 * 1024,
+              try benchmarkDigest(manifestBytes) == environment["SAINT_LOOK_BENCHMARK_MANIFEST_SHA256"] else {
+            throw FixtureError.invalidConfiguration
+        }
+        let manifest = try JSONDecoder().decode(BenchmarkManifest.self, from: manifestBytes)
+        guard manifest.schemaVersion == 1, [4, 300].contains(manifest.count), manifest.uniqueSources == 4,
+              manifest.sourceRevision == "73700bab547ed71113dbf27db18136e054a1cca2",
+              manifest.benchmarkRevision == environment["SAINT_LOOK_BENCHMARK_REVISION"],
+              manifest.spaceID == "5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b",
+              manifest.tokenSHA256 == (try benchmarkDigest(Data(token.utf8))), manifest.items.count == manifest.count,
+              manifest.assets.count <= 512, Set(manifest.assets.map(\.name)).count == manifest.assets.count else {
+            throw FixtureError.invalidConfiguration
+        }
+        var assets: [String: Data] = [:]
+        var hashes: [String: String] = [:]
+        var totalBytes = 0
+        for asset in manifest.assets {
+            guard matches(asset.name, "^[a-z0-9-]+\\.(png|jpg|json)$"), matches(asset.sha256, "^[a-f0-9]{64}$"),
+                  asset.bytes > 0, asset.bytes <= 16 * 1024 * 1024 else { throw FixtureError.invalidConfiguration }
+            totalBytes += asset.bytes
+            guard totalBytes <= 64 * 1024 * 1024 else { throw FixtureError.invalidConfiguration }
+            let bytes = try Data(contentsOf: bundle.appendingPathComponent(asset.name))
+            guard bytes.count == asset.bytes, try benchmarkDigest(bytes) == asset.sha256 else { throw FixtureError.invalidConfiguration }
+            assets[asset.name] = bytes; hashes[asset.name] = asset.sha256
+        }
+        guard Set(manifest.items.compactMap { hashes[$0.sourceFile] }).count == 4 else {
+            throw FixtureError.invalidConfiguration
+        }
+        let root = support.appendingPathComponent("wardrobe-benchmark-fixtures", isDirectory: true)
+        let marker = root.appendingPathComponent("benchmark-manifest.sha256")
+        if environment["SAINT_LOOK_RESET_DATA"] == "0" {
+            guard try String(contentsOf: marker, encoding: .utf8) == environment["SAINT_LOOK_BENCHMARK_MANIFEST_SHA256"] else {
+                throw FixtureError.invalidConfiguration
+            }
+            let saved = try WardrobeCatalogFile(directory: root).load()
+            guard saved.items.count == manifest.count, saved.items.allSatisfy(\.hasPreparedVersion),
+                  Set(saved.items.map(\.id)) == Set(manifest.items.map(\.itemId)) else { throw FixtureError.invalidConfiguration }
+            return root
+        }
+        if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        var items: [WardrobeItem] = []
+        var identities = Set<UUID>()
+        let featuresEncoder = JSONEncoder(); featuresEncoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        for entry in manifest.items {
+            let illustration = entry.illustration.response, preparation = entry.preparation
+            let ids = [entry.itemId, entry.cutoutOperationId, entry.photoVersionId, entry.sourceSetVersionId,
+                       illustration.operationId, preparation.operationId]
+            guard ids.allSatisfy({ matches($0.uuidString.lowercased(), "^b300[0-9a-f]{4}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$") }),
+                  ids.allSatisfy({ identities.insert($0).inserted }),
+                  let sourceHash = hashes[entry.sourceFile], let cutoutHash = hashes[entry.cutoutFile],
+                  let illustrationHash = hashes[entry.illustrationFile], let preparedHash = hashes[entry.preparedSourceFile],
+                  let representationBytes = assets[entry.representationFile], let representationHash = hashes[entry.representationFile],
+                  let features = illustration.effectiveFeatures, let observed = illustration.observedFeatures,
+                  features.isValid, observed.isValid, illustration.status == .ready, illustration.mode == "live",
+                  illustration.modelVersion == IllustrationContract.currentModelVersion,
+                  illustration.resultSHA256 == illustrationHash,
+                  illustration.observedFeaturesSHA256 == (try benchmarkDigest(featuresEncoder.encode(observed))),
+                  illustration.effectiveFeaturesSHA256 == (try benchmarkDigest(featuresEncoder.encode(features))),
+                  entry.illustration.preparedSources.count == 1, let preparedSource = entry.illustration.preparedSources.first,
+                  preparedSource.photoId == entry.photoVersionId, preparedSource.sourceSHA256 == sourceHash,
+                  preparedSource.preparedSHA256 == preparedHash,
+                  preparedSource.versions.modelVersion == illustration.modelVersion,
+                  preparedSource.versions.templateVersion == illustration.templateVersion,
+                  preparedSource.versions.geometryVersion == illustration.geometryVersion,
+                  preparation.status == .ready, preparation.mode == "real", preparation.imageMode == "live",
+                  preparation.provenance == "pipeline", preparation.spaceID == manifest.spaceID,
+                  preparation.itemId == entry.itemId, preparation.photoVersionId == entry.photoVersionId,
+                  preparation.sourceSetVersionId == entry.sourceSetVersionId, preparation.cutoutOperationId == entry.cutoutOperationId,
+                  preparation.illustrationOperationId == illustration.operationId, preparation.revision == illustration.revision,
+                  preparation.representationSHA256 == representationHash,
+                  preparation.representationJSON == String(data: representationBytes, encoding: .utf8),
+                  preparation.input?.sourceSHA256 == sourceHash,
+                  preparation.artifacts == PreparationArtifacts(cutoutSHA256: cutoutHash, illustrationSHA256: illustrationHash,
+                    observedFeaturesSHA256: illustration.observedFeaturesSHA256!, effectiveFeaturesSHA256: illustration.effectiveFeaturesSHA256!) else {
+                throw FixtureError.invalidConfiguration
+            }
+            let canonical = try CanonicalItemFeatures(displayType: features.type, colors: features.colors, taxonomy: taxonomy)
+            let text = canonical.type.replacingOccurrences(of: "_", with: " ")
+                + (canonical.colors.isEmpty ? "" : ". Colors: " + canonical.colors.joined(separator: ", ")) + "."
+            let representation = try JSONSerialization.jsonObject(with: representationBytes) as? [String: Any]
+            let vector = representation?["vector"] as? [Double]
+            guard preparation.effectiveFeatures == canonical, preparation.input?.textSHA256 == (try benchmarkDigest(Data(text.utf8))),
+                  representation?["schemaVersion"] as? Int == 1, representation?["spaceID"] as? String == manifest.spaceID,
+                  representation?["photoVersionID"] as? String == entry.photoVersionId.uuidString.lowercased(),
+                  representation?["sourceSHA256"] as? String == sourceHash, representation?["textSHA256"] as? String == preparation.input?.textSHA256,
+                  let vector, vector.count == 128, vector.allSatisfy(\.isFinite) else { throw FixtureError.invalidConfiguration }
+            let squaredNorm = vector.reduce(0) { $0 + $1 * $1 }
+            guard squaredNorm.isFinite, squaredNorm > 1e-12, squaredNorm < 1e12 else { throw FixtureError.invalidConfiguration }
+            var item = WardrobeItem(id: entry.itemId, operationID: entry.cutoutOperationId, photoVersionID: entry.photoVersionId)
+            item.sourceSetVersionID = entry.sourceSetVersionId
+            item.status = .ready; item.mode = .live; item.resultMode = .live; item.uploadStarted = true
+            item.originalFilename = entry.sourceFile; item.uploadFilename = entry.sourceFile
+            item.resultFilename = entry.cutoutFile; item.resultSHA256 = cutoutHash
+            item.type = features.type; item.colors = features.colors
+            let request = IllustrationRequest(operationID: illustration.operationId, photoVersionID: entry.photoVersionId,
+                sourceSetVersionID: entry.sourceSetVersionId, revision: illustration.revision,
+                manualType: nil, manualColors: nil, status: .ready, submitted: true)
+            try illustration.validate(for: item, request: request)
+            item.illustration = request
+            item.illustrationResult = IllustrationResult(filename: entry.illustrationFile, response: illustration)
+            item.publishedVersion = ItemPublication(versionID: preparation.operationId, photoVersionID: entry.photoVersionId,
+                sourceSetVersionID: entry.sourceSetVersionId, cutoutFilename: entry.cutoutFile, cutoutMode: .live,
+                illustration: item.illustrationResult, type: features.type, colors: features.colors, completeness: .prepared,
+                representation: StoredRepresentation(filename: entry.representationFile, response: preparation), cutoutOperationID: entry.cutoutOperationId)
+            item.preparationRevision = preparation.revision; item.photosLocked = true
+            item.preparedPhotos = [IllustrationPreparedPhoto(photoID: entry.photoVersionId, filename: entry.preparedSourceFile,
+                sourceDigest: sourceHash, preparedDigest: preparedHash, modelVersion: illustration.modelVersion,
+                templateVersion: illustration.templateVersion, geometryVersion: illustration.geometryVersion)]
+            guard item.hasPreparedVersion else { throw FixtureError.invalidConfiguration }
+            let folder = root.appendingPathComponent(item.directoryName, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            for filename in Set([entry.sourceFile, entry.cutoutFile, entry.illustrationFile, entry.preparedSourceFile, entry.representationFile]) {
+                guard let bytes = assets[filename] else { throw FixtureError.invalidConfiguration }
+                try bytes.write(to: folder.appendingPathComponent(filename), options: .atomic)
+            }
+            items.append(item)
+        }
+        guard let body = items.first(where: { OutfitZone.body.accepts($0, taxonomy: taxonomy) }),
+              let bottom = items.first(where: { OutfitZone.bottom.accepts($0, taxonomy: taxonomy) }) else { throw FixtureError.invalidConfiguration }
+        // A valid saved look is opened, then its body is cleared through the UI before measuring a draft.
+        var outfit = Outfit(id: UUID(uuidString: "36000004-0000-4000-8000-000000000300")!, name: "Benchmark300")
+        outfit.selectItem(body.id, for: outfit.slots[1].id); outfit.selectItem(bottom.id, for: outfit.slots[2].id)
+        let file = WardrobeCatalogFile(directory: root)
+        try file.save(WardrobeCatalog(items: items, pendingAcknowledgements: [], outfits: [outfit]))
+        let loaded = try file.load()
+        guard loaded.items.count == manifest.count, loaded.items.allSatisfy(\.hasPreparedVersion) else { throw FixtureError.invalidConfiguration }
+        try Data(environment["SAINT_LOOK_BENCHMARK_MANIFEST_SHA256"]!.utf8).write(to: marker, options: .atomic)
         return root
     }
 

@@ -21,12 +21,20 @@ on:
         description: Local Simulator suite
         type: choice
         default: all
-        options: [all, wardrobe, outfits, outfits-max-text, visual, camera, wardrobe-recovery]
+        options: [all, wardrobe, outfits, outfits-max-text, visual, camera, wardrobe-recovery, benchmark]
       visual_profiles:
         description: Visual evidence profiles (only used by the visual suite)
         type: choice
         default: all
         options: [all, iphone-light, iphone-dark, iphone-max-text, ipad-light]
+      benchmark_url:
+        description: Temporary HTTPS trycloudflare.com origin (benchmark suite only)
+        type: string
+        default: ''
+      benchmark_manifest_sha:
+        description: Reviewed 300-packet manifest SHA256 (benchmark suite only)
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -123,9 +131,15 @@ jobs:
       - name: Check bounded visual diagnostic observer
         if: matrix.suite == 'visual'
         run: PYTHONDONTWRITEBYTECODE=1 python3 client-ios/scripts/tests/test-visual-stall-observer.py
-      - name: Real Simulator and local backend (controlled providers)
+      - name: ${{ matrix.suite == 'benchmark' && 'Simulator with isolated real-model benchmark' || 'Real Simulator and local backend (controlled providers)' }}
         env:
           TEST_SUITE: ${{ matrix.suite }}
+          # This short-lived fixture nonce is never the owner credential.
+          SAINT_LOOK_BENCHMARK: ${{ matrix.suite == 'benchmark' && '1' || '0' }}
+          SAINT_LOOK_BENCHMARK_ORIGIN: ${{ inputs.benchmark_url }}
+          SAINT_LOOK_BENCHMARK_MANIFEST_SHA256: ${{ inputs.benchmark_manifest_sha }}
+          SAINT_LOOK_BENCHMARK_REVISION: ${{ github.sha }}
+          SAINT_LOOK_BENCHMARK_TOKEN: ${{ matrix.suite == 'benchmark' && secrets.SAINT_LOOK_BENCHMARK_TOKEN || '' }}
           SAINT_LOOK_VISUAL_PROFILES: ${{ matrix.profile || 'all' }}
           SAINT_LOOK_UI_TEST_ONLY: ${{ matrix.suite == 'outfits' && 'SaintLookUITests/OutfitFlowTests' || 'SaintLookUITests/WardrobeFlowTests' }}
           NODE_ENV: test
@@ -154,6 +168,13 @@ jobs:
           SAINT_LOOK_UI_TEST_CONTROL_URL: http://127.0.0.1:8788/__control
           SAINT_LOOK_UI_TEST_CONTROL_TOKEN: saint-look-ui-control-test-token-00000001
         run: |
+          if [[ "$TEST_SUITE" == benchmark ]]; then
+            set -euo pipefail
+            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || { echo 'Benchmark must be explicitly dispatched.' >&2; exit 1; }
+            SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/OutfitFlowTests/testCachedRealBenchmarkFirstObservedResult \
+              bash client-ios/scripts/test-simulator.sh
+            exit $?
+          fi
           wait_for_health() {
             local url="$1"
             for attempt in {1..50}; do
@@ -249,6 +270,15 @@ jobs:
             output="client-ios/build/screenshots/$(basename "$result" .xcresult)"
             xcrun xcresulttool export attachments --path "$result" --output-path "$output"
           done
+          if [[ "${{ matrix.suite }}" == benchmark ]]; then
+            # Raw XCTest metadata can contain the temporary launch nonce. Publish PNG only.
+            python3 - <<'PY'
+          from pathlib import Path
+          for path in Path('client-ios/build/screenshots').rglob('*'):
+              if path.is_file() and path.suffix.lower() != '.png':
+                  path.unlink()
+          PY
+          fi
       - name: Upload Simulator screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -266,11 +296,19 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
       - name: Upload local XCTest results and screenshots
-        if: always()
+        if: always() && matrix.suite != 'benchmark'
         uses: actions/upload-artifact@v4
         with:
           name: simulator-results-${{ matrix.label }}
           path: client-ios/build/*.xcresult
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload sanitized benchmark observations
+        if: always() && matrix.suite == 'benchmark'
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-benchmark-observations
+          path: client-ios/build/benchmark/*.json
           if-no-files-found: warn
           retention-days: 7
 
