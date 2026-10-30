@@ -12,7 +12,7 @@ export function validateApiBudget(input, now = Date.now()) {
   const checked = Date.parse(value?.pricesCheckedAt);
   if (!value || value.approved !== true || value.id !== 'epic63-public-v1-5d85dde081e8'
     || !Number.isFinite(checked) || checked > now || now - checked > 86400000
-    || !Number.isSafeInteger(value.maxCostMicrousd) || value.maxCostMicrousd <= 0 || value.maxCostMicrousd > 4500000
+    || !Number.isSafeInteger(value.maxCostMicrousd) || value.maxCostMicrousd <= 0 || value.maxCostMicrousd > 8800000
     || providers.some(p => !Number.isSafeInteger(value.limits?.[p]) || value.limits[p] < 0 || value.limits[p] > ceilings[p]
       || value.ratesMicrousd?.[p] !== prices[p])) {
     throw new ProviderBudgetError('provider_budget_not_approved');
@@ -56,11 +56,26 @@ export function createProviderBudget(database, env) {
     let previous;
     try { previous = JSON.parse(old.policy); } catch {}
     const isFalPolicy = previous?.id === policy.id && previous.approved === true
-      && previous.maxCostMicrousd === policy.maxCostMicrousd
+      && previous.maxCostMicrousd === 4500000 && policy.maxCostMicrousd === 4500000
       && JSON.stringify(previous.limits) === JSON.stringify({ photoroom: 60, jev: 48, fal: 24 })
       && JSON.stringify(previous.ratesMicrousd) === JSON.stringify({ photoroom: 0, jev: 2753, fal: 150000 });
-    if (!isFalPolicy) throw new ProviderBudgetError('provider_budget_not_approved');
-    database.prepare('UPDATE provider_budgets SET policy=? WHERE id=?').run(policyIdentity(policy), policy.id);
+    // This owner's $10 total includes $1.20 reserved outside this server ledger.
+    // Only the known Gemini cap changes; the same ID, rates, limits and journal survive.
+    const isGeminiCapChange = JSON.stringify(policy.limits) === JSON.stringify(ceilings)
+      && old.policy === policyIdentity({ ...policy, maxCostMicrousd: previous?.maxCostMicrousd })
+      && ((previous?.maxCostMicrousd === 4500000 && policy.maxCostMicrousd === 8800000)
+        || (previous?.maxCostMicrousd === 8800000 && policy.maxCostMicrousd === 4500000));
+    if (!isFalPolicy && !isGeminiCapChange) throw new ProviderBudgetError('provider_budget_not_approved');
+    if (isGeminiCapChange && policy.maxCostMicrousd === 4500000) {
+      // Atomic with the cost condition even when available() performs the downgrade.
+      // Every historical/unknown provider reservation contributes; nothing is reset.
+      const changed = database.prepare(`UPDATE provider_budgets SET policy=? WHERE id=? AND
+        (SELECT COALESCE(SUM(cost_microusd),0) FROM provider_reservations WHERE budget_id=?)<=?`)
+        .run(policyIdentity(policy), policy.id, policy.id, policy.maxCostMicrousd);
+      if (changed.changes !== 1) throw new ProviderBudgetError('provider_budget_not_approved');
+    } else {
+      database.prepare('UPDATE provider_budgets SET policy=? WHERE id=?').run(policyIdentity(policy), policy.id);
+    }
   }
   return {
     available(provider) {
