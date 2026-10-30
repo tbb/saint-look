@@ -263,7 +263,9 @@ async function main() {
   }
   for (const name of ['source', 'python', 'assets', 'token-file', 'count']) check(opts['--' + name], 'missing_argument');
   check(((await stat(opts['--token-file'])).mode & 0o777) === 0o600, 'private_token_file_required');
-  const result = await startBenchmark({ source: await realpath(opts['--source']), python: await realpath(opts['--python']),
+  // Preserve a venv's interpreter symlink: dereferencing it selects base Python
+  // and loses the venv's installed torch/transformers packages.
+  const result = await startBenchmark({ source: await realpath(opts['--source']), python: resolve(opts['--python']),
     assets: await realpath(opts['--assets']), token: (await readFile(opts['--token-file'], 'utf8')).trim(), count: Number(opts['--count']),
     ttlSeconds: Number(opts['--ttl-seconds'] ?? 1800), directory: opts['--directory'] });
   let stopping = false;
