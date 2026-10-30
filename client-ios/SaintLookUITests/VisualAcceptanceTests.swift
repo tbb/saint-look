@@ -86,6 +86,11 @@ final class VisualAcceptanceTests: XCTestCase {
     @MainActor
     private func nativeTap(_ element: XCUIElement, in app: XCUIApplication) throws {
         try waitVisible(element, in: app)
+        try performNativeTap(element)
+    }
+
+    @MainActor
+    private func performNativeTap(_ element: XCUIElement) throws {
         let failures = testRun?.failureCount ?? 0
         element.tap()
         try requireEqual(testRun?.failureCount ?? 0, failures, "Native tap failed; stop this journey")
@@ -351,7 +356,9 @@ final class VisualAcceptanceTests: XCTestCase {
     @MainActor
     private func tap(_ element: XCUIElement, in app: XCUIApplication) throws {
         try reveal(element, in: app)
-        try nativeTap(element, in: app)
+        // reveal already proves existence, hittability and a safe tap center.
+        // No input intervenes: another readiness wait only repeats remote AX reads.
+        try performNativeTap(element)
     }
 
     @MainActor
