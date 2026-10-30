@@ -136,7 +136,7 @@ Upload проверяет одну существующую shared CPU / 1 CPU �
 Политика содержит `id: epic63-public-v1-5d85dde081e8`, `approved: true`,
 `pricesCheckedAt` (проверены не более 24 часов назад),
 `limits: {photoroom:60, jev:48, gemini:24}`,
-`ratesMicrousd: {photoroom:0, jev:2753, gemini:135100}` и `maxCostMicrousd:4500000`.
+`ratesMicrousd: {photoroom:0, jev:2753, gemini:400000}` и `maxCostMicrousd:4500000`.
 Счётчик в SQLite резервирует попытку **до** внешнего запроса. Ошибка, timeout или
 перезапуск не возвращают резерв. Изменение того же ID не сбрасывает счётчик;
 обновление времени проверки цены также его сохраняет. После истечения проверки
@@ -148,3 +148,5 @@ Upload проверяет одну существующую shared CPU / 1 CPU �
 Формат данных полной публикации повышается до v4: откат на код v2/v3 недопустим,
 поскольку старый ack обходит обязательное представление. Существующий volume
 сохраняется; это не механизм восстановления удалённых данных.
+
+Gemini reserves $0.40 per trial attempt as a conservative ceiling with 2048 combined output/thinking tokens; this is not the measured image price. Historical fal reservations retain their costs and count toward the 24-generation limit after migration.
