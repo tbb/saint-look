@@ -591,14 +591,58 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertEqual((try JSONSerialization.jsonObject(with: result.data) as? [String: String])?["error"], "result_expired")
 
         try tapVisibleButton("retry-processing", in: restored)
-        XCTAssertTrue(restored.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 40))
+        let ready = restored.staticTexts["ready-status"].firstMatch.waitForExistence(timeout: 40)
+        var retried: [String: Any]?
+        do { retried = try await transportState() }
+        catch { if ready { throw error } }
+        if !ready { await recordExpiredRetryState(retried) }
+        XCTAssertTrue(ready)
+        guard ready else { return }
         assertRecoveryDidNotOpenPhotoPicker(in: restored)
         XCTAssertTrue(restored.images["item-photo"].firstMatch.exists)
-        let retried = try await transportState()
-        XCTAssertEqual(retried["acceptedOperations"] as? Int, 2)
-        XCTAssertEqual(retried["forwardedUploads"] as? Int, 2)
+        XCTAssertEqual(retried?["acceptedOperations"] as? Int, 2)
+        XCTAssertEqual(retried?["forwardedUploads"] as? Int, 2)
         restored.swipeDown()
         await waitForSummary(restored, ready: 1, pending: 0, timeout: 5)
+    }
+
+    private func recordExpiredRetryState(_ state: [String: Any]?) async {
+        var trace: [String: Any] = ["ready": false,
+            "errorCode": state == nil ? "transport_state_unavailable" : "ready_timeout",
+            "operationStateObserved": false]
+        for key in ["acceptedOperations", "forwardedUploads", "droppedUploadResponses",
+                    "forwardedAcknowledgements", "acknowledgedOperations", "heldResultResponses"] {
+            if let count = state?[key] as? Int, count >= 0 { trace[key] = count }
+        }
+        // Probe only a newly accepted controlled loopback operation, never the old expired result or AX.
+        if (state?["acceptedOperations"] as? Int ?? 0) >= 2,
+           let base = URLComponents(string: testURL), base.scheme == "http", let host = base.host,
+           ["127.0.0.1", "localhost", "[::1]", "::1"].contains(host),
+           base.user == nil, base.password == nil, base.query == nil, base.fragment == nil,
+           base.path.isEmpty || base.path == "/",
+           let path = state?["lastOperationPath"] as? String,
+           path.range(of: "^/v1/items/[0-9a-fA-F-]{36}/operations/[0-9a-fA-F-]{36}$", options: .regularExpression) != nil,
+           let url = URL(string: path, relativeTo: base.url)?.absoluteURL {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 5
+            request.setValue("Bearer \(testToken)", forHTTPHeaderField: "Authorization")
+            if let (data, response) = try? await URLSession.shared.data(for: request),
+               let response = response as? HTTPURLResponse {
+                trace["operationHTTPStatus"] = response.statusCode
+                if let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                   let status = object["status"] as? String,
+                   ["pending", "ready", "failed"].contains(status) {
+                    trace["operationStateObserved"] = true
+                    trace["operationPending"] = status == "pending"
+                    trace["operationReady"] = status == "ready"
+                    trace["operationFailed"] = status == "failed"
+                }
+            }
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: trace, options: .sortedKeys),
+           let json = String(data: data, encoding: .utf8) {
+            print("EXPIRED_RETRY_STATE \(json)")
+        }
     }
 
     private func backendResponse(path: String) async throws -> (status: Int, data: Data) {

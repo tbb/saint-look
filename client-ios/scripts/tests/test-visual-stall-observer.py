@@ -327,17 +327,25 @@ class ObserverTests(unittest.TestCase):
                 self.assertIn('Sampling is limited to local visual fixtures', result.stderr)
             self.assertEqual(list(Path(folder).iterdir()), [])
 
-    def test_manual_pair_routing_keeps_default_matrix_and_exact_two_selectors(self):
+    def test_manual_diagnostic_routing_keeps_default_matrix_and_exact_selectors(self):
         workflow = (SCRIPT.parents[2] / '.github/workflows/ci.yml').read_text()
         matrix = textwrap.dedent(workflow.split("python3 - <<'PY'\n", 1)[1].split('          PY', 1)[0])
         route = workflow[workflow.index('          if [[ "$TEST_SUITE" == "outfits-launch-pair" ]]'):]
         route = textwrap.dedent(route.split('          if [[ "$TEST_SUITE" == "outfits"', 1)[0])
-        expected = ('SaintLookUITests/OutfitFlowTests/testCancelDraftDoesNotCreateOutfit\n'
-                    'SaintLookUITests/OutfitFlowTests/testCreateUnnamedOutfitSurvivesBackgroundResultOfflineRestartAndItemDeletion')
+        pair = ('SaintLookUITests/OutfitFlowTests/testCancelDraftDoesNotCreateOutfit\n'
+                'SaintLookUITests/OutfitFlowTests/testCreateUnnamedOutfitSurvivesBackgroundResultOfflineRestartAndItemDeletion')
+        expired = 'SaintLookUITests/WardrobeFlowTests/testExpiredUndeliveredResultKeepsOriginalAndRequiresExplicitRetryAfterRelaunch'
+        timeout = next(line.split('${{', 1)[1].split('}}', 1)[0] for line in workflow.splitlines()
+                       if 'timeout-minutes:' in line and 'matrix.suite' in line)
+        timeout = timeout.replace('matrix.suite', 'suite').replace('&&', 'and').replace('||', 'or')
+        for suite, minutes in [('outfits-launch-pair', 20), ('wardrobe-expired-retry', 20),
+                               ('wardrobe', 60), ('outfits', 60), ('visual', 60), ('camera', 40)]:
+            self.assertEqual(eval(timeout, {'__builtins__': {}}, {'suite': suite}), minutes)
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder) / 'output'
             for selected, suites in [('all', ['wardrobe', 'outfits', 'visual', 'visual', 'visual', 'visual']),
-                                     ('outfits-launch-pair', ['outfits-launch-pair'])]:
+                                     ('outfits-launch-pair', ['outfits-launch-pair']),
+                                     ('wardrobe-expired-retry', ['wardrobe-expired-retry'])]:
                 output.write_text('')
                 subprocess.run([sys.executable, '-c', matrix], env={**os.environ, 'BASE_SHA': '', 'HEAD_SHA': '',
                     'IOS_SUITE': selected, 'VISUAL_PROFILES': 'all', 'GITHUB_OUTPUT': str(output)}, check=True, timeout=3)
@@ -345,16 +353,17 @@ class ObserverTests(unittest.TestCase):
                 self.assertEqual([entry['suite'] for entry in json.loads(value)['include']], suites)
             calls = Path(folder) / 'calls'
             stub = 'bash() { printf "%s\\n" "$SAINT_LOOK_LAUNCH_PAIR" "$SAINT_LOOK_UI_TEST_ONLY" "$@" >> "$PAIR_CALLS"; return 23; }\n'
-            for event, status in [('workflow_dispatch', 23), ('pull_request', 1)]:
-                result = subprocess.run(['/bin/bash', '-c', stub + route], env={**os.environ,
-                    'TEST_SUITE': 'outfits-launch-pair', 'GITHUB_EVENT_NAME': event, 'PAIR_CALLS': str(calls)},
-                    capture_output=True, text=True, timeout=3)
-                self.assertEqual(result.returncode, status)
-                if event == 'workflow_dispatch':
-                    self.assertEqual(calls.read_text(), '1\n' + expected + '\nclient-ios/scripts/test-simulator.sh\n')
-                    calls.unlink()
-                else:
-                    self.assertFalse(calls.exists())
+            for suite, flag, selectors in [('outfits-launch-pair', '1', pair), ('wardrobe-expired-retry', '', expired)]:
+                for event, status in [('workflow_dispatch', 23), ('pull_request', 1)]:
+                    result = subprocess.run(['/bin/bash', '-c', stub + route], env={**os.environ,
+                        'TEST_SUITE': suite, 'GITHUB_EVENT_NAME': event, 'PAIR_CALLS': str(calls),
+                        'SAINT_LOOK_LAUNCH_PAIR': ''}, capture_output=True, text=True, timeout=3)
+                    self.assertEqual(result.returncode, status)
+                    if event == 'workflow_dispatch':
+                        self.assertEqual(calls.read_text(), flag + '\n' + selectors + '\nclient-ios/scripts/test-simulator.sh\n')
+                        calls.unlink()
+                    else:
+                        self.assertFalse(calls.exists())
 
 
 if __name__ == '__main__':
