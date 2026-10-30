@@ -1280,36 +1280,22 @@ final class WardrobeFlowTests: XCTestCase {
 
     @MainActor
     private func presentDeletionConfirmation(in app: XCUIApplication) throws {
-        try openFirstItem(in: app)
-        app.navigationBars.buttons["item-actions"].tap()
-        let command = app.collectionViews.buttons.matching(identifier: "delete-item").firstMatch
-        var previousFrame: CGRect?
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            guard command.exists, command.isHittable else { previousFrame = nil; return false }
-            let frame = command.frame
-            defer { previousFrame = frame }
-            return !frame.isEmpty && previousFrame == frame
-        }, object: nil)
-        guard XCTWaiter.wait(for: [ready], timeout: 5) == .completed else {
+        // Use the same stable, visible native menu command as confirmed deletion.
+        // The native press resolves the hit point; no second presenter tap can
+        // conceal an unsuccessful first action.
+        try tapVisibleButton("delete-item", in: app)
+        let cancel = app.alerts.buttons.matching(identifier: "cancel-delete-item").firstMatch
+        guard cancel.waitForExistence(timeout: 5) else {
             let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-            screen.name = "delete-menu-unavailable"
+            screen.name = "delete-confirmation-unavailable"
             screen.lifetime = .keepAlways
             add(screen)
             let state = XCTAttachment(string: app.debugDescription)
-            state.name = "delete-menu-accessibility"
+            state.name = "delete-confirmation-accessibility"
             state.lifetime = .keepAlways
             add(state)
-            XCTFail("The native item menu must present a stable, tappable deletion command")
-            throw InteractionError.buttonNotVisible("delete-item")
-        }
-        command.press(forDuration: 0.1)
-        let cancel = app.alerts.buttons.matching(identifier: "cancel-delete-item").firstMatch
-        // CI captured a centered short tap that left this menu open. Repeat only
-        // its confirmation presenter, once, while the same menu is still visible.
-        // An alert (including an unexpected one) prevents any second interaction.
-        if !cancel.waitForExistence(timeout: 1), !app.alerts.firstMatch.exists,
-           command.exists, command.isHittable {
-            command.press(forDuration: 0.1)
+            XCTFail("A single native deletion command must present confirmation")
+            throw InteractionError.buttonNotVisible("cancel-delete-item")
         }
     }
 

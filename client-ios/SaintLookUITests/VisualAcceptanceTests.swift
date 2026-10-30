@@ -236,22 +236,35 @@ final class VisualAcceptanceTests: XCTestCase {
         try require(field.isEnabled, "The focused name field must allow native editing")
         // Tapping the insertion point opens the native edit menu without selecting a word.
         try nativeTap(field, in: app)
-        let labels = NSPredicate(format: "label IN %@", ["Select All", "Выбрать всё", "Выбрать все"])
-        let commands = [app.menuItems.matching(labels).firstMatch, app.buttons.matching(labels).firstMatch]
-        let nextPage = app.buttons.matching(NSPredicate(format: "label IN %@", ["Forward", "Вперёд", "Вперед"])).firstMatch
-        // Large Dynamic Type can paginate the native menu. Traverse pages, never retry editing.
+        let selectionLabels = ["Select All", "Выбрать всё", "Выбрать все"]
+        let forwardLabels = ["Forward", "Вперёд", "Вперед"]
+        // Resolve all currently offered commands in one query. Asking separately
+        // for an absent Select All can exhaust XCTest's deadline before Forward
+        // is inspected, even though that arrow is already visible on the page.
+        let offeredCommands = app.descendants(matching: .any).matching(NSPredicate(
+            format: "(elementType == %d OR elementType == %d) AND label IN %@",
+            XCUIElement.ElementType.menuItem.rawValue, XCUIElement.ElementType.button.rawValue,
+            selectionLabels + forwardLabels))
         for page in 0..<3 {
+            var selection: XCUIElement?
+            var forward: XCUIElement?
             let available = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                commands.contains { $0.exists && $0.isHittable } || (nextPage.exists && nextPage.isHittable)
+                selection = nil
+                forward = nil
+                for command in offeredCommands.allElementsBoundByIndex where command.isHittable {
+                    if selectionLabels.contains(command.label) { selection = command }
+                    else { forward = command }
+                }
+                return selection != nil || forward != nil
             }, object: app)
             guard XCTWaiter.wait(for: [available], timeout: 5) == .completed else { break }
-            if let command = commands.first(where: { $0.exists && $0.isHittable }) {
+            if let command = selection {
                 try require(command.isEnabled, "Native Select All must be enabled")
-                try nativeTap(command, in: app)
+                try performNativeTap(command)
                 return
             }
-            guard page < 2, nextPage.exists, nextPage.isHittable, nextPage.isEnabled else { break }
-            try nativeTap(nextPage, in: app)
+            guard page < 2, let nextPage = forward, nextPage.isEnabled else { break }
+            try performNativeTap(nextPage)
         }
         diagnose("native-select-all-unavailable", app: app)
         try require(false, "Native edit menu must expose an enabled Select All before replacement")
