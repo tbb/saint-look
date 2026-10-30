@@ -836,8 +836,7 @@ extension WardrobeStore {
             let data = try Data(contentsOf: folder.appendingPathComponent(source.filename))
             var photo = ["id": source.id.uuidString.lowercased(), "role": source.role, "imageBase64": data.base64EncodedString()]
             if let cached = item.preparedPhotos.first(where: {
-                $0.photoID == source.id && $0.modelVersion == "fal-ai/nano-banana-pro/edit"
-                    && $0.templateVersion == "front-360x560-proposed-v1" && $0.geometryVersion == "fitting-square-1024-v1"
+                $0.matchesPreparationContract(photoID: source.id)
             }) {
                 guard cached.sourceDigest == photoDigest(data) else { throw ClientError.resultUnavailable("source_changed") }
                 if let prepared = try? Data(contentsOf: folder.appendingPathComponent(cached.filename)),
