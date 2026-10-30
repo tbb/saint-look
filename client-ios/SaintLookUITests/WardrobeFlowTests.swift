@@ -1291,6 +1291,14 @@ final class WardrobeFlowTests: XCTestCase {
             return !frame.isEmpty && previousFrame == frame
         }, object: nil)
         guard XCTWaiter.wait(for: [ready], timeout: 5) == .completed else {
+            let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            screen.name = "delete-menu-unavailable"
+            screen.lifetime = .keepAlways
+            add(screen)
+            let state = XCTAttachment(string: app.debugDescription)
+            state.name = "delete-menu-accessibility"
+            state.lifetime = .keepAlways
+            add(state)
             XCTFail("The native item menu must present a stable, tappable deletion command")
             throw InteractionError.buttonNotVisible("delete-item")
         }

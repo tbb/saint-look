@@ -563,6 +563,22 @@ final class VisualAcceptanceTests: XCTestCase {
     }
 
     @MainActor
+    func testReplaceSavedNameThroughNativeMenu() async throws {
+        let app = try launch("fitting-ready")
+        try selectTab("Луки", in: app)
+        let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).firstMatch
+        try tap(saved, in: app)
+        for name in ["Прогулка по осеннему городу после работы", "Черновик", "Вечерний лук"] {
+            try nativeTap(app.buttons["edit-outfit"], in: app)
+            try waitVisible(app.buttons["cancel-outfit"], in: app)
+            try enterName(name, in: app)
+            try nativeTap(app.buttons["save-outfit"], in: app)
+            try expectGone(app.textFields["outfit-name"], "Saved editor field must disappear")
+            try require(app.staticTexts[name].waitForExistence(timeout: 5), "Detail must show the exact replacement name")
+        }
+    }
+
+    @MainActor
     func testPublicPhotoJourney() async throws {
         let before = try await activityCounts()
         let app = try launch()

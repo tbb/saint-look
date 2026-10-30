@@ -21,7 +21,7 @@ on:
         description: Local Simulator suite
         type: choice
         default: all
-        options: [all, wardrobe, outfits, outfits-max-text, outfits-launch-pair, wardrobe-expired-retry, visual, camera, wardrobe-recovery, benchmark]
+        options: [all, wardrobe, outfits, outfits-max-text, outfits-launch-pair, wardrobe-expired-retry, visual, camera, wardrobe-recovery, native-menus, benchmark]
       visual_profiles:
         description: Visual evidence profiles (only used by the visual suite)
         type: choice
@@ -65,7 +65,7 @@ jobs:
           paths = subprocess.check_output(['git', 'diff', '--name-only', base, head], text=True).splitlines() if base and head else []
           common = not base or any(p != '.github/workflows/fitting-experiment.yml' and p.startswith(('shared/', 'docs/api/', '.github/workflows/')) for p in paths)
           selected_suite = os.environ['IOS_SUITE'] or 'all'
-          suites = ['wardrobe', 'outfits', 'visual'] if selected_suite == 'all' else [selected_suite]
+          suites = ['wardrobe', 'outfits', 'visual'] if selected_suite == 'all' else (['native-menu-delete', 'native-menu-text'] if selected_suite == 'native-menus' else [selected_suite])
           selected_profile = os.environ['VISUAL_PROFILES'] or 'all'
           profiles = ['iphone-light', 'iphone-dark', 'iphone-max-text', 'ipad-light'] if selected_profile == 'all' else [selected_profile]
           matrix = [{'suite': suite, 'profile': profile, 'label': f'{suite}-{profile}' if profile else suite}
@@ -196,6 +196,18 @@ jobs:
           wait_for_health http://127.0.0.1:8788/health
           if [[ "$TEST_SUITE" == "visual" ]]; then
             bash client-ios/scripts/test-visual-acceptance.sh
+            exit $?
+          fi
+          if [[ "$TEST_SUITE" == native-menu-* ]]; then
+            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || { echo 'Native menu diagnostics require manual dispatch.' >&2; exit 1; }
+            if [[ "$TEST_SUITE" == native-menu-delete ]]; then
+              export SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/WardrobeFlowTests/testCancelDeletionKeepsPhotoAndDoesNotSendDelete
+            else
+              export SAINT_LOOK_VISUAL_PROFILE=iphone-max-text
+              export SAINT_LOOK_UI_CONTENT_SIZE=accessibility-extra-extra-extra-large
+              export SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/VisualAcceptanceTests/testReplaceSavedNameThroughNativeMenu
+            fi
+            bash client-ios/scripts/test-simulator.sh
             exit $?
           fi
           if [[ "$TEST_SUITE" == "outfits-launch-pair" ]]; then
