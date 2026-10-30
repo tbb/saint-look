@@ -90,6 +90,14 @@ PYTHON
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+capture_visual_destination() {
+  local phase="$1"
+  shift
+  python3 scripts/observe-visual-stalls.py --capture-destination --udid "$simulator_id" \
+    --profile "$SAINT_LOOK_VISUAL_PROFILE" --output "$(pwd)/build/visual-stall-diagnostics" \
+    --xctestrun "$remote_manifest" --phase "$phase" "$@" >/dev/null 2>&1 || true
+}
+
 if [[ "${SAINT_LOOK_BENCHMARK:-0}" == 1 ]]; then
   if [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" == 1 || "${SAINT_LOOK_LIVE_TRIAL:-0}" == 1 || -n "${SAINT_LOOK_VISUAL_PROFILE:-}" ]]; then
     echo 'The isolated benchmark cannot use live, remote-smoke or visual profile configuration.' >&2
@@ -385,11 +393,23 @@ Path('build/benchmark/observations.json').write_text(json.dumps({'scope': 'obser
     'testExitCode': int(sys.argv[2]), 'observations': records}, indent=2) + '\n')
 PYTHON
   exit "$benchmark_status"
-elif [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" && "${SAINT_LOOK_OBSERVE_VISUAL_STALLS:-0}" == 1 ]]; then
-  # Observe the existing 60-second XCTest warning; do not retry or change its verdict.
-  python3 scripts/observe-visual-stalls.py --udid "$simulator_id" \
-    --profile "$SAINT_LOOK_VISUAL_PROFILE" --output "$(pwd)/build/visual-stall-diagnostics" \
-    -- xcodebuild "${test_options[@]}" -resultBundlePath "$result_path" test-without-building
+elif [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" ]]; then
+  # Capture selected-device state and whitelisted platform fields after build,
+  # immediately before the existing test launch. The helper is best-effort only.
+  capture_visual_destination after-build
+  visual_test_status=0
+  if [[ "${SAINT_LOOK_OBSERVE_VISUAL_STALLS:-0}" == 1 ]]; then
+    # Observe the existing 60-second XCTest warning; do not retry or change its verdict.
+    python3 scripts/observe-visual-stalls.py --udid "$simulator_id" \
+      --profile "$SAINT_LOOK_VISUAL_PROFILE" --output "$(pwd)/build/visual-stall-diagnostics" \
+      -- xcodebuild "${test_options[@]}" -resultBundlePath "$result_path" test-without-building || visual_test_status=$?
+  else
+    xcodebuild "${test_options[@]}" -resultBundlePath "$result_path" test-without-building || visual_test_status=$?
+  fi
+  if [[ "$visual_test_status" -ne 0 ]]; then
+    capture_visual_destination test-failure --test-exit-code "$visual_test_status"
+  fi
+  exit "$visual_test_status"
 else
   xcodebuild "${test_options[@]}" -resultBundlePath "$result_path" test-without-building
 fi

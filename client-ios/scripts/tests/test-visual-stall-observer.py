@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import plistlib
 from pathlib import Path
 import signal
 import selectors
@@ -192,6 +193,55 @@ class ObserverTests(unittest.TestCase):
                         if process.poll() is None:
                             process.kill()
                             process.communicate()
+
+    def test_destination_capture_keeps_only_whitelisted_state_and_platform_fields(self):
+        with tempfile.TemporaryDirectory() as folder:
+            xctestrun = Path(folder) / 'RemoteSmoke.xctestrun'
+            xctestrun.write_bytes(plistlib.dumps({'TestConfigurations': [{'TestTargets': [{
+                'BlueprintName': 'SaintLookUITests', 'SDKROOT': 'iphonesimulator26.5',
+                'SUPPORTED_PLATFORMS': ['iphoneos', 'iphonesimulator'], 'ARCHS': ['arm64'],
+                'TestHostPath': '/private/secret/Runner.app',
+                'EnvironmentVariables': {'SAINT_LOOK_UI_TEST_TOKEN': 'credential-sentinel',
+                                         'SDKROOT': 'environment-sentinel'},
+                'CommandLineArguments': ['argument-sentinel'],
+            }]}]}))
+            udid = '1812E91B-A366-406E-B714-BC3D488891B9'
+            device_json = json.dumps({'devices': {'com.apple.CoreSimulator.SimRuntime.iOS-26-4': [{
+                'udid': udid, 'state': 'Booted', 'isAvailable': True,
+                'availabilityError': '/private/path/credential-sentinel',
+            }]}})
+            responses = [
+                subprocess.CompletedProcess([], 0, device_json, ''),
+                subprocess.CompletedProcess([], 0, f'-- iOS Simulator --\n    iPad Pro (id:{udid})\n', ''),
+            ]
+            destination = Path(folder) / 'diagnostics'
+            with patch.object(observer.subprocess, 'run', side_effect=responses):
+                observer.capture_destination(udid, 'ipad-light', xctestrun, destination,
+                                             'test-failure', test_exit_code=65)
+            output = destination / 'ipad-light-destination-test-failure.json'
+            encoded = output.read_text()
+            record = json.loads(encoded)
+            self.assertEqual(record['simulator']['state'], 'Booted')
+            self.assertTrue(record['simulator']['isAvailable'])
+            self.assertEqual(record['simulator']['availabilityErrorCode'], 'unclassified')
+            self.assertEqual(record['xctestrun']['platformMetadata']['targetCount'], 1)
+            fields = record['xctestrun']['platformMetadata']['fields']
+            self.assertEqual(fields['SDKROOT'], ['iphonesimulator26.5'])
+            self.assertEqual(record['xcodeDestinationDiscovery']['status'], 'eligible')
+            self.assertEqual(record['testExitCode'], 65)
+            for secret in ('credential-sentinel', 'environment-sentinel', 'argument-sentinel', '/private/path', 'Runner.app'):
+                self.assertNotIn(secret, encoded)
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+
+    def test_destination_error_and_discovery_formatters_use_whitelist_only(self):
+        self.assertEqual(observer.error_classification('Unable to find a device matching secret-path'),
+                         'destination_no_match')
+        self.assertEqual(observer.error_classification('private token value'), 'unclassified')
+        self.assertEqual(observer.xcode_destination_state(UDID, 0, f'id:{UDID}', ''), {'status': 'eligible'})
+        self.assertEqual(observer.xcode_destination_state(UDID, 0,
+                         f'Ineligible destinations:\n id:{UDID}', ''), {'status': 'ineligible'})
+        self.assertEqual(observer.xcode_destination_state(UDID, 65, 'secret-output', 'secret-error'),
+                         {'status': 'command_failed', 'errorCode': 'unclassified'})
 
 
 if __name__ == '__main__':

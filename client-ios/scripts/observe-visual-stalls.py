@@ -8,6 +8,8 @@ import io
 import json
 import os
 from pathlib import Path
+import plistlib
+import re
 import signal
 import selectors
 import subprocess
@@ -18,10 +20,138 @@ import uuid
 
 WARNING = 'App event loop idle notification not received, will attempt to continue.'
 PROFILES = ('iphone-light', 'iphone-dark', 'iphone-max-text', 'ipad-light')
+PLATFORM_FIELDS = frozenset({
+    'SDKROOT', 'SDK_NAME', 'PLATFORM_NAME', 'SUPPORTED_PLATFORMS', 'ARCHS',
+    'IPHONEOS_DEPLOYMENT_TARGET', 'DTPlatformName', 'DTPlatformVersion',
+    'DTPlatformBuildVersion', 'MinimumOSVersion', 'TestDestinationPlatform',
+    'TestDestinationPlatformVariant', 'TestDestinationArchitecture',
+    'TestDestinationOSVersion', 'TestDestinationIdentifier',
+})
+ERROR_MARKERS = (
+    ('unable to find a device matching', 'destination_no_match'),
+    ('no available devices matched', 'destination_no_match'),
+    ('runtime profile not found', 'runtime_profile_missing'),
+    ('unable to lookup', 'lookup_failed'),
+    ('no devices are booted', 'no_booted_devices'),
+    ('device is unavailable', 'device_unavailable'),
+    ('device not found', 'device_not_found'),
+)
 
 
 def utc():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def error_classification(value):
+    """Map tool diagnostics to a tiny whitelist; never persist raw error text."""
+    lowered = str(value or '').casefold()
+    for marker, code in ERROR_MARKERS:
+        if marker in lowered:
+            return code
+    return 'unclassified' if lowered else None
+
+
+def selected_device_state(udid, payload):
+    matches = [(runtime, device) for runtime, devices in payload.get('devices', {}).items()
+               for device in devices if device.get('udid') == udid]
+    if len(matches) != 1:
+        return {'found': False, 'matchCount': len(matches)}
+    runtime, device = matches[0]
+    state = device.get('state')
+    runtime = runtime if isinstance(runtime, str) and re.fullmatch(r'[A-Za-z0-9._-]{1,120}', runtime) else None
+    return {'found': True, 'state': state if state in {'Booted', 'Booted (Shutdown)', 'Creating', 'Shutdown', 'Shutting Down'} else 'other',
+            'isAvailable': device.get('isAvailable') if isinstance(device.get('isAvailable'), bool) else None,
+            'runtimeIdentifier': runtime,
+            'availabilityErrorCode': error_classification(device.get('availabilityError'))}
+
+
+def selected_platform_metadata(manifest):
+    """Keep a strict scalar whitelist from the SaintLookUITests xctestrun target."""
+    if isinstance(manifest.get('TestConfigurations'), list):
+        targets = [target for config in manifest['TestConfigurations'] if isinstance(config, dict)
+                   for target in config.get('TestTargets', []) if isinstance(target, dict)]
+    else:
+        targets = [value for key, value in manifest.items()
+                   if not key.startswith('__') and isinstance(value, dict)]
+    targets = [target for target in targets if target.get('BlueprintName') == 'SaintLookUITests'
+               or 'SaintLookUITests' in Path(str(target.get('TestBundlePath', ''))).name]
+    collected = {}
+    for target in targets:
+        for key in PLATFORM_FIELDS:
+            child = target.get(key)
+            values = child if isinstance(child, list) else [child]
+            safe = [item for item in values if isinstance(item, (str, int, bool))
+                    and (not isinstance(item, str) or re.fullmatch(r'[A-Za-z0-9._,+ -]{1,128}', item))]
+            if safe:
+                collected.setdefault(key, []).extend(safe)
+    return {'targetCount': len(targets), 'fields': {key: list(dict.fromkeys(values))
+            for key, values in sorted(collected.items())}}
+
+
+def xcode_destination_state(udid, returncode, stdout, stderr):
+    if returncode != 0:
+        return {'status': 'command_failed', 'errorCode': error_classification(stderr + stdout)}
+    eligible, marker, ineligible = stdout.partition('Ineligible destinations')
+    if udid in eligible:
+        return {'status': 'eligible'}
+    if marker and udid in ineligible:
+        return {'status': 'ineligible'}
+    return {'status': 'not_listed'}
+
+
+def capture_destination(udid, profile, xctestrun, output, phase, test_exit_code=None):
+    """Bounded, read-only selected-destination evidence; failure never affects XCTest status."""
+    record = {'schemaVersion': 1, 'phase': phase, 'profile': profile, 'selectedUDID': udid, 'capturedUTC': utc()}
+    try:
+        result = subprocess.run(['/usr/bin/xcrun', 'simctl', 'list', 'devices', '--json'],
+                                capture_output=True, text=True, timeout=8, check=False)
+        if result.returncode == 0:
+            try:
+                record['simulator'] = selected_device_state(udid, json.loads(result.stdout))
+            except Exception:
+                record['simulator'] = {'status': 'invalid_response'}
+        else:
+            record['simulator'] = {'status': 'command_failed',
+                                   'errorCode': error_classification(result.stderr + result.stdout)}
+    except subprocess.TimeoutExpired:
+        record['simulator'] = {'status': 'timeout'}
+    except Exception:
+        record['simulator'] = {'status': 'capture_failed'}
+
+    xctestrun_path = Path(xctestrun)
+    record['xctestrun'] = {'file': xctestrun_path.name, 'status': 'unavailable', 'platformMetadata': {}}
+    try:
+        with xctestrun_path.open('rb') as source:
+            manifest = plistlib.load(source)
+        record['xctestrun'] = {'file': xctestrun_path.name, 'status': 'read',
+                               'platformMetadata': selected_platform_metadata(manifest)}
+    except Exception:
+        pass
+
+    if test_exit_code is not None:
+        record['testExitCode'] = test_exit_code
+        try:
+            result = subprocess.run(['/usr/bin/xcodebuild', '-project', 'SaintLook.xcodeproj',
+                                     '-scheme', 'SaintLook', '-showdestinations'],
+                                    capture_output=True, text=True, timeout=12, check=False)
+            record['xcodeDestinationDiscovery'] = xcode_destination_state(
+                udid, result.returncode, result.stdout, result.stderr)
+        except subprocess.TimeoutExpired:
+            record['xcodeDestinationDiscovery'] = {'status': 'timeout'}
+        except Exception:
+            record['xcodeDestinationDiscovery'] = {'status': 'capture_failed'}
+
+    try:
+        output = Path(output)
+        output.mkdir(parents=True, exist_ok=True)
+        path = output / f'{profile}-destination-{phase}.json'
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, 'w') as destination:
+            json.dump(record, destination, ensure_ascii=False, indent=2)
+            destination.write('\n')
+    except Exception:
+        # Diagnostics are best-effort and must never change the test command's verdict.
+        pass
 
 
 def app_pid(udid):
@@ -198,12 +328,21 @@ def observe(command, udid, folder):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--capture-destination', action='store_true')
     parser.add_argument('--udid', required=True)
     parser.add_argument('--profile', required=True, choices=PROFILES)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--xctestrun', type=Path)
+    parser.add_argument('--phase', choices=('after-build', 'test-failure'))
+    parser.add_argument('--test-exit-code', type=int)
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     uuid.UUID(args.udid)
+    if args.capture_destination:
+        if not args.xctestrun or not args.phase or args.command:
+            parser.error('Destination capture requires xctestrun and phase, with no test command.')
+        capture_destination(args.udid, args.profile, args.xctestrun, args.output, args.phase, args.test_exit_code)
+        return 0
     if os.environ.get('SAINT_LOOK_REMOTE_SMOKE') == '1' or os.environ.get('SAINT_LOOK_LIVE_TRIAL') == '1':
         parser.error('Sampling is limited to local visual fixtures')
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
