@@ -678,8 +678,9 @@ struct OutfitEditorView: View {
                     .accessibilityLabel("Следующая вещь: \(outfitSlotTitle(slot, in: draft))")
                     .disabled(!canCycle(slot))
                 }
-                if candidates(for: slot).count < 2 {
-                    Text(candidates(for: slot).isEmpty ? "Нет доступных вещей для этой зоны." : "В этой зоне один вариант. Его можно выбрать нажатием.")
+                let candidateCount = store.outfitCandidateCount(for: slot.zone, excluding: occupiedIDs(excluding: slot.id), upTo: 2)
+                if candidateCount < 2 {
+                    Text(candidateCount == 0 ? "Нет доступных вещей для этой зоны." : "В этой зоне один вариант. Его можно выбрать нажатием.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
@@ -897,13 +898,16 @@ struct OutfitEditorView: View {
     }
 
     private func canCycle(_ slot: OutfitSlot) -> Bool {
-        let available = candidates(for: slot)
-        return available.contains { $0.id != slot.itemID }
+        let excluded = occupiedIDs(excluding: slot.id).union(slot.itemID.map { [$0] } ?? [])
+        return store.outfitCandidateCount(for: slot.zone, excluding: excluded, upTo: 1) > 0
     }
 
     private func candidates(for slot: OutfitSlot) -> [WardrobeItem] {
-        let occupied = Set(draft.slots.filter { $0.id != slot.id }.compactMap(\.itemID))
-        return store.outfitCandidates(for: slot.zone, excluding: occupied)
+        store.outfitCandidates(for: slot.zone, excluding: occupiedIDs(excluding: slot.id))
+    }
+
+    private func occupiedIDs(excluding slotID: UUID) -> Set<UUID> {
+        Set(draft.slots.filter { $0.id != slotID }.compactMap(\.itemID))
     }
 
     private func cycle(_ slotID: UUID, forward: Bool) {

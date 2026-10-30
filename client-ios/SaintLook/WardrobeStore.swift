@@ -240,10 +240,13 @@ final class WardrobeStore: ObservableObject {
     }
 
     func outfitCandidates(for zone: OutfitZone, excluding selectedIDs: Set<UUID>) -> [WardrobeItem] {
-        items.filter {
-            $0.hasPreparedVersion && !selectedIDs.contains($0.id)
-                && zone.accepts($0, taxonomy: .shared) && preparedFilesAvailable(for: $0)
-        }.sorted { $0.id.uuidString < $1.id.uuidString }
+        OutfitCandidates.sorted(items, zone: zone, excluding: selectedIDs, taxonomy: .shared,
+                                available: preparedFilesAvailable)
+    }
+
+    func outfitCandidateCount(for zone: OutfitZone, excluding selectedIDs: Set<UUID>, upTo limit: Int) -> Int {
+        OutfitCandidates.count(items, upTo: limit, zone: zone, excluding: selectedIDs, taxonomy: .shared,
+                               available: preparedFilesAvailable)
     }
 
     func canSaveOutfit(_ draft: Outfit) -> Bool {

@@ -41,6 +41,7 @@ struct OutfitCoreChecks {
         } catch OutfitError.unavailableItem { }
         shirt = try preparedFixture(shirt)
         jeans = try preparedFixture(jeans)
+        try boundedCandidateChecks(shirt: shirt, jeans: jeans, taxonomy: taxonomy)
         try recommendationChecks(shirt: shirt, jeans: jeans, taxonomy: taxonomy)
         try modelSpaceRecoveryChecks(shirt: shirt, jeans: jeans, file: file, taxonomy: taxonomy)
         try compositionChecks(shirt: shirt, jeans: jeans, taxonomy: taxonomy)
@@ -1052,6 +1053,55 @@ struct OutfitCoreChecks {
             precondition(!cached.matchesPreparationContract(photoID: item.photoVersionID), "Incompatible preparation geometry cannot be reused")
         }
         print("PASS: Gemini admission, legacy publication restart and same-source prepared cache compatibility")
+    }
+
+    static func boundedCandidateChecks(shirt: WardrobeItem, jeans: WardrobeItem, taxonomy: WardrobeTaxonomy) throws {
+        var prepared: [WardrobeItem] = []
+        for index in 1...225 {
+            let id = UUID(uuidString: String(format: "71000000-0000-4000-8000-%012d", index))!
+            var item = WardrobeItem(id: id, operationID: UUID(), photoVersionID: UUID())
+            item.status = .ready; item.type = shirt.type; item.resultFilename = "result.png"
+            prepared.append(try preparedFixture(item))
+        }
+        var incomplete = WardrobeItem(id: UUID(), operationID: UUID(), photoVersionID: UUID())
+        incomplete.type = shirt.type
+        var unavailable = WardrobeItem(id: UUID(), operationID: UUID(), photoVersionID: UUID())
+        unavailable.type = shirt.type; unavailable.status = .ready; unavailable.resultFilename = "missing.png"
+        unavailable = try preparedFixture(unavailable)
+        // Excluded/unfinished/wrong-zone items precede valid candidates. The
+        // expensive local artifact callback must not run for those cheap rejects.
+        let excluded: Set<UUID> = [shirt.id]
+        let inventory = [incomplete, jeans, shirt] + prepared.reversed() + [unavailable]
+        var validations = 0
+        let full = OutfitCandidates.sorted(inventory, zone: .body, excluding: excluded, taxonomy: taxonomy) { item in
+            validations += 1
+            precondition(item.id != incomplete.id && item.id != jeans.id && item.id != shirt.id)
+            return item.id != unavailable.id
+        }
+        precondition(full.map(\.id) == prepared.map(\.id), "The full picker/cycle pool keeps its exact sorted order")
+        precondition(validations == 226, "Full admission still validates every potentially eligible local packet")
+        for limit in [0, 1, 2] {
+            validations = 0
+            let count = OutfitCandidates.count(inventory, upTo: limit, zone: .body, excluding: excluded, taxonomy: taxonomy) { item in
+                validations += 1
+                return item.id != unavailable.id
+            }
+            precondition(count == min(full.count, limit))
+            precondition(validations == limit, "UI questions stop after the first one/two valid packets")
+        }
+        // A failed artifact does not count, and deleting a candidate refreshes the
+        // answer on the next call rather than retaining cached eligibility.
+        for remaining in [[], [prepared[0]], [prepared[0], prepared[1]]] {
+            let current = [unavailable] + remaining
+            let reference = OutfitCandidates.sorted(current, zone: .body, excluding: [], taxonomy: taxonomy) { $0.id != unavailable.id }
+            let count = OutfitCandidates.count(current, upTo: 2, zone: .body, excluding: [], taxonomy: taxonomy) { $0.id != unavailable.id }
+            precondition(count == min(reference.count, 2))
+        }
+        let onlyCurrent = [prepared[0]]
+        precondition(OutfitCandidates.count(onlyCurrent, upTo: 1, zone: .body, excluding: [prepared[0].id], taxonomy: taxonomy) { _ in
+            fatalError("The current item cannot become its own cycling alternative")
+        } == 0)
+        print("PASS: 225 candidates keep full sorted admission; UI counts validate only one/two packets and refresh after deletion")
     }
 
     static func preparedFixture(_ input: WardrobeItem, modelVersion: String = IllustrationContract.currentModelVersion) throws -> WardrobeItem {
