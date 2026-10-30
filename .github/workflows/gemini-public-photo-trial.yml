@@ -41,13 +41,45 @@ jobs:
           curl_config.write_text('header = "x-goog-api-key: ' + key.replace('\\', '\\\\').replace('"', '\\"') + '"\n')
           curl_config.chmod(0o600)
           PY
-          trap 'rm -f "$RUNNER_TEMP/gemini-curl.conf" "$RUNNER_TEMP/gemini-request.json" "$RUNNER_TEMP/gemini-response.json"' EXIT
-          curl --silent --show-error --fail-with-body --max-redirs 0 --retry 0 --max-time 180 \
+          trap 'rm -f "$RUNNER_TEMP/gemini-curl.conf" "$RUNNER_TEMP/gemini-request.json" "$RUNNER_TEMP/gemini-response.json" "$RUNNER_TEMP/gemini-models.json"' EXIT
+          models_status=$(curl --silent --show-error --max-redirs 0 --retry 0 --max-time 20 \
+            --config "$RUNNER_TEMP/gemini-curl.conf" \
+            --output "$RUNNER_TEMP/gemini-models.json" --write-out '%{http_code}' \
+            'https://generativelanguage.googleapis.com/v1beta/models')
+          python3 - "$models_status" <<'PY'
+          import json, pathlib, sys
+          status = int(sys.argv[1])
+          if status != 200:
+              try:
+                  error = json.loads(pathlib.Path(__import__('os').environ['RUNNER_TEMP'], 'gemini-models.json').read_text()).get('error', {})
+                  print(json.dumps({'stage': 'api_key_check', 'httpStatus': status, 'status': error.get('status'), 'message': error.get('message', 'Google API rejected the request') }))
+              except Exception:
+                  print(json.dumps({'stage': 'api_key_check', 'httpStatus': status, 'message': 'Google API rejected the request; response was not JSON.'}))
+              sys.exit(1)
+          models = json.loads(pathlib.Path(__import__('os').environ['RUNNER_TEMP'], 'gemini-models.json').read_text()).get('models', [])
+          name = 'models/gemini-3-pro-image'
+          if not any(model.get('name') == name for model in models):
+              print(json.dumps({'stage': 'api_key_check', 'httpStatus': status, 'keyValid': True, 'modelAvailable': False}))
+              sys.exit(1)
+          print(json.dumps({'stage': 'api_key_check', 'httpStatus': status, 'keyValid': True, 'modelAvailable': True}))
+          PY
+          generation_status=$(curl --silent --show-error --max-redirs 0 --retry 0 --max-time 180 \
             -X POST 'https://generativelanguage.googleapis.com/v1beta/interactions' \
             --config "$RUNNER_TEMP/gemini-curl.conf" \
             -H 'content-type: application/json' \
             --data-binary "@$RUNNER_TEMP/gemini-request.json" \
-            --output "$RUNNER_TEMP/gemini-response.json"
+            --output "$RUNNER_TEMP/gemini-response.json" --write-out '%{http_code}')
+          python3 - "$generation_status" <<'PY'
+          import json, os, pathlib, sys
+          status = int(sys.argv[1])
+          if status < 200 or status >= 300:
+              try:
+                  error = json.loads(pathlib.Path(os.environ['RUNNER_TEMP'], 'gemini-response.json').read_text()).get('error', {})
+                  print(json.dumps({'stage': 'image_generation', 'httpStatus': status, 'status': error.get('status'), 'message': error.get('message', 'Google API rejected the request')}))
+              except Exception:
+                  print(json.dumps({'stage': 'image_generation', 'httpStatus': status, 'message': 'Google API rejected the request; response was not JSON.'}))
+              sys.exit(1)
+          PY
           python3 - <<'PY'
           import base64, json, os, pathlib, sys
           data = json.loads(pathlib.Path(os.environ['RUNNER_TEMP'], 'gemini-response.json').read_text())
