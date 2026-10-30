@@ -487,6 +487,31 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testAdditionalPhotoDuringGenerationWaitsAndPreparesNewSourceSet() async throws {
+        _ = try await providerControl(["illustrationMode": "held"])
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        let accepted = try await waitForTransportCount("illustrationOperations", equalTo: 1, timeout: 30)
+        XCTAssertTrue(accepted)
+        try openFirstItem(in: app)
+        try tapVisibleButton("illustration-sources", in: app)
+        app.buttons["add-demo-detail-photo"].tap()
+        app.buttons["save-illustration-sources"].tap()
+        let replacement = try await waitForTransportCount("illustrationUploads", equalTo: 2, timeout: 15)
+        XCTAssertTrue(replacement, "The new source set encounters the still-running server operation")
+        _ = try await providerControl(["illustrationMode": "success"])
+        XCTAssertTrue(app.staticTexts["illustration-saved"].waitForExistence(timeout: 30),
+                      "The pending replacement must resume after the previous generation finishes")
+        let state = try await transportState()
+        XCTAssertEqual(state["illustrationOperations"] as? Int, 2)
+        XCTAssertEqual(state["illustrationAcknowledgements"] as? Int, 1)
+        let provider = try await providerControl()
+        XCTAssertEqual(provider["illustrationGenerationCalls"] as? Int, 2,
+                       "Only the two distinct source sets may generate, never the transient retries")
+    }
+
+    @MainActor
     func testIllustrationUnavailableResumesAutomaticallyWhenProviderRecovers() async throws {
         let app = launch(reset: true, baseURL: testURL)
         app.buttons["add-demo-photo"].tap()

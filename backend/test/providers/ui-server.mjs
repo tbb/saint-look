@@ -16,6 +16,7 @@ const modelCalls = { push() { encoderPreparationCalls++; } }, rankCalls = { push
 let nextAttributes = null;
 let nextCutout = null;
 let illustrationMode = null;
+const heldGenerations = new Set();
 let illustrationPreparationCalls = 0, illustrationAttributesCalls = 0, illustrationGenerationCalls = 0, illustrationFinalizationCalls = 0;
 const illustrationCutout = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: '#00000000' } })
   .composite([{ input: await sharp(blue).resize(260, 300, { fit: 'contain', background: '#00000000' }).png().toBuffer(), left: 382, top: 250 }]).png().toBuffer();
@@ -49,7 +50,7 @@ const server = createServer(async (request, response) => {
           || ('reset' in input && typeof input.reset !== 'boolean')
           || ('nextAttributes' in input && ![null, 'photo_on_person', 'photo_multiple_items'].includes(input.nextAttributes))
           || ('nextCutout' in input && ![null, 'provider_quota_exceeded', 'red'].includes(input.nextCutout))
-          || ('illustrationMode' in input && ![null, 'success', 'failed', 'unknown'].includes(input.illustrationMode))) {
+          || ('illustrationMode' in input && ![null, 'success', 'held', 'failed', 'unknown'].includes(input.illustrationMode))) {
           return reply(response, 400, { error: 'invalid_control' });
         }
         if (input.reset) { attributesCalls = 0; cutoutCalls = 0; nextAttributes = null; nextCutout = null; illustrationMode = null;
@@ -57,6 +58,7 @@ const server = createServer(async (request, response) => {
         if ('nextAttributes' in input) nextAttributes = input.nextAttributes;
         if ('nextCutout' in input) nextCutout = input.nextCutout;
         if ('illustrationMode' in input) illustrationMode = input.illustrationMode;
+        if (illustrationMode !== 'held') { for (const release of heldGenerations) release(); heldGenerations.clear(); }
       } else if (request.method !== 'GET') return reply(response, 405, { error: 'method_not_allowed' });
       return reply(response, 200, { attributesCalls, cutoutCalls, illustrationPreparationCalls, illustrationAttributesCalls, illustrationGenerationCalls, illustrationFinalizationCalls, encoderPreparationCalls, modelRankCalls });
     }
@@ -66,6 +68,7 @@ const server = createServer(async (request, response) => {
     if (await modelFixture(request, response, body, {}, modelCalls, rankCalls)) return;
     if (request.url === '/v1beta/interactions') {
       illustrationGenerationCalls++;
+      if (illustrationMode === 'held') await new Promise(resolve => heldGenerations.add(resolve));
       if (illustrationMode === 'unknown') { response.destroy(); return; }
       if (illustrationMode === 'failed') return reply(response, 422, { error: 'fixture_generation_failed' });
       if (illustrationMode !== 'success') return reply(response, 503, { error: 'fixture_unavailable' });

@@ -822,6 +822,7 @@ extension WardrobeStore {
                 if let error = error as? ClientError {
                     switch error {
                     case .server(let status): retryable = status >= 500 || status == 408 || status == 429
+                    case .resultUnavailable("processing_in_progress"): retryable = true
                     default: retryable = false
                     }
                 } else { retryable = error is URLError }
