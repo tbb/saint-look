@@ -57,6 +57,33 @@ extension OutfitZone {
     }
 }
 
+/// Full picker/cycle pools and small UI availability questions share admission.
+/// Availability remains a fresh caller-owned file/artifact check, never a cache.
+enum OutfitCandidates {
+    private static func admits(_ item: WardrobeItem, zone: OutfitZone, excluding selectedIDs: Set<UUID>,
+                               taxonomy: WardrobeTaxonomy, available: (WardrobeItem) -> Bool) -> Bool {
+        item.hasPreparedVersion && !selectedIDs.contains(item.id)
+            && zone.accepts(item, taxonomy: taxonomy) && available(item)
+    }
+
+    static func sorted(_ items: [WardrobeItem], zone: OutfitZone, excluding selectedIDs: Set<UUID>,
+                       taxonomy: WardrobeTaxonomy, available: (WardrobeItem) -> Bool) -> [WardrobeItem] {
+        items.filter { admits($0, zone: zone, excluding: selectedIDs, taxonomy: taxonomy, available: available) }
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+    }
+
+    static func count(_ items: [WardrobeItem], upTo limit: Int, zone: OutfitZone, excluding selectedIDs: Set<UUID>,
+                      taxonomy: WardrobeTaxonomy, available: (WardrobeItem) -> Bool) -> Int {
+        guard limit > 0 else { return 0 }
+        var count = 0
+        for item in items where admits(item, zone: zone, excluding: selectedIDs, taxonomy: taxonomy, available: available) {
+            count += 1
+            if count == limit { return count }
+        }
+        return count
+    }
+}
+
 extension Outfit {
     var selectedIDs: Set<UUID> { Set(slots.compactMap(\.itemID)) }
 

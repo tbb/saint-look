@@ -21,7 +21,7 @@ on:
         description: Local Simulator suite
         type: choice
         default: all
-        options: [all, wardrobe, outfits, outfits-max-text, visual, camera, wardrobe-recovery]
+        options: [all, wardrobe, outfits, outfits-max-text, visual, camera, wardrobe-recovery, benchmark]
       visual_profiles:
         description: Visual evidence profiles (only used by the visual suite)
         type: choice
@@ -78,7 +78,7 @@ jobs:
           PY
 
   backend:
-    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.backend == 'true'
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.backend == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.ios_suite == 'benchmark')
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -123,9 +123,15 @@ jobs:
       - name: Check bounded visual diagnostic observer
         if: matrix.suite == 'visual'
         run: PYTHONDONTWRITEBYTECODE=1 python3 client-ios/scripts/tests/test-visual-stall-observer.py
-      - name: Real Simulator and local backend (controlled providers)
+      - uses: actions/setup-python@v5
+        if: matrix.suite == 'benchmark'
+        with:
+          python-version: '3.12'
+      - name: ${{ matrix.suite == 'benchmark' && 'Simulator with isolated real-model benchmark' || 'Real Simulator and local backend (controlled providers)' }}
         env:
           TEST_SUITE: ${{ matrix.suite }}
+          # The optional benchmark creates its nonce only on this runner.
+          SAINT_LOOK_BENCHMARK: ${{ matrix.suite == 'benchmark' && '1' || '0' }}
           SAINT_LOOK_VISUAL_PROFILES: ${{ matrix.profile || 'all' }}
           SAINT_LOOK_UI_TEST_ONLY: ${{ matrix.suite == 'outfits' && 'SaintLookUITests/OutfitFlowTests' || 'SaintLookUITests/WardrobeFlowTests' }}
           NODE_ENV: test
@@ -154,6 +160,12 @@ jobs:
           SAINT_LOOK_UI_TEST_CONTROL_URL: http://127.0.0.1:8788/__control
           SAINT_LOOK_UI_TEST_CONTROL_TOKEN: saint-look-ui-control-test-token-00000001
         run: |
+          if [[ "$TEST_SUITE" == benchmark ]]; then
+            set -euo pipefail
+            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || { echo 'Benchmark must be explicitly dispatched.' >&2; exit 1; }
+            bash backend/test/ios-benchmark-run.sh
+            exit $?
+          fi
           wait_for_health() {
             local url="$1"
             for attempt in {1..50}; do
@@ -249,12 +261,22 @@ jobs:
             output="client-ios/build/screenshots/$(basename "$result" .xcresult)"
             xcrun xcresulttool export attachments --path "$result" --output-path "$output"
           done
+      - name: Sanitize benchmark screenshots after any export outcome
+        if: always() && matrix.suite == 'benchmark'
+        run: |
+          # Export can leave partial metadata before failing. Never publish that metadata.
+          python3 - <<'PY'
+          from pathlib import Path
+          for path in Path('client-ios/build/screenshots').rglob('*'):
+              if path.is_file() and path.suffix != '.png':
+                  path.unlink()
+          PY
       - name: Upload Simulator screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: simulator-screenshots-${{ matrix.label }}
-          path: client-ios/build/screenshots
+          path: ${{ matrix.suite == 'benchmark' && 'client-ios/build/screenshots/**/*.png' || 'client-ios/build/screenshots' }}
           if-no-files-found: warn
           retention-days: 7
       - name: Upload visual stall diagnostics
@@ -266,16 +288,24 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
       - name: Upload local XCTest results and screenshots
-        if: always()
+        if: always() && matrix.suite != 'benchmark'
         uses: actions/upload-artifact@v4
         with:
           name: simulator-results-${{ matrix.label }}
           path: client-ios/build/*.xcresult
           if-no-files-found: warn
           retention-days: 7
+      - name: Upload sanitized benchmark observations
+        if: always() && matrix.suite == 'benchmark'
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-benchmark-observations
+          path: client-ios/build/benchmark/*.json
+          if-no-files-found: warn
+          retention-days: 7
 
   deploy-policy:
-    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && !(github.event_name == 'workflow_dispatch' && inputs.ios_suite == 'benchmark')
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -289,7 +319,7 @@ jobs:
       - run: node --test scripts/deploy/*.test.mjs
 
   container:
-    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && !(github.event_name == 'workflow_dispatch' && inputs.ios_suite == 'benchmark')
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 10

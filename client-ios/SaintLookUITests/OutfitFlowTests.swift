@@ -46,6 +46,20 @@ final class OutfitFlowTests: XCTestCase {
 
     override func setUp() async throws {
         continueAfterFailure = false
+        let benchmarkFlag = ProcessInfo.processInfo.environment["SAINT_LOOK_BENCHMARK"]
+        guard benchmarkFlag == nil || ["0", "1"].contains(benchmarkFlag!) else {
+            throw BenchmarkFailure.invalidConfiguration
+        }
+        if name.contains("testCachedRealBenchmarkFirstObservedResult") {
+            guard benchmarkFlag == "1" else {
+                throw XCTSkip("Cached real-model measurement requires the explicit isolated benchmark configuration")
+            }
+            _ = try benchmarkEnvironment()
+            return
+        }
+        if benchmarkFlag == "1" {
+            throw XCTSkip("The isolated benchmark selects only its one existing-harness measurement")
+        }
         try await control("online", reset: true)
         var request = URLRequest(url: URL(string: "http://127.0.0.1:8789/__control")!)
         request.httpMethod = "POST"
@@ -54,6 +68,165 @@ final class OutfitFlowTests: XCTestCase {
         request.httpBody = try JSONSerialization.data(withJSONObject: ["reset": true, "illustrationMode": "success"])
         let (_, response) = try await URLSession.shared.data(for: request)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+    }
+
+    private enum BenchmarkFailure: Error { case invalidConfiguration, invalidResponse }
+
+    private final class BenchmarkRedirectBlocker: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil)
+        }
+    }
+
+    private func benchmarkEnvironment() throws -> [String: String] {
+        let source = ProcessInfo.processInfo.environment
+        let keys = ["SAINT_LOOK_BENCHMARK", "SAINT_LOOK_BENCHMARK_ORIGIN", "SAINT_LOOK_BENCHMARK_TOKEN",
+                    "SAINT_LOOK_BENCHMARK_MANIFEST_SHA256", "SAINT_LOOK_BENCHMARK_REVISION"]
+        guard keys.allSatisfy({ source[$0]?.isEmpty == false }), source["SAINT_LOOK_BENCHMARK"] == "1",
+              source["SAINT_LOOK_BENCHMARK_ORIGIN"]!.range(of: "^http://127\\.0\\.0\\.1:[0-9]{1,5}/?$", options: .regularExpression) != nil,
+              let origin = URL(string: source["SAINT_LOOK_BENCHMARK_ORIGIN"]!), origin.scheme == "http",
+              origin.host == "127.0.0.1", let port = origin.port, (1...65535).contains(port),
+              origin.user == nil, origin.password == nil, origin.query == nil, origin.fragment == nil,
+              ["", "/"].contains(origin.path),
+              source["SAINT_LOOK_BENCHMARK_TOKEN"]!.range(of: "^bench-[a-f0-9]{64}$", options: .regularExpression) != nil,
+              source["SAINT_LOOK_BENCHMARK_MANIFEST_SHA256"]!.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+              source["SAINT_LOOK_BENCHMARK_REVISION"]!.range(of: "^[a-f0-9]{40}$", options: .regularExpression) != nil else {
+            throw BenchmarkFailure.invalidConfiguration
+        }
+        return Dictionary(uniqueKeysWithValues: keys.map { ($0, source[$0]!) })
+    }
+
+    private func benchmarkJSON(_ path: String, environment: [String: String]) async throws -> [String: Any] {
+        guard let origin = URL(string: environment["SAINT_LOOK_BENCHMARK_ORIGIN"]!),
+              let url = URL(string: path, relativeTo: origin), url.host == origin.host,
+              url.scheme == origin.scheme, url.port == origin.port else {
+            throw BenchmarkFailure.invalidConfiguration
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        request.setValue("Bearer " + environment["SAINT_LOOK_BENCHMARK_TOKEN"]!, forHTTPHeaderField: "Authorization")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.urlCredentialStorage = nil
+        let session = URLSession(configuration: configuration, delegate: BenchmarkRedirectBlocker(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let (data, response) = try await session.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200, data.count <= 1024 * 1024,
+              let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw BenchmarkFailure.invalidResponse
+        }
+        return result
+    }
+
+    @MainActor
+    func testCachedRealBenchmarkFirstObservedResult() async throws {
+        let environment = try benchmarkEnvironment()
+        let expectedSpace = "5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b"
+        let health = try await benchmarkJSON("/health", environment: environment)
+        let configuration = try await benchmarkJSON("/v1/recommendations/config", environment: environment)
+        guard health["revision"] as? String == environment["SAINT_LOOK_BENCHMARK_REVISION"],
+              health["dataVersion"] as? Int == 4, health["encoderAvailable"] as? Bool == true,
+              let encoder = configuration["encoder"] as? [String: Any], encoder["mode"] as? String == "real",
+              encoder["available"] as? Bool == true, encoder["activeSpaceID"] as? String == expectedSpace else {
+            throw BenchmarkFailure.invalidResponse
+        }
+        let app = XCUIApplication()
+        app.launchEnvironment = environment.merging([
+            "SAINT_LOOK_BASE_URL": environment["SAINT_LOOK_BENCHMARK_ORIGIN"]!,
+            "SAINT_LOOK_OWNER_TOKEN": environment["SAINT_LOOK_BENCHMARK_TOKEN"]!,
+            "SAINT_LOOK_UI_TESTING": "1", "SAINT_LOOK_RESET_DATA": "1"
+        ]) { _, supplied in supplied }
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        let status = app.staticTexts["wardrobe-summary"]
+        let expectedSummaries = [4, 300].map { "Всего: \($0). Готово: \($0). Ожидают: 0." }
+        let complete = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label IN %@", expectedSummaries), object: status)
+        let catalogReady = await XCTWaiter.fulfillment(of: [complete], timeout: 60)
+        XCTAssertEqual(catalogReady, .completed,
+                       "The isolated catalog must contain every complete cached publication before measuring")
+        let count = status.label == expectedSummaries[1] ? 300 : 4
+        app.tabBars.buttons["Луки"].tap()
+        let card = button(prefix: "outfit-card-", in: app)
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
+        XCTAssertTrue(app.buttons["edit-outfit"].waitForExistence(timeout: 5))
+        app.buttons["edit-outfit"].tap()
+        let body = button(prefix: "outfit-slot-body-", in: app)
+        let bottom = button(prefix: "outfit-slot-bottom-", in: app)
+        guard reveal(body, in: app), reveal(bottom, in: app),
+              let bottomValue = bottom.value as? String, !bottomValue.isEmpty else { throw BenchmarkFailure.invalidResponse }
+        let bodyID = String(body.identifier.dropFirst("outfit-slot-body-".count))
+        let bottomID = String(bottom.identifier.dropFirst("outfit-slot-bottom-".count))
+        let bottomPin = app.buttons["pin-slot-\(bottomID)"]
+        tap(bottomPin, in: app)
+        XCTAssertTrue(bottomPin.isSelected)
+        performSlotAction("clear-slot", slotID: bodyID, in: app)
+        XCTAssertTrue(body.label.contains("Выбрать вещь"))
+        let emptyLabel = body.label
+        for phase in ["first-after-app-launch-warm-backend", "warm-repeat-after-undo"] {
+            guard reveal(body, in: app, towardTop: true) else { throw BenchmarkFailure.invalidResponse }
+            let before = try await benchmarkJSON("/benchmark/metrics", environment: environment)
+            guard let beforeRequests = before["requests"] as? [[String: Any]] else { throw BenchmarkFailure.invalidResponse }
+            capture("benchmark-\(phase)-before")
+            let emptyRowPixels = body.screenshot().pngRepresentation
+            tap(app.buttons["outfit-slot-menu-\(bodyID)"], in: app)
+            let command = try addressedNativeDialogAction("recommend-slot-\(bodyID)", in: app)
+            guard command.exists, command.isHittable else { throw BenchmarkFailure.invalidResponse }
+            // Menu discovery and readiness checks are outside the clock. The end
+            // includes AX observation and a returned screenshot, hence an upper bound.
+            let started = ProcessInfo.processInfo.systemUptime
+            command.tap()
+            let changed = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label != %@ AND NOT (label CONTAINS 'Выбрать вещь')", emptyLabel), object: body)
+            let observed = await XCTWaiter.fulfillment(of: [changed], timeout: 30)
+            let screenshot = body.screenshot()
+            let upperBoundMilliseconds = (ProcessInfo.processInfo.systemUptime - started) * 1000
+            let attachment = XCTAttachment(screenshot: screenshot)
+            attachment.name = observed == .completed ? "benchmark-\(phase)-first-observed-result" : "benchmark-\(phase)-no-observed-result"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            XCTAssertEqual(observed, .completed, "One real recommendation must become observable without retry")
+            XCTAssertNotEqual(screenshot.pngRepresentation, emptyRowPixels,
+                              "The observed target screenshot must visibly differ from the empty row")
+            capture("benchmark-\(phase)-result-context")
+            XCTAssertEqual(bottom.value as? String, bottomValue)
+            XCTAssertTrue(bottomPin.isSelected)
+            let after = try await benchmarkJSON("/benchmark/metrics", environment: environment)
+            guard let requests = after["requests"] as? [[String: Any]], requests.count == beforeRequests.count + 1,
+                  let last = requests.last, last["items"] as? Int == count,
+                  last["endpoint"] as? String == "/v1/recommendations/single", last["status"] as? Int == 200,
+                  last["outcome"] as? String == "proposed", let bytes = last["payloadBytes"] as? Int, bytes > 0,
+                  let elapsed = last["elapsedMilliseconds"] as? Double, elapsed >= 0 else { throw BenchmarkFailure.invalidResponse }
+            let record: [String: Any] = ["evidence": "real-ios-cached-recommendation-observed-upper-bound", "phase": phase,
+                "datasetItems": count, "uniqueSourcePhotographs": 4, "syntheticClones": true,
+                "baselineRevision": "73700bab547ed71113dbf27db18136e054a1cca2",
+                "benchmarkRevision": environment["SAINT_LOOK_BENCHMARK_REVISION"]!, "spaceID": expectedSpace,
+                "requestId": last["requestId"] as? String ?? "", "snapshotId": last["snapshotId"] as? String ?? "",
+                "HTTPPayloadBytes": bytes, "serverHTTPMilliseconds": elapsed,
+                "tapToFirstObservedScreenshotUpperBoundMilliseconds": upperBoundMilliseconds,
+                "device": ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] ?? "iOS Simulator",
+                "operatingSystem": ProcessInfo.processInfo.operatingSystemVersionString,
+                "testHostLogicalProcessors": ProcessInfo.processInfo.processorCount,
+                "testHostPhysicalMemoryBytes": ProcessInfo.processInfo.physicalMemory,
+                "connectionClass": "GitHub Mac Simulator to same-runner loopback real backend",
+                "limitations": ["Includes native tap, catalog/serialization, loopback HTTP, real ranking, apply, AX observation and screenshot overhead.",
+                    "Upper bound, not an exact first rendered frame or a two-second guarantee; two observations are not p95.",
+                    "The isolated catalog uses synthetic image fixtures copied from four public photographs; this is not live image-provider acceptance.",
+                    "The real encoder runs once per public photograph on the Mac runner; requests use 300 cached clones of those four vectors.",
+                    "Same-runner loopback excludes Internet and Fly latency. Repeated vectors are not 300 distinct things or taste acceptance."]]
+            let data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+            print("BENCHMARK_REAL_IOS " + String(decoding: data, as: UTF8.self))
+            if phase == "first-after-app-launch-warm-backend" {
+                tap(app.buttons["fitting-undo"], in: app)
+                let restored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", emptyLabel), object: body)
+                let undoRestored = await XCTWaiter.fulfillment(of: [restored], timeout: 5)
+                XCTAssertEqual(undoRestored, .completed)
+                XCTAssertEqual(bottom.value as? String, bottomValue)
+            }
+        }
     }
 
     private func control(_ mode: String, reset: Bool = false) async throws {

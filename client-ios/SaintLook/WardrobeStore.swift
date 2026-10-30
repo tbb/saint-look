@@ -54,6 +54,15 @@ final class WardrobeStore: ObservableObject {
             pendingAcknowledgements = saved.pendingAcknowledgements ?? []
             let needsAcknowledgementMigration = saved.pendingAcknowledgements == nil
             storageAvailable = true
+            #if DEBUG
+            if env["SAINT_LOOK_BENCHMARK"] == "1" {
+                // Admit fixture publications through the same complete local
+                // artifact checks used by the picker and wardrobe summary.
+                guard usesVisualFixtures, items.allSatisfy({ preparedFilesAvailable(for: $0) }) else {
+                    throw ClientError.invalidResponse
+                }
+            }
+            #endif
             for id in pendingDeletionIDs {
                 // Cleanup does not depend on valid credentials or a working connection.
                 try? removeLocalFiles(for: id)
@@ -231,10 +240,13 @@ final class WardrobeStore: ObservableObject {
     }
 
     func outfitCandidates(for zone: OutfitZone, excluding selectedIDs: Set<UUID>) -> [WardrobeItem] {
-        items.filter {
-            $0.hasPreparedVersion && !selectedIDs.contains($0.id)
-                && zone.accepts($0, taxonomy: .shared) && preparedFilesAvailable(for: $0)
-        }.sorted { $0.id.uuidString < $1.id.uuidString }
+        OutfitCandidates.sorted(items, zone: zone, excluding: selectedIDs, taxonomy: .shared,
+                                available: preparedFilesAvailable)
+    }
+
+    func outfitCandidateCount(for zone: OutfitZone, excluding selectedIDs: Set<UUID>, upTo limit: Int) -> Int {
+        OutfitCandidates.count(items, upTo: limit, zone: zone, excluding: selectedIDs, taxonomy: .shared,
+                               available: preparedFilesAvailable)
     }
 
     func canSaveOutfit(_ draft: Outfit) -> Bool {

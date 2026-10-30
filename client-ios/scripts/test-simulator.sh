@@ -22,6 +22,7 @@ xcodebuild -version
 work_directory="$(mktemp -d)"
 recording_pid=''
 remote_manifest=''
+benchmark_fixture_directory=''
 previous_content_size=''
 previous_appearance=''
 simulator_family="${SAINT_LOOK_SIMULATOR_FAMILY:-iPhone}"
@@ -53,12 +54,112 @@ cleanup() {
     echo "Restored Simulator Dynamic Type: $previous_content_size"
   fi
   if [[ -n "$remote_manifest" ]]; then rm -f "$remote_manifest"; fi
+  if [[ "${SAINT_LOOK_BENCHMARK:-0}" == 1 && -n "${simulator_id:-}" ]]; then
+    mkdir -p build/benchmark
+    xcrun simctl terminate "$simulator_id" com.saintlook.dev >/dev/null 2>&1 || true
+    benchmark_container="$(xcrun simctl get_app_container "$simulator_id" com.saintlook.dev data)" || test_status=1
+    if [[ -n "${benchmark_container:-}" ]]; then
+      python3 - "$benchmark_container/Library/Application Support/wardrobe-benchmark-fixtures" "build/benchmark/storage.json" <<'PYTHON' || test_status=1
+import hashlib, json, sys
+from pathlib import Path
+root, output = map(Path, sys.argv[1:])
+if not root.is_dir():
+    raise SystemExit('The isolated benchmark catalog was not created.')
+files = [p for p in root.rglob('*') if p.is_file() and not p.is_symlink()]
+sources = [p for p in files if p.name.endswith('-source.png')]
+source_hashes = set()
+for source in sources:
+    with source.open('rb') as stream:
+        source_hashes.add(hashlib.file_digest(stream, 'sha256').hexdigest())
+representations = [p for p in files if p.name.startswith('representation-') and p.suffix == '.json']
+data = {'scope': 'logical file bytes in the actual imported Simulator fixture root; not ZIP size or physical APFS allocation',
+        'logicalBytes': sum(p.stat().st_size for p in files), 'fileCount': len(files),
+        'catalogBytes': (root / 'catalog.json').stat().st_size,
+        'representationBytes': sum(p.stat().st_size for p in representations),
+        'representationFiles': len(representations), 'sourceFiles': len(sources),
+        'uniqueSourceSHA256Count': len(source_hashes)}
+output.write_text(json.dumps(data, indent=2) + '\n')
+print(json.dumps(data))
+PYTHON
+    fi
+  fi
+  if [[ -n "$benchmark_fixture_directory" ]]; then rm -rf -- "$benchmark_fixture_directory"; fi
   rm -rf "$work_directory"
   exit "$test_status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+if [[ "${SAINT_LOOK_BENCHMARK:-0}" == 1 ]]; then
+  if [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" == 1 || "${SAINT_LOOK_LIVE_TRIAL:-0}" == 1 || -n "${SAINT_LOOK_VISUAL_PROFILE:-}" ]]; then
+    echo 'The isolated benchmark cannot use live, remote-smoke or visual profile configuration.' >&2
+    exit 1
+  fi
+  benchmark_candidate_directory="$(pwd)/SaintLook/VisualFixtures/benchmark"
+  [[ ! -e "$benchmark_candidate_directory" ]] || { echo 'Refusing to overwrite existing benchmark fixtures.' >&2; exit 1; }
+  mkdir "$benchmark_candidate_directory"
+  benchmark_fixture_directory="$benchmark_candidate_directory"
+  python3 - "$benchmark_fixture_directory" <<'PYTHON'
+import hashlib, io, json, os, re, stat, sys, urllib.request, zipfile
+from pathlib import Path
+from urllib.parse import urlparse
+origin = os.environ.get('SAINT_LOOK_BENCHMARK_ORIGIN', '')
+token = os.environ.get('SAINT_LOOK_BENCHMARK_TOKEN', '')
+expected = os.environ.get('SAINT_LOOK_BENCHMARK_MANIFEST_SHA256', '')
+revision = os.environ.get('SAINT_LOOK_BENCHMARK_REVISION', '')
+url = urlparse(origin)
+if not (url.scheme == 'http' and url.hostname == '127.0.0.1' and not url.username and not url.password
+        and url.port is not None and 1 <= url.port <= 65535 and url.path in ('', '/') and not url.query and not url.fragment
+        and re.fullmatch(r'bench-[a-f0-9]{64}', token) and re.fullmatch(r'[a-f0-9]{64}', expected)
+        and re.fullmatch(r'[a-f0-9]{40}', revision)):
+    raise SystemExit('Invalid isolated benchmark configuration.')
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args):
+        raise RuntimeError('Benchmark redirects are forbidden.')
+request = urllib.request.Request(origin.rstrip('/') + '/benchmark/bundle', headers={'Authorization': 'Bearer ' + token})
+with urllib.request.build_opener(NoRedirect()).open(request, timeout=60) as response:
+    if response.status != 200:
+        raise SystemExit('Benchmark bundle was not served.')
+    raw = response.read(64 * 1024 * 1024 + 1)
+if len(raw) > 64 * 1024 * 1024:
+    raise SystemExit('Benchmark bundle is too large.')
+with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+    names = archive.namelist()
+    if len(names) != len(set(names)) or any('/' in name or '\\' in name for name in names):
+        raise SystemExit('Invalid benchmark ZIP paths.')
+    manifest_bytes = archive.read('manifest.json')
+    if hashlib.sha256(manifest_bytes).hexdigest() != expected:
+        raise SystemExit('Benchmark manifest digest mismatch.')
+    manifest = json.loads(manifest_bytes)
+    if not (manifest['schemaVersion'] == 1 and manifest['count'] == 300 and manifest['uniqueSources'] == 4
+            and manifest['sourceRevision'] == '73700bab547ed71113dbf27db18136e054a1cca2'
+            and manifest['benchmarkRevision'] == revision
+            and manifest['spaceID'] == '5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b'
+            and manifest['tokenSHA256'] == hashlib.sha256(token.encode()).hexdigest()
+            and manifest['imageProviders'] == 'synthetic-public-photo-copies'
+            and manifest['sourceProvenance'] == 'public-manifest-encoder-on-runner'):
+        raise SystemExit('Benchmark provenance mismatch.')
+    assets = manifest['assets']
+    if len({item['name'] for item in assets}) != len(assets) or set(names) != {'manifest.json', *(item['name'] for item in assets)}:
+        raise SystemExit('Unexpected benchmark assets.')
+    if sum(item.file_size for item in archive.infolist()) > 128 * 1024 * 1024:
+        raise SystemExit('Expanded benchmark bundle is too large.')
+    output = Path(sys.argv[1])
+    for item in assets:
+        name = item['name']
+        if not re.fullmatch(r'[a-z0-9-]+\.(png|jpg|json)', name) or not 0 < item['bytes'] <= 6 * 1024 * 1024:
+            raise SystemExit('Invalid benchmark asset descriptor.')
+        info = archive.getinfo(name)
+        if stat.S_ISLNK(info.external_attr >> 16):
+            raise SystemExit('Benchmark symlinks are forbidden.')
+        data = archive.read(name)
+        if len(data) != item['bytes'] or hashlib.sha256(data).hexdigest() != item['sha256']:
+            raise SystemExit('Benchmark asset digest mismatch.')
+        (output / name).write_bytes(data)
+    (output / 'manifest.json').write_bytes(manifest_bytes)
+print('Verified isolated benchmark: 300 packets, four unique public sources; no production credentials.')
+PYTHON
+fi
 simulator_id="${SAINT_LOOK_SIMULATOR_UDID:-}"
 if [[ -z "$simulator_id" ]]; then
   # CoreSimulator may still be discovering preinstalled devices on a fresh runner.
@@ -198,7 +299,7 @@ if [[ "${SAINT_LOOK_RECORD_VIDEO:-0}" == '1' ]]; then
 fi
 
 test_options=("${build_options[@]}")
-if [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" == '1' || "${SAINT_LOOK_LIVE_TRIAL:-0}" == '1' || -n "${SAINT_LOOK_VISUAL_PROFILE:-}" ]]; then
+if [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" == '1' || "${SAINT_LOOK_LIVE_TRIAL:-0}" == '1' || -n "${SAINT_LOOK_VISUAL_PROFILE:-}" || "${SAINT_LOOK_BENCHMARK:-0}" == '1' ]]; then
   # Shell variables are not a portable way to configure a Simulator test host.
   # Give XCTest an explicit manifest; never print or upload this secret-bearing file.
   remote_manifest="$(pwd)/build/DerivedData/Build/Products/RemoteSmoke.xctestrun"
@@ -221,6 +322,9 @@ if os.environ.get('SAINT_LOOK_REMOTE_DATA_VERSION'):
     keys += ('SAINT_LOOK_REMOTE_DATA_VERSION',)
 if os.environ.get('SAINT_LOOK_LIVE_TRIAL') == '1':
     keys = tuple(key for key in keys if key != 'SAINT_LOOK_REMOTE_SMOKE') + ('SAINT_LOOK_LIVE_TRIAL', 'SAINT_LOOK_TRIAL_PHOTO_COUNT')
+if os.environ.get('SAINT_LOOK_BENCHMARK') == '1':
+    keys = ('SAINT_LOOK_BENCHMARK', 'SAINT_LOOK_BENCHMARK_ORIGIN', 'SAINT_LOOK_BENCHMARK_TOKEN',
+            'SAINT_LOOK_BENCHMARK_MANIFEST_SHA256', 'SAINT_LOOK_BENCHMARK_REVISION')
 if os.environ.get('SAINT_LOOK_VISUAL_PROFILE'):
     if os.environ.get('SAINT_LOOK_REMOTE_SMOKE') == '1' or os.environ.get('SAINT_LOOK_LIVE_TRIAL') == '1':
         raise SystemExit('Visual fixtures cannot be combined with remote or live trials.')
@@ -249,7 +353,39 @@ if [[ -n "${SAINT_LOOK_UI_TEST_ONLY:-}" ]]; then
     test_options+=("-only-testing:$test_selector")
   done <<< "$SAINT_LOOK_UI_TEST_ONLY"
 fi
-if [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" && "${SAINT_LOOK_OBSERVE_VISUAL_STALLS:-0}" == 1 ]]; then
+if [[ "${SAINT_LOOK_BENCHMARK:-0}" == 1 ]]; then
+  benchmark_log="$work_directory/benchmark-xcodebuild.log"
+  : > "$benchmark_log"
+  chmod 600 "$benchmark_log"
+  benchmark_status=0
+  xcodebuild "${test_options[@]}" -resultBundlePath "$result_path" test-without-building \
+    | tee "$benchmark_log" || benchmark_status=$?
+  mkdir -p build/benchmark
+  python3 - "$benchmark_log" "$benchmark_status" <<'PYTHON' || benchmark_status=1
+import json, os, sys
+from pathlib import Path
+allowed = {'evidence', 'phase', 'datasetItems', 'uniqueSourcePhotographs', 'syntheticClones',
+           'baselineRevision', 'benchmarkRevision', 'spaceID', 'requestId', 'snapshotId',
+           'HTTPPayloadBytes', 'serverHTTPMilliseconds', 'tapToFirstObservedScreenshotUpperBoundMilliseconds',
+           'device', 'operatingSystem', 'testHostLogicalProcessors', 'testHostPhysicalMemoryBytes',
+           'connectionClass', 'limitations'}
+records = []
+token = os.environ['SAINT_LOOK_BENCHMARK_TOKEN']
+for line in Path(sys.argv[1]).read_text().splitlines():
+    if 'BENCHMARK_REAL_IOS ' not in line:
+        continue
+    encoded = line.split('BENCHMARK_REAL_IOS ', 1)[1].strip()
+    value = json.loads(encoded)
+    if set(value) != allowed or token in encoded or value['datasetItems'] != 300 or value['uniqueSourcePhotographs'] != 4:
+        raise SystemExit('Unexpected benchmark observation fields.')
+    records.append(value)
+if int(sys.argv[2]) == 0 and len(records) != 2:
+    raise SystemExit('Successful benchmark must preserve both observations.')
+Path('build/benchmark/observations.json').write_text(json.dumps({'scope': 'observed screenshot upper bounds, not exact first-frame times',
+    'testExitCode': int(sys.argv[2]), 'observations': records}, indent=2) + '\n')
+PYTHON
+  exit "$benchmark_status"
+elif [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" && "${SAINT_LOOK_OBSERVE_VISUAL_STALLS:-0}" == 1 ]]; then
   # Observe the existing 60-second XCTest warning; do not retry or change its verdict.
   python3 scripts/observe-visual-stalls.py --udid "$simulator_id" \
     --profile "$SAINT_LOOK_VISUAL_PROFILE" --output "$(pwd)/build/visual-stall-diagnostics" \
