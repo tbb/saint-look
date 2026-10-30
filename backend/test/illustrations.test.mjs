@@ -2,6 +2,7 @@ import test from 'node:test';
 import { commitIllustration } from './preparation-support.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { once } from 'node:events';
@@ -369,4 +370,37 @@ test('editing angles before first publication supersedes generated output; commi
   const denied = await requestIllustration(restarted, photo.itemId, changed);
   assert.equal(denied.status, 409);
   assert.equal((await denied.json()).error, 'photos_locked');
+});
+
+
+test('old fal prepared cutouts are reused after Gemini migration with exact source binding', async t => {
+  const fixture = await illustrationFixture(t), env = await environment(t);
+  let server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  const first = await waitForIllustration(server, photo.itemId, input.operationId);
+  const preparedBase64 = Buffer.from(await (await server.request(first.preparedSources[0].preparedPath)).arrayBuffer()).toString('base64');
+  assert.equal((await commitIllustration(server, photo, input)).response.status, 204);
+  await server.stop();
+  const db = new DatabaseSync(join(env.directory, 'wardrobe.sqlite'));
+  const versions = { modelVersion: 'fal-ai/nano-banana-pro/edit', templateVersion: 'front-360x560-proposed-v1', geometryVersion: 'fitting-square-1024-v1' };
+  db.prepare('UPDATE illustration_sources SET prepared_versions=? WHERE item_id=? AND photo_id=?')
+    .run(JSON.stringify(versions), photo.itemId, photo.photoVersionId);
+  db.close();
+  server = await env.launch(fixture.env);
+  const refresh = { ...input, operationId: randomUUID(), revision: 2, manualType: 'Худи', photos: [{ ...input.photos[0], preparedBase64 }] };
+  assert.equal((await requestIllustration(server, photo.itemId, refresh)).status, 202);
+  await waitForIllustration(server, photo.itemId, refresh.operationId);
+  assert.equal(fixture.calls.preparation.length, 1, 'Generation provider switch must not repeat an unchanged paid cutout');
+  const changedBytes = { ...refresh, operationId: randomUUID(), revision: 3,
+    photos: [{ ...input.photos[0], preparedBase64: input.photos[0].imageBase64 }] };
+  assert.equal((await requestIllustration(server, photo.itemId, changedBytes)).status, 409);
+  await server.stop();
+  const changed = new DatabaseSync(join(env.directory, 'wardrobe.sqlite'));
+  changed.prepare('UPDATE illustration_sources SET prepared_versions=? WHERE item_id=? AND photo_id=?')
+    .run(JSON.stringify({ ...versions, modelVersion: 'unknown-renderer' }), photo.itemId, photo.photoVersionId);
+  changed.close();
+  server = await env.launch(fixture.env);
+  assert.equal((await requestIllustration(server, photo.itemId, { ...refresh, operationId: randomUUID(), revision: 3 })).status, 409);
+  assert.equal(fixture.calls.preparation.length, 1);
 });
