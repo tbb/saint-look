@@ -7,6 +7,9 @@ import re
 MODEL_REVISION = '7eaf8d92beb709db20498614b1bc04e43f08136a'
 LABSE_REVISION = '836121a0533e5664b21c7aacc5d22951f2b8b25b'
 DESCRIPTOR = {
+    # Explicit compatibility epoch for the temporary #72 migration exercise;
+    # weights, numerical representations and recommendation algorithms are unchanged.
+    'representationContractVersion': 2,
     'model': 'fkuyumcu/OutfitTransformer-labse',
     'modelRevision': MODEL_REVISION,
     'headSHA256': 'bb5aad51daa663bc45c489d9711b69661ed75009df267c79be380df4b8614823',

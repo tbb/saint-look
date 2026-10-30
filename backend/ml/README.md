@@ -52,9 +52,16 @@ Worker не открывает HTTP-порт. Доверенный backend за�
 ImageNet normalization. Вырезка и иллюстрация не нужны encoder. Текст:
 `type.replace('_', ' ') + '. Colors: ' + sorted(unique(colors)).join(', ') + '.'`.
 Если colors пуст, текст — только тип с точкой, например `shirt.`. Это textFormat
-v2-empty-colors-omitted, spaceID `5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b`.
-Непустые входы сохранили прежние байты; результаты исходного benchmark относятся
-к прежнему v1 space и не переписываются задним числом.
+v2-empty-colors-omitted. Предшествующее epoch пространство A имело spaceID
+`5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b`.
+В текущем локальном contract descriptor добавлен
+`representationContractVersion: 2`: это пространство B,
+`df268e5dab58fc14040ec8d5966455e546943406bf04380d24ee8ffcf4ca7e17`.
+Epoch не меняет checkpoint, веса или алгоритм; он намеренно задаёт несовместимую
+идентичность представлений. B подготовлен для упражнения миграции #72, но ещё
+не выложен и не прошёл ручную приёмку. Непустые входы сохранили прежние байты.
+Исторические benchmark-замеры сохраняют фактический A space; отдельного
+benchmark-прогона B пока не было.
 Нового JEV-вызова нет. LaBSE используется через `BertModel.pooler_output`, как в
 опубликованном коде; не через SentenceTransformer Dense/Normalize.
 

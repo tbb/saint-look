@@ -21,7 +21,7 @@ on:
         description: Local Simulator suite
         type: choice
         default: all
-        options: [all, wardrobe, outfits, outfits-max-text, visual, camera, wardrobe-recovery, benchmark]
+        options: [all, wardrobe, outfits, outfits-max-text, outfits-launch-pair, wardrobe-expired-retry, visual, camera, wardrobe-recovery, benchmark]
       visual_profiles:
         description: Visual evidence profiles (only used by the visual suite)
         type: choice
@@ -106,8 +106,8 @@ jobs:
     runs-on: macos-26
     # Wardrobe now has 33 public scenarios plus cold Simulator startup and manifest smoke.
     # Each visual profile gets its own cold boot/build/evidence budget; no serial four-profile timeout.
-    # Keep wardrobe/outfits/recovery and each visual profile bounded at 60 min; camera retains 40 min.
-    timeout-minutes: ${{ matrix.suite == 'camera' && 40 || 60 }}
+    # Manual diagnostic cases get 20 min; regular wardrobe/outfits/recovery/visual retain 60 and camera 40.
+    timeout-minutes: ${{ (matrix.suite == 'outfits-launch-pair' || matrix.suite == 'wardrobe-expired-retry') && 20 || matrix.suite == 'camera' && 40 || 60 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -121,7 +121,7 @@ jobs:
       - run: bash client-ios/scripts/test-outfit-core.sh
       - run: bash client-ios/scripts/test-visual-fixtures.sh
       - name: Check bounded visual diagnostic observer
-        if: matrix.suite == 'visual'
+        if: matrix.suite == 'visual' || matrix.suite == 'outfits-launch-pair' || matrix.suite == 'wardrobe-expired-retry'
         run: PYTHONDONTWRITEBYTECODE=1 python3 client-ios/scripts/tests/test-visual-stall-observer.py
       - uses: actions/setup-python@v5
         if: matrix.suite == 'benchmark'
@@ -196,6 +196,19 @@ jobs:
           wait_for_health http://127.0.0.1:8788/health
           if [[ "$TEST_SUITE" == "visual" ]]; then
             bash client-ios/scripts/test-visual-acceptance.sh
+            exit $?
+          fi
+          if [[ "$TEST_SUITE" == "outfits-launch-pair" ]]; then
+            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || { echo 'Launch-pair diagnostics require manual dispatch.' >&2; exit 1; }
+            SAINT_LOOK_LAUNCH_PAIR=1 \
+            SAINT_LOOK_UI_TEST_ONLY=$'SaintLookUITests/OutfitFlowTests/testCancelDraftDoesNotCreateOutfit\nSaintLookUITests/OutfitFlowTests/testCreateUnnamedOutfitSurvivesBackgroundResultOfflineRestartAndItemDeletion' \
+              bash client-ios/scripts/test-simulator.sh
+            exit $?
+          fi
+          if [[ "$TEST_SUITE" == "wardrobe-expired-retry" ]]; then
+            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || { echo 'Expired-retry diagnostics require manual dispatch.' >&2; exit 1; }
+            SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/WardrobeFlowTests/testExpiredUndeliveredResultKeepsOriginalAndRequiresExplicitRetryAfterRelaunch \
+              bash client-ios/scripts/test-simulator.sh
             exit $?
           fi
           if [[ "$TEST_SUITE" == "outfits" || "$TEST_SUITE" == "outfits-max-text" ]]; then
@@ -280,11 +293,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
       - name: Upload visual stall diagnostics
-        if: always() && matrix.suite == 'visual'
+        if: always() && (matrix.suite == 'visual' || matrix.suite == 'outfits-launch-pair')
         uses: actions/upload-artifact@v4
         with:
           name: simulator-stall-diagnostics-${{ matrix.label }}
-          path: client-ios/build/visual-stall-diagnostics
+          path: ${{ matrix.suite == 'outfits-launch-pair' && 'client-ios/build/launch-pair-diagnostics/**/*.json' || 'client-ios/build/visual-stall-diagnostics' }}
           if-no-files-found: warn
           retention-days: 7
       - name: Upload local XCTest results and screenshots

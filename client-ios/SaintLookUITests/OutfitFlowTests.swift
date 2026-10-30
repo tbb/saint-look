@@ -123,7 +123,7 @@ final class OutfitFlowTests: XCTestCase {
     @MainActor
     func testCachedRealBenchmarkFirstObservedResult() async throws {
         let environment = try benchmarkEnvironment()
-        let expectedSpace = "5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b"
+        let expectedSpace = "df268e5dab58fc14040ec8d5966455e546943406bf04380d24ee8ffcf4ca7e17"
         let health = try await benchmarkJSON("/health", environment: environment)
         let configuration = try await benchmarkJSON("/v1/recommendations/config", environment: environment)
         guard health["revision"] as? String == environment["SAINT_LOOK_BENCHMARK_REVISION"],
@@ -240,16 +240,29 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func launch(reset: Bool) -> XCUIApplication {
+    private func launch(reset: Bool, trace: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["SAINT_LOOK_BASE_URL"] = baseURL
         app.launchEnvironment["SAINT_LOOK_OWNER_TOKEN"] = token
         app.launchEnvironment["SAINT_LOOK_UI_TESTING"] = "1"
         app.launchEnvironment["SAINT_LOOK_RESET_DATA"] = reset ? "1" : "0"
+        launchLifecycle(app, test: trace, phase: "before-launch")
         app.launch()
+        launchLifecycle(app, test: trace, phase: "after-launch")
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10),
                       "Launch must reach the foreground before UI interaction; current state: \(app.state.rawValue)")
         return app
+    }
+
+    @MainActor
+    private func launchLifecycle(_ app: XCUIApplication, test: String?, phase: String) {
+        guard let test else { return }
+        let record: [String: Any] = ["test": test, "phase": phase,
+            "systemUptime": ProcessInfo.processInfo.systemUptime,
+            "appState": app.state.rawValue, "failureCount": testRun?.failureCount ?? 0]
+        if let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]) {
+            print("LAUNCH_LIFECYCLE " + String(decoding: data, as: UTF8.self))
+        }
     }
 
     @MainActor
@@ -777,7 +790,7 @@ final class OutfitFlowTests: XCTestCase {
 
     @MainActor
     func testCreateUnnamedOutfitSurvivesBackgroundResultOfflineRestartAndItemDeletion() async throws {
-        let app = launch(reset: true)
+        let app = launch(reset: true, trace: "create")
         app.buttons["add-demo-photo"].tap()
         await summary(app, ready: 1, pending: 0)
         app.buttons["add-demo-photo"].tap()
@@ -825,8 +838,10 @@ final class OutfitFlowTests: XCTestCase {
         try await control("offline")
         // Background first: exercise lifecycle without XCTest's foreground termination assertion.
         XCUIDevice.shared.press(.home)
+        launchLifecycle(app, test: "create", phase: "before-terminate")
         app.terminate()
-        let offline = launch(reset: false)
+        launchLifecycle(app, test: "create", phase: "after-terminate")
+        let offline = launch(reset: false, trace: "create")
         offline.tabBars.buttons["Луки"].tap()
         XCTAssertTrue(offline.buttons[savedCardID].waitForExistence(timeout: 5))
         tap(offline.buttons[savedCardID], in: offline)
@@ -865,7 +880,9 @@ final class OutfitFlowTests: XCTestCase {
         offline.buttons["cancel-outfit-picker"].tap()
         XCTAssertTrue(offline.buttons["edit-outfit"].waitForExistence(timeout: 5))
         XCUIDevice.shared.press(.home)
+        launchLifecycle(offline, test: "create", phase: "before-terminate")
         offline.terminate()
+        launchLifecycle(offline, test: "create", phase: "after-terminate")
     }
 
     @MainActor
@@ -1257,7 +1274,7 @@ final class OutfitFlowTests: XCTestCase {
 
     @MainActor
     func testCancelDraftDoesNotCreateOutfit() {
-        let app = launch(reset: true)
+        let app = launch(reset: true, trace: "cancel")
         app.tabBars.buttons["Луки"].tap()
         app.buttons["create-first-outfit"].tap()
         enterName("Не сохранять", in: app)
@@ -1267,6 +1284,8 @@ final class OutfitFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["create-first-outfit"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).count, 0)
         XCUIDevice.shared.press(.home)
+        launchLifecycle(app, test: "cancel", phase: "before-terminate")
         app.terminate()
+        launchLifecycle(app, test: "cancel", phase: "after-terminate")
     }
 }

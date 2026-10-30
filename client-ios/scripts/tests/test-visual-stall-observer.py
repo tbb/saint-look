@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Exercise the observer's subprocess boundary without Xcode or production services."""
 import importlib.util
+import io
 import json
 import os
+import plistlib
 from pathlib import Path
 import signal
 import selectors
 import subprocess
 import sys
 import tempfile
+import textwrap
 import threading
 import time
 import unittest
@@ -192,6 +195,175 @@ class ObserverTests(unittest.TestCase):
                         if process.poll() is None:
                             process.kill()
                             process.communicate()
+
+    def test_destination_capture_keeps_only_whitelisted_state_and_platform_fields(self):
+        with tempfile.TemporaryDirectory() as folder:
+            xctestrun = Path(folder) / 'RemoteSmoke.xctestrun'
+            xctestrun.write_bytes(plistlib.dumps({'TestConfigurations': [{'TestTargets': [{
+                'BlueprintName': 'SaintLookUITests', 'SDKROOT': 'iphonesimulator26.5',
+                'SUPPORTED_PLATFORMS': ['iphoneos', 'iphonesimulator'], 'ARCHS': ['arm64'],
+                'TestHostPath': '/private/secret/Runner.app',
+                'EnvironmentVariables': {'SAINT_LOOK_UI_TEST_TOKEN': 'credential-sentinel',
+                                         'SDKROOT': 'environment-sentinel'},
+                'CommandLineArguments': ['argument-sentinel'],
+            }]}]}))
+            udid = '1812E91B-A366-406E-B714-BC3D488891B9'
+            device_json = json.dumps({'devices': {'com.apple.CoreSimulator.SimRuntime.iOS-26-4': [{
+                'udid': udid, 'state': 'Booted', 'isAvailable': True,
+                'availabilityError': '/private/path/credential-sentinel',
+            }]}})
+            responses = [
+                subprocess.CompletedProcess([], 0, device_json, ''),
+                subprocess.CompletedProcess([], 0, f'-- iOS Simulator --\n    iPad Pro (id:{udid})\n', ''),
+            ]
+            destination = Path(folder) / 'diagnostics'
+            with patch.object(observer.subprocess, 'run', side_effect=responses):
+                observer.capture_destination(udid, 'ipad-light', xctestrun, destination,
+                                             'test-failure', test_exit_code=65)
+            output = destination / 'ipad-light-destination-test-failure.json'
+            encoded = output.read_text()
+            record = json.loads(encoded)
+            self.assertEqual(record['simulator']['state'], 'Booted')
+            self.assertTrue(record['simulator']['isAvailable'])
+            self.assertEqual(record['simulator']['availabilityErrorCode'], 'unclassified')
+            self.assertEqual(record['xctestrun']['platformMetadata']['targetCount'], 1)
+            fields = record['xctestrun']['platformMetadata']['fields']
+            self.assertEqual(fields['SDKROOT'], ['iphonesimulator26.5'])
+            self.assertEqual(record['xcodeDestinationDiscovery']['status'], 'eligible')
+            self.assertEqual(record['testExitCode'], 65)
+            for secret in ('credential-sentinel', 'environment-sentinel', 'argument-sentinel', '/private/path', 'Runner.app'):
+                self.assertNotIn(secret, encoded)
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+
+    def test_destination_error_and_discovery_formatters_use_whitelist_only(self):
+        self.assertEqual(observer.error_classification('Unable to find a device matching secret-path'),
+                         'destination_no_match')
+        self.assertEqual(observer.error_classification('private token value'), 'unclassified')
+        self.assertEqual(observer.xcode_destination_state(UDID, 0, f'id:{UDID}', ''), {'status': 'eligible'})
+        self.assertEqual(observer.xcode_destination_state(UDID, 0,
+                         f'Ineligible destinations:\n id:{UDID}', ''), {'status': 'ineligible'})
+        self.assertEqual(observer.xcode_destination_state(UDID, 65, 'secret-output', 'secret-error'),
+                         {'status': 'command_failed', 'errorCode': 'unclassified'})
+
+    def test_lifecycle_markers_reject_unknown_fields_labels_and_invalid_scalars(self):
+        marker = dict(test='create', phase='before-launch', systemUptime=123.5, appState=1, failureCount=0)
+        self.assertEqual(observer.lifecycle_marker('prefix LAUNCH_LIFECYCLE ' + json.dumps(marker)), marker)
+        for change in ({'environment': 'credential-sentinel'}, {'test': 'private-test-name'},
+                       {'phase': 'arbitrary-path'}, {'systemUptime': float('nan')},
+                       {'systemUptime': True}, {'appState': '4'}, {'failureCount': -1}):
+            self.assertIsNone(observer.lifecycle_marker('LAUNCH_LIFECYCLE ' + json.dumps({**marker, **change})))
+        self.assertIsNone(observer.lifecycle_marker('LAUNCH_LIFECYCLE not-json'))
+
+    def test_lifecycle_capture_keeps_only_selected_verified_pid_and_state(self):
+        marker = dict(test='cancel', phase='after-terminate', systemUptime=123.5, appState=1, failureCount=0)
+        devices = {'devices': {'com.apple.CoreSimulator.SimRuntime.iOS-26-4': [
+            {'udid': UDID, 'state': 'Booted', 'isAvailable': True, 'dataPath': '/private/sentinel'},
+            {'udid': 'another-device', 'name': 'credential-sentinel', 'state': 'Shutdown'}]}}
+        response = subprocess.CompletedProcess([], 0, json.dumps(devices), 'private-stderr')
+        with tempfile.TemporaryDirectory() as folder, patch.object(observer, 'verified_app_pids', return_value=[123, 124]) as pid, \
+                patch.object(observer.subprocess, 'run', return_value=response) as run:
+            observer.capture_lifecycle(Path(folder), UDID, 'cancel-after-terminate', marker, threading.Event())
+            pid.assert_called_once_with(UDID)
+            self.assertLessEqual(run.call_args.kwargs['timeout'], 2)
+            output = Path(folder) / 'lifecycle-cancel-after-terminate.json'
+            encoded = output.read_text(); record = json.loads(encoded)
+            self.assertEqual(record['verifiedAppPIDs'], [123, 124])
+            self.assertEqual(record['verifiedAppPIDCount'], 2)
+            self.assertEqual(record['marker'], marker)
+            self.assertTrue(record['simulator']['isAvailable'])
+            self.assertGreaterEqual(record['captureFinishedMonotonic'], record['captureStartedMonotonic'])
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            for sentinel in ('another-device', 'credential-sentinel', '/private/sentinel', 'private-stderr'):
+                self.assertNotIn(sentinel, encoded)
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(observer, 'verified_app_pids', side_effect=RuntimeError('credential-sentinel')), \
+                patch.object(observer.subprocess, 'run', side_effect=subprocess.TimeoutExpired('private-argv', 2)):
+            observer.capture_lifecycle(Path(folder), UDID, 'first-launch-error', marker, threading.Event())
+            encoded = (Path(folder) / 'lifecycle-first-launch-error.json').read_text()
+            self.assertEqual(json.loads(encoded)['simulator']['status'], 'timeout')
+            self.assertNotIn('credential-sentinel', encoded)
+            self.assertNotIn('private-argv', encoded)
+
+    def test_pair_probes_are_async_bounded_and_preserve_failure_without_raw_log(self):
+        markers = [dict(test=test, phase=phase, systemUptime=1, appState=1, failureCount=0)
+                   for test in observer.LIFECYCLE_TESTS for phase in observer.LIFECYCLE_PHASES]
+        lines = ['LAUNCH_LIFECYCLE ' + json.dumps(value) for value in markers]
+        error = 'error: Failed to get launch progress for com.saintlook.dev credential-sentinel'
+        code = f'lines={lines + lines + [error, error, observer.WARNING]!r}; [print(line, flush=True) for line in lines]; raise SystemExit(7)'
+        release, second = threading.Event(), threading.Event()
+        calls = []
+
+        def probe(*args):
+            calls.append(args[2])
+            if len(calls) >= 2:
+                second.set()
+            release.wait(3)
+
+        def unblock():
+            second.wait(2)
+            release.set()
+
+        controller = threading.Thread(target=unblock)
+        with tempfile.TemporaryDirectory() as folder, patch.object(observer, 'capture_lifecycle', side_effect=probe), \
+                patch.object(observer, 'collect', side_effect=AssertionError('Pair mode must not collect raw stacks')), \
+                patch.object(observer.sys, 'stdout', io.StringIO()):
+            controller.start()
+            try:
+                status = observer.observe([sys.executable, '-u', '-c', code], UDID, Path(folder), launch_pair=True)
+            finally:
+                release.set(); controller.join(timeout=3)
+            self.assertTrue(second.is_set(), 'A second marker must be observed while the first probe is still blocked')
+            self.assertEqual(status, 7)
+            self.assertEqual(len(calls), 9, 'Eight fixed lifecycle boundaries and one launch failure, never repeated')
+            self.assertFalse((Path(folder) / 'xcodebuild.log').exists())
+
+    def test_pair_cli_retains_remote_and_live_restrictions(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for key in ('SAINT_LOOK_REMOTE_SMOKE', 'SAINT_LOOK_LIVE_TRIAL'):
+                command = self.command(folder, 'raise RuntimeError("must not run")')
+                command[command.index('iphone-light')] = observer.LAUNCH_PAIR
+                result = subprocess.run(command, env={**os.environ, key: '1'}, capture_output=True, text=True, timeout=3)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn('Sampling is limited to local visual fixtures', result.stderr)
+            self.assertEqual(list(Path(folder).iterdir()), [])
+
+    def test_manual_diagnostic_routing_keeps_default_matrix_and_exact_selectors(self):
+        workflow = (SCRIPT.parents[2] / '.github/workflows/ci.yml').read_text()
+        matrix = textwrap.dedent(workflow.split("python3 - <<'PY'\n", 1)[1].split('          PY', 1)[0])
+        route = workflow[workflow.index('          if [[ "$TEST_SUITE" == "outfits-launch-pair" ]]'):]
+        route = textwrap.dedent(route.split('          if [[ "$TEST_SUITE" == "outfits"', 1)[0])
+        pair = ('SaintLookUITests/OutfitFlowTests/testCancelDraftDoesNotCreateOutfit\n'
+                'SaintLookUITests/OutfitFlowTests/testCreateUnnamedOutfitSurvivesBackgroundResultOfflineRestartAndItemDeletion')
+        expired = 'SaintLookUITests/WardrobeFlowTests/testExpiredUndeliveredResultKeepsOriginalAndRequiresExplicitRetryAfterRelaunch'
+        timeout = next(line.split('${{', 1)[1].split('}}', 1)[0] for line in workflow.splitlines()
+                       if 'timeout-minutes:' in line and 'matrix.suite' in line)
+        timeout = timeout.replace('matrix.suite', 'suite').replace('&&', 'and').replace('||', 'or')
+        for suite, minutes in [('outfits-launch-pair', 20), ('wardrobe-expired-retry', 20),
+                               ('wardrobe', 60), ('outfits', 60), ('visual', 60), ('camera', 40)]:
+            self.assertEqual(eval(timeout, {'__builtins__': {}}, {'suite': suite}), minutes)
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / 'output'
+            for selected, suites in [('all', ['wardrobe', 'outfits', 'visual', 'visual', 'visual', 'visual']),
+                                     ('outfits-launch-pair', ['outfits-launch-pair']),
+                                     ('wardrobe-expired-retry', ['wardrobe-expired-retry'])]:
+                output.write_text('')
+                subprocess.run([sys.executable, '-c', matrix], env={**os.environ, 'BASE_SHA': '', 'HEAD_SHA': '',
+                    'IOS_SUITE': selected, 'VISUAL_PROFILES': 'all', 'GITHUB_OUTPUT': str(output)}, check=True, timeout=3)
+                value = next(line.split('=', 1)[1] for line in output.read_text().splitlines() if line.startswith('ios_matrix='))
+                self.assertEqual([entry['suite'] for entry in json.loads(value)['include']], suites)
+            calls = Path(folder) / 'calls'
+            stub = 'bash() { printf "%s\\n" "$SAINT_LOOK_LAUNCH_PAIR" "$SAINT_LOOK_UI_TEST_ONLY" "$@" >> "$PAIR_CALLS"; return 23; }\n'
+            for suite, flag, selectors in [('outfits-launch-pair', '1', pair), ('wardrobe-expired-retry', '', expired)]:
+                for event, status in [('workflow_dispatch', 23), ('pull_request', 1)]:
+                    result = subprocess.run(['/bin/bash', '-c', stub + route], env={**os.environ,
+                        'TEST_SUITE': suite, 'GITHUB_EVENT_NAME': event, 'PAIR_CALLS': str(calls),
+                        'SAINT_LOOK_LAUNCH_PAIR': ''}, capture_output=True, text=True, timeout=3)
+                    self.assertEqual(result.returncode, status)
+                    if event == 'workflow_dispatch':
+                        self.assertEqual(calls.read_text(), flag + '\n' + selectors + '\nclient-ios/scripts/test-simulator.sh\n')
+                        calls.unlink()
+                    else:
+                        self.assertFalse(calls.exists())
 
 
 if __name__ == '__main__':

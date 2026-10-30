@@ -178,7 +178,7 @@ enum VisualFixtures {
               manifest.imageProviders == "synthetic-public-photo-copies",
               manifest.sourceProvenance == "public-manifest-encoder-on-runner",
               manifest.benchmarkRevision == environment["SAINT_LOOK_BENCHMARK_REVISION"],
-              manifest.spaceID == "5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b",
+              manifest.spaceID == "df268e5dab58fc14040ec8d5966455e546943406bf04380d24ee8ffcf4ca7e17",
               manifest.tokenSHA256 == (try benchmarkDigest(Data(token.utf8))), manifest.items.count == manifest.count,
               manifest.assets.count <= 512, Set(manifest.assets.map(\.name)).count == manifest.assets.count else {
             throw FixtureError.invalidConfiguration
