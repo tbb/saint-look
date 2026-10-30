@@ -27,14 +27,6 @@ on:
         type: choice
         default: all
         options: [all, iphone-light, iphone-dark, iphone-max-text, ipad-light]
-      benchmark_url:
-        description: Temporary HTTPS trycloudflare.com origin (benchmark suite only)
-        type: string
-        default: ''
-      benchmark_manifest_sha:
-        description: Reviewed 300-packet manifest SHA256 (benchmark suite only)
-        type: string
-        default: ''
 
 permissions:
   contents: read
@@ -86,7 +78,7 @@ jobs:
           PY
 
   backend:
-    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.backend == 'true'
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.backend == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.ios_suite == 'benchmark')
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -131,15 +123,15 @@ jobs:
       - name: Check bounded visual diagnostic observer
         if: matrix.suite == 'visual'
         run: PYTHONDONTWRITEBYTECODE=1 python3 client-ios/scripts/tests/test-visual-stall-observer.py
+      - uses: actions/setup-python@v5
+        if: matrix.suite == 'benchmark'
+        with:
+          python-version: '3.12'
       - name: ${{ matrix.suite == 'benchmark' && 'Simulator with isolated real-model benchmark' || 'Real Simulator and local backend (controlled providers)' }}
         env:
           TEST_SUITE: ${{ matrix.suite }}
-          # This short-lived fixture nonce is never the owner credential.
+          # The optional benchmark creates its nonce only on this runner.
           SAINT_LOOK_BENCHMARK: ${{ matrix.suite == 'benchmark' && '1' || '0' }}
-          SAINT_LOOK_BENCHMARK_ORIGIN: ${{ inputs.benchmark_url }}
-          SAINT_LOOK_BENCHMARK_MANIFEST_SHA256: ${{ inputs.benchmark_manifest_sha }}
-          SAINT_LOOK_BENCHMARK_REVISION: ${{ github.sha }}
-          SAINT_LOOK_BENCHMARK_TOKEN: ${{ matrix.suite == 'benchmark' && secrets.SAINT_LOOK_BENCHMARK_TOKEN || '' }}
           SAINT_LOOK_VISUAL_PROFILES: ${{ matrix.profile || 'all' }}
           SAINT_LOOK_UI_TEST_ONLY: ${{ matrix.suite == 'outfits' && 'SaintLookUITests/OutfitFlowTests' || 'SaintLookUITests/WardrobeFlowTests' }}
           NODE_ENV: test
@@ -171,8 +163,7 @@ jobs:
           if [[ "$TEST_SUITE" == benchmark ]]; then
             set -euo pipefail
             [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || { echo 'Benchmark must be explicitly dispatched.' >&2; exit 1; }
-            SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/OutfitFlowTests/testCachedRealBenchmarkFirstObservedResult \
-              bash client-ios/scripts/test-simulator.sh
+            bash backend/test/ios-benchmark-run.sh
             exit $?
           fi
           wait_for_health() {
@@ -314,7 +305,7 @@ jobs:
           retention-days: 7
 
   deploy-policy:
-    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && !(github.event_name == 'workflow_dispatch' && inputs.ios_suite == 'benchmark')
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -328,7 +319,7 @@ jobs:
       - run: node --test scripts/deploy/*.test.mjs
 
   container:
-    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && !(github.event_name == 'workflow_dispatch' && inputs.ios_suite == 'benchmark')
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 10

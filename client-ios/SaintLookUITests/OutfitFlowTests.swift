@@ -85,10 +85,11 @@ final class OutfitFlowTests: XCTestCase {
         let keys = ["SAINT_LOOK_BENCHMARK", "SAINT_LOOK_BENCHMARK_ORIGIN", "SAINT_LOOK_BENCHMARK_TOKEN",
                     "SAINT_LOOK_BENCHMARK_MANIFEST_SHA256", "SAINT_LOOK_BENCHMARK_REVISION"]
         guard keys.allSatisfy({ source[$0]?.isEmpty == false }), source["SAINT_LOOK_BENCHMARK"] == "1",
-              let origin = URL(string: source["SAINT_LOOK_BENCHMARK_ORIGIN"]!), origin.scheme == "https",
-              let host = origin.host, host.hasSuffix(".trycloudflare.com"), host != "trycloudflare.com",
+              source["SAINT_LOOK_BENCHMARK_ORIGIN"]!.range(of: "^http://127\\.0\\.0\\.1:[0-9]{1,5}/?$", options: .regularExpression) != nil,
+              let origin = URL(string: source["SAINT_LOOK_BENCHMARK_ORIGIN"]!), origin.scheme == "http",
+              origin.host == "127.0.0.1", let port = origin.port, (1...65535).contains(port),
               origin.user == nil, origin.password == nil, origin.query == nil, origin.fragment == nil,
-              ["", "/"].contains(origin.path), origin.port == nil || origin.port == 443,
+              ["", "/"].contains(origin.path),
               source["SAINT_LOOK_BENCHMARK_TOKEN"]!.range(of: "^bench-[a-f0-9]{64}$", options: .regularExpression) != nil,
               source["SAINT_LOOK_BENCHMARK_MANIFEST_SHA256"]!.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
               source["SAINT_LOOK_BENCHMARK_REVISION"]!.range(of: "^[a-f0-9]{40}$", options: .regularExpression) != nil else {
@@ -99,7 +100,8 @@ final class OutfitFlowTests: XCTestCase {
 
     private func benchmarkJSON(_ path: String, environment: [String: String]) async throws -> [String: Any] {
         guard let origin = URL(string: environment["SAINT_LOOK_BENCHMARK_ORIGIN"]!),
-              let url = URL(string: path, relativeTo: origin), url.host == origin.host else {
+              let url = URL(string: path, relativeTo: origin), url.host == origin.host,
+              url.scheme == origin.scheme, url.port == origin.port else {
             throw BenchmarkFailure.invalidConfiguration
         }
         var request = URLRequest(url: url)
@@ -209,11 +211,12 @@ final class OutfitFlowTests: XCTestCase {
                 "operatingSystem": ProcessInfo.processInfo.operatingSystemVersionString,
                 "testHostLogicalProcessors": ProcessInfo.processInfo.processorCount,
                 "testHostPhysicalMemoryBytes": ProcessInfo.processInfo.physicalMemory,
-                "connectionClass": "GitHub Mac Simulator to Cloudflare HTTPS to isolated Linux workspace",
-                "limitations": ["Includes native tap, catalog/serialization, HTTPS, real ranking, apply, AX observation and screenshot overhead.",
+                "connectionClass": "GitHub Mac Simulator to same-runner loopback real backend",
+                "limitations": ["Includes native tap, catalog/serialization, loopback HTTP, real ranking, apply, AX observation and screenshot overhead.",
                     "Upper bound, not an exact first rendered frame or a two-second guarantee; two observations are not p95.",
-                    "The catalog and delivered receipts are isolated synthetic fixture clones of four previously prepared public-photo packets.",
-                    "Backend hardware differs from Fly. Repeated vectors are not 300 distinct things or taste acceptance."]]
+                    "The isolated catalog uses synthetic image fixtures copied from four public photographs; this is not live image-provider acceptance.",
+                    "The real encoder runs once per public photograph on the Mac runner; requests use 300 cached clones of those four vectors.",
+                    "Same-runner loopback excludes Internet and Fly latency. Repeated vectors are not 300 distinct things or taste acceptance."]]
             let data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
             print("BENCHMARK_REAL_IOS " + String(decoding: data, as: UTF8.self))
             if phase == "first-after-app-launch-warm-backend" {

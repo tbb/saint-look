@@ -10,6 +10,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { clonePreparedPacket, installReceiptFixture } from './prepared-receipt-fixture.mjs';
 import { canonicalFeatures, canonicalText, featureDigest, validateObserved } from '../src/publication-contract.mjs';
 
+import { observableChoices } from '../src/illustration-features.mjs';
+import { illustrationTaxonomy, illustrationVersions } from '../src/illustration-provider.mjs';
+
 const SOURCE_IDS = ['light-polo', 'pub-03', 'pub-13', 'black-jeans'];
 export const baseline = '73700bab547ed71113dbf27db18136e054a1cca2';
 export const realSpace = '5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b';
@@ -22,52 +25,45 @@ const safeAsset = name => /^[a-z0-9-]+\.(png|jpg|json)$/.test(name);
 const privateWrite = (path, bytes) => writeFile(path, bytes, { flag: 'wx', mode: 0o600 });
 
 async function loadSources(directory) {
+  const sourceManifest = JSON.parse(await readFile(join(directory, 'sources.json'), 'utf8'));
+  check(sourceManifest.schemaVersion === 1 && sourceManifest.sourceProvenance === 'public-manifest-encoder-on-runner'
+    && sourceManifest.imageProviders === 'synthetic-public-photo-copies'
+    && sourceManifest.items.length === 4 && SOURCE_IDS.every((id, i) => sourceManifest.items[i].id === id), 'source_provenance');
+  const publicManifest = JSON.parse(await readFile(join(backend, '..', 'docs/research/epic63-public-manifest.json'), 'utf8'));
   const records = [];
-  for (const publicID of SOURCE_IDS) {
-    const folder = join(directory, publicID);
-    const [item, illustration, preparation, packet] = await Promise.all(
-      ['item-response.json', 'illustration-response.json', 'preparation-response.json', 'recommendation-item.json']
-        .map(async name => JSON.parse(await readFile(join(folder, name), 'utf8'))));
-    const files = {};
-    for (const [key, name] of Object.entries({ source: 'encoder-and-upload-input.png', cutout: 'cutout.png',
-      illustration: 'illustration.png', prepared: 'prepared-source.png', representation: 'representation.json' })) {
-      files[key] = await readFile(join(folder, name));
-      check(files[key].length > 0 && files[key].length <= 6 * 1024 * 1024, 'source_size');
-    }
-    const rep = JSON.parse(files.representation);
-    const observed = validateObserved(illustration.observedFeatures), effective = validateObserved(illustration.effectiveFeatures);
-    assert.deepEqual(canonicalFeatures(effective, true), packet.features);
-    check(item.mode === 'live' && illustration.mode === 'live' && preparation.mode === 'real'
-      && preparation.imageMode === 'live' && preparation.provenance === 'pipeline', 'non_real_source');
-    check(illustration.modelVersion === 'gemini-3-pro-image'
-      && illustration.templateVersion === 'front-360x560-proposed-v1'
-      && illustration.geometryVersion === 'fitting-square-1024-v1', 'image_version');
-    check(preparation.status === 'ready' && preparation.spaceID === realSpace && rep.spaceID === realSpace
-      && rep.photoVersionID === packet.photoVersionId && rep.sourceSHA256 === sha(files.source)
-      && rep.textSHA256 === sha(canonicalText(packet.features)), 'representation_binding');
-    check(files.representation.toString('utf8') === packet.representationJSON
-      && sha(files.representation) === packet.representationSHA256
-      && preparation.representationSHA256 === packet.representationSHA256
-      && preparation.representationJSON === packet.representationJSON, 'representation_digest');
-    check(rep.vector?.length === 128 && rep.vector.every(Number.isFinite), 'invalid_vector');
-    check(sha(files.cutout) === item.resultSHA256 && sha(files.illustration) === illustration.resultSHA256
-      && featureDigest(observed) === illustration.observedFeaturesSHA256
-      && featureDigest(effective) === illustration.effectiveFeaturesSHA256, 'artifact_digest');
-    assert.deepEqual(preparation.artifacts, { cutoutSHA256: sha(files.cutout), illustrationSHA256: sha(files.illustration),
-      observedFeaturesSHA256: featureDigest(observed), effectiveFeaturesSHA256: featureDigest(effective) });
-    const prepared = illustration.preparedSources?.[0];
-    check(illustration.preparedSources?.length === 1 && prepared.photoId === packet.photoVersionId
-      && prepared.sourceSHA256 === sha(files.source) && prepared.preparedSHA256 === sha(files.prepared), 'prepared_source_binding');
-    check(item.itemId === packet.itemId && preparation.itemId === packet.itemId
-      && item.photoVersionId === packet.photoVersionId
-      && illustration.itemId === packet.itemId && illustration.photoVersionId === packet.photoVersionId
-      && illustration.sourceSetVersionId === packet.sourceSetVersionId
-      && preparation.operationId === packet.publishedVersionId && preparation.photoVersionId === packet.photoVersionId
-      && preparation.sourceSetVersionId === packet.sourceSetVersionId
-      && preparation.illustrationOperationId === illustration.operationId && preparation.cutoutOperationId === item.operationId, 'source_identity');
-    check(preparation.input.sourceSHA256 === rep.sourceSHA256 && preparation.input.textSHA256 === rep.textSHA256, 'input_binding');
-    assert.deepEqual(packet.effectiveFeatures, effective);
-    records.push({ publicID, item, illustration, preparation, packet, files });
+  for (const [index, input] of sourceManifest.items.entries()) {
+    const entry = publicManifest.items.find(item => item.id === input.id);
+    check([input.sourceFile, input.representationFile, input.publicJPEGFile].every(safeAsset), 'source_filename');
+    const source = await readFile(join(directory, input.sourceFile));
+    const representation = await readFile(join(directory, input.representationFile));
+    check(source.length > 0 && source.length <= 6 * 1024 * 1024 && sha(source) === input.sourceSHA256
+      && sha(await readFile(join(directory, input.publicJPEGFile))) === entry.sha256
+      && input.publicJPEG_SHA256 === entry.sha256 && sha(representation) === input.representationSHA256, 'source_digest');
+    const rep = JSON.parse(representation), features = canonicalFeatures({ type: entry.type, colors: entry.colors });
+    check(rep.spaceID === realSpace && rep.photoVersionID === input.photoVersionId
+      && /^b4000001-0000-4000-8000-00000000000[1-4]$/.test(input.photoVersionId)
+      && rep.sourceSHA256 === sha(source) && rep.textSHA256 === sha(canonicalText(features))
+      && rep.vector?.length === 128 && rep.vector.every(Number.isFinite), 'source_representation');
+    const effective = validateObserved({ version: 'fitting-observable-v2-photoroom-sandbox',
+      type: illustrationTaxonomy.types.find(value => value.id === entry.type).label,
+      colors: features.colors.map(id => illustrationTaxonomy.colors.find(value => value.id === id).label),
+      traits: Object.fromEntries(Object.keys(observableChoices).map(key => [key, 'unknown'])) });
+    const itemId = fixtureID(0, index), photoVersionId = input.photoVersionId, sourceSetVersionId = fixtureID(3, index);
+    const illustration = { itemId, operationId: fixtureID(5, index), photoVersionId, sourceSetVersionId,
+      revision: 1, status: 'ready', mode: 'test', processing: {}, observedFeatures: effective, effectiveFeatures: effective,
+      observedFeaturesSHA256: featureDigest(effective), effectiveFeaturesSHA256: featureDigest(effective),
+      manualType: null, manualColors: null, ...illustrationVersions, resultPath: null, resultSHA256: sha(source), error: null,
+      preparedSources: [{ photoId: photoVersionId, sourceSHA256: sha(source), preparedSHA256: sha(source), versions: illustrationVersions }] };
+    const preparation = { itemId, operationId: fixtureID(2, index), revision: 1, photoVersionId, sourceSetVersionId,
+      illustrationOperationId: illustration.operationId, cutoutOperationId: fixtureID(4, index), spaceID: realSpace,
+      status: 'ready', mode: 'real', imageMode: 'test', provenance: 'syntheticBenchmarkFixture', effectiveFeatures: features,
+      representationJSON: representation.toString('utf8'), representationSHA256: sha(representation),
+      input: { sourceSHA256: sha(source), textSHA256: rep.textSHA256 }, artifacts: { cutoutSHA256: sha(source), illustrationSHA256: sha(source),
+        observedFeaturesSHA256: featureDigest(effective), effectiveFeaturesSHA256: featureDigest(effective) }, error: null };
+    const packet = { itemId, photoVersionId, publishedVersionId: preparation.operationId, sourceSetVersionId,
+      features, effectiveFeatures: effective, representationJSON: representation.toString('utf8'), representationSHA256: sha(representation) };
+    records.push({ publicID: input.id, illustration, preparation, packet,
+      files: { source, cutout: source, illustration: source, prepared: source, representation } });
   }
   return records;
 }
@@ -103,12 +99,13 @@ async function exportFixture({ source, count, token, revision, bundleDirectory }
   const sourceAttribution = await Promise.all(SOURCE_IDS.map(async id => {
     const entry = publicManifest.items.find(item => item.id === id);
     check(entry?.attribution && entry.sha256, 'public_attribution_missing');
-    check(sha(await readFile(join(source, id, 'public-input.jpg'))) === entry.sha256, 'public_source_digest');
+
     return { id, author: entry.attribution.author, source: entry.attribution.source,
       license: entry.attribution.license, licenseURL: entry.attribution.licenseUrl, sourceSHA256: entry.sha256 };
   }));
   const manifest = { schemaVersion: 1, count, uniqueSources: 4, sourceRevision: baseline, benchmarkRevision: revision, sourceAttribution,
-    spaceID: realSpace, tokenSHA256: sha(token), provenance: 'isolated synthetic clones of four real public-photo packets',
+    spaceID: realSpace, tokenSHA256: sha(token), provenance: 'isolated synthetic clones of four public real-encoder inputs',
+    imageProviders: 'synthetic-public-photo-copies', sourceProvenance: 'public-manifest-encoder-on-runner',
     assets: [...assets].map(([name, bytes]) => ({ name, sha256: sha(bytes), bytes: bytes.length })), items };
   await mkdir(bundleDirectory, { mode: 0o700 });
   const manifestBytes = Buffer.from(JSON.stringify(manifest));
@@ -122,10 +119,22 @@ async function exportFixture({ source, count, token, revision, bundleDirectory }
 
 function processTreeRSS(pid) {
   try {
+    if (process.platform === 'darwin') {
+      // PID, parent and RSS only; never collect process arguments or environment.
+      const rows = execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,rss='], { encoding: 'utf8', timeout: 1000 })
+        .trim().split('\n').map(line => line.trim().split(/\s+/).map(Number));
+      if (!rows.some(([child]) => child === pid)) return null;
+      const own = new Set([pid]);
+      for (let changed = true; changed;) {
+        changed = false;
+        for (const [child, parent] of rows) if (own.has(parent) && !own.has(child)) { own.add(child); changed = true; }
+      }
+      return rows.filter(([child]) => own.has(child)).reduce((sum, [, , rss]) => sum + rss, 0);
+    }
     const status = readFileSync('/proc/' + pid + '/status', 'utf8');
     const children = readFileSync('/proc/' + pid + '/task/' + pid + '/children', 'utf8').trim().split(/\s+/).filter(Boolean);
     return Number(status.match(/^VmRSS:\s+(\d+)/m)?.[1] ?? 0) + children.reduce((sum, id) => sum + processTreeRSS(id), 0);
-  } catch { return 0; }
+  } catch { return null; }
 }
 
 export async function spawnBackend({ program, database, token, python, assets, real }) {
@@ -171,8 +180,10 @@ export async function startBenchmark(options) {
   check(Number.isInteger(startupTimeoutMilliseconds) && startupTimeoutMilliseconds >= 1000 && startupTimeoutMilliseconds <= 180_000, 'invalid_startup_deadline');
   const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: backend, encoding: 'utf8' }).trim();
   check(/^[a-f0-9]{40}$/.test(revision), 'invalid_source_revision');
-  const directory = options.directory ? resolve(options.directory) : await mkdtemp('/tmp/saint-look-benchmark-');
-  check(directory.startsWith('/tmp/saint-look-benchmark-') && await realpath(dirname(directory)) === '/tmp', 'isolated_directory_required');
+  const temporaryRoot = await realpath('/tmp');
+  const directory = options.directory ? join(await realpath(dirname(resolve(options.directory))), resolve(options.directory).split('/').at(-1))
+    : await mkdtemp(join(temporaryRoot, 'saint-look-benchmark-'));
+  check(directory.startsWith(join(temporaryRoot, 'saint-look-benchmark-')) && await realpath(dirname(directory)) === temporaryRoot, 'isolated_directory_required');
   if (options.directory) { check(!existsSync(directory), 'new_directory_required'); await mkdir(directory, { mode: 0o700 }); }
   const program = join(directory, 'program'), database = join(directory, 'database');
   await mkdir(program, { mode: 0o700 }); await mkdir(database, { mode: 0o700 });
@@ -187,14 +198,17 @@ export async function startBenchmark(options) {
   const data = await exportFixture({ ...options, revision, bundleDirectory: join(directory, 'bundle') });
   const zipPath = join(directory, 'benchmark.zip');
   execFileSync('python3', ['-c', 'import pathlib,sys,zipfile; p=pathlib.Path(sys.argv[1]); z=zipfile.ZipFile(sys.argv[2],"x",compression=zipfile.ZIP_DEFLATED); [z.write(f,f.name) for f in sorted(p.iterdir())]; z.close()', join(directory, 'bundle'), zipPath], { stdio: ['ignore', 'pipe', 'pipe'] });
-  let server, backendProcess, closed = false, timer, peakKiB = 0, sample, requests = [];
+  const sampleIntervalMilliseconds = process.platform === 'darwin' ? 1000 : 250;
+  let server, backendProcess, closed = false, timer, peakKiB = null, sample, requests = [];
   const stop = async () => {
     if (closed) return; closed = true; clearTimeout(timer); clearInterval(sample);
     if (server) { server.closeAllConnections(); await new Promise(done => server.close(done)); }
     if (backendProcess) await backendProcess.stop();
     await privateWrite(join(directory, 'result.json'), JSON.stringify({ provenance: 'isolated synthetic benchmark', revision,
       count: options.count, uniqueSources: 4, modelSpaceID: realSpace, requests, sampledBackendTreePeakRSSKiB: peakKiB,
-      memoryScope: '250ms sampled concurrent backend+worker RSS; may miss shorter peaks; not cgroup peak', paidProviderCalls: 0 }));
+      memoryScope: 'Sampled sum of owned backend process-tree RSS; may miss shorter peaks; not HWM or cgroup peak',
+      memoryPlatform: process.platform, memorySampler: process.platform === 'darwin' ? 'ps pid,ppid,rss only' : 'Linux proc status/children',
+      sampleIntervalMilliseconds, memoryUnavailable: peakKiB === null, paidProviderCalls: 0 }));
   };
   try {
     backendProcess = await spawnBackend({ program, database, ...options, real: false }); await backendProcess.stop();
@@ -202,7 +216,9 @@ export async function startBenchmark(options) {
     const startup = performance.now();
     const startupDeadline = startup + startupTimeoutMilliseconds;
     backendProcess = await spawnBackend({ program, database, ...options, real: true });
-    sample = setInterval(() => { peakKiB = Math.max(peakKiB, processTreeRSS(backendProcess.child.pid)); }, 250);
+    const sampleMemory = () => { const value = processTreeRSS(backendProcess.child.pid);
+      if (Number.isFinite(value)) peakKiB = Math.max(peakKiB ?? 0, value); };
+    sampleMemory(); sample = setInterval(sampleMemory, sampleIntervalMilliseconds);
     let config;
     while (performance.now() < startupDeadline) {
       const remaining = Math.max(1, Math.ceil(startupDeadline - performance.now()));
@@ -223,7 +239,7 @@ export async function startBenchmark(options) {
           response.writeHead(200, { 'Content-Type': 'application/zip', 'Cache-Control': 'no-store' }); createReadStream(zipPath).pipe(response); return;
         }
         if (request.method === 'GET' && request.url === '/benchmark/metadata') return send(200, JSON.stringify({ revision, count: options.count, uniqueSources: 4,
-          modelSpaceID: realSpace, manifestSHA256: data.manifestSHA256, startupMilliseconds, transport: 'local fixture; external tunnel managed separately' }));
+          modelSpaceID: realSpace, manifestSHA256: data.manifestSHA256, startupMilliseconds, transport: 'same-host loopback only', imageProviders: 'synthetic-public-photo-copies' }));
         if (request.method === 'GET' && request.url === '/benchmark/metrics') return send(200, JSON.stringify({ requests }));
         const allowed = (request.method === 'GET' && ['/health', '/v1/recommendations/config'].includes(request.url))
           || (request.method === 'POST' && ['/v1/recommendations/single', '/v1/recommendations/compose'].includes(request.url));
@@ -255,7 +271,7 @@ export async function startBenchmark(options) {
 async function main() {
   const args = process.argv.slice(2), opts = {};
   if (!args.length || args.includes('--help')) {
-    console.log('Local-only fixture: --source PUBLIC_HTTP4_DIR --python PYTHON --assets MODEL_ASSETS --token-file PRIVATE_FILE --count 4|300 [--ttl-seconds 1800] [--directory NEW_TMP_BENCHMARK_DIR]'); return;
+    console.log('Local-only fixture: --source FOUR_PUBLIC_REAL_ENCODER_DIR --python PYTHON --assets MODEL_ASSETS --token-file PRIVATE_FILE --count 4|300 [--ttl-seconds 1800] [--directory NEW_TMP_BENCHMARK_DIR]'); return;
   }
   for (let i = 0; i < args.length; i += 2) {
     check(['--source', '--python', '--assets', '--token-file', '--count', '--ttl-seconds', '--directory'].includes(args[i]) && args[i + 1] && !Object.hasOwn(opts, args[i]), 'invalid_arguments');

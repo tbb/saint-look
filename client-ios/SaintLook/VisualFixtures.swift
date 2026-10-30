@@ -127,6 +127,8 @@ enum VisualFixtures {
         let count: Int
         let uniqueSources: Int
         let sourceRevision: String
+        let imageProviders: String
+        let sourceProvenance: String
         let benchmarkRevision: String
         let spaceID: String
         let tokenSHA256: String
@@ -153,9 +155,10 @@ enum VisualFixtures {
               ["0", "1"].contains(environment["SAINT_LOOK_RESET_DATA"] ?? ""),
               environment["SAINT_LOOK_VISUAL_SCENARIO"] == nil,
               let rawOrigin = environment["SAINT_LOOK_BENCHMARK_ORIGIN"], let origin = URL(string: rawOrigin),
-              origin.scheme == "https", let host = origin.host, host.hasSuffix(".trycloudflare.com"),
-              host != "trycloudflare.com", origin.user == nil, origin.password == nil,
-              origin.query == nil, origin.fragment == nil, ["", "/"].contains(origin.path), origin.port == nil || origin.port == 443,
+              matches(rawOrigin, "^http://127\\.0\\.0\\.1:[0-9]{1,5}/?$"),
+              origin.scheme == "http", origin.host == "127.0.0.1", let port = origin.port, (1...65535).contains(port),
+              origin.user == nil, origin.password == nil, origin.query == nil, origin.fragment == nil,
+              ["", "/"].contains(origin.path),
               environment["SAINT_LOOK_BASE_URL"] == rawOrigin, environment["SAINT_LOOK_OWNER_TOKEN"] == token,
               matches(token, "^bench-[a-f0-9]{64}$"),
               matches(environment["SAINT_LOOK_BENCHMARK_MANIFEST_SHA256"], "^[a-f0-9]{64}$"),
@@ -172,6 +175,8 @@ enum VisualFixtures {
         let manifest = try JSONDecoder().decode(BenchmarkManifest.self, from: manifestBytes)
         guard manifest.schemaVersion == 1, [4, 300].contains(manifest.count), manifest.uniqueSources == 4,
               manifest.sourceRevision == "73700bab547ed71113dbf27db18136e054a1cca2",
+              manifest.imageProviders == "synthetic-public-photo-copies",
+              manifest.sourceProvenance == "public-manifest-encoder-on-runner",
               manifest.benchmarkRevision == environment["SAINT_LOOK_BENCHMARK_REVISION"],
               manifest.spaceID == "5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b",
               manifest.tokenSHA256 == (try benchmarkDigest(Data(token.utf8))), manifest.items.count == manifest.count,
@@ -219,7 +224,9 @@ enum VisualFixtures {
                   let illustrationHash = hashes[entry.illustrationFile], let preparedHash = hashes[entry.preparedSourceFile],
                   let representationBytes = assets[entry.representationFile], let representationHash = hashes[entry.representationFile],
                   let features = illustration.effectiveFeatures, let observed = illustration.observedFeatures,
-                  features.isValid, observed.isValid, illustration.status == .ready, illustration.mode == "live",
+                  features.isValid, observed.isValid, illustration.status == .ready, illustration.mode == "test",
+                  features.traits.values.allSatisfy({ $0 == "unknown" }), observed.traits.values.allSatisfy({ $0 == "unknown" }),
+                  sourceHash == cutoutHash, sourceHash == illustrationHash, sourceHash == preparedHash,
                   illustration.modelVersion == IllustrationContract.currentModelVersion,
                   illustration.resultSHA256 == illustrationHash,
                   illustration.observedFeaturesSHA256 == (try benchmarkDigest(featuresEncoder.encode(observed))),
@@ -230,8 +237,8 @@ enum VisualFixtures {
                   preparedSource.versions.modelVersion == illustration.modelVersion,
                   preparedSource.versions.templateVersion == illustration.templateVersion,
                   preparedSource.versions.geometryVersion == illustration.geometryVersion,
-                  preparation.status == .ready, preparation.mode == "real", preparation.imageMode == "live",
-                  preparation.provenance == "pipeline", preparation.spaceID == manifest.spaceID,
+                  preparation.status == .ready, preparation.mode == "real", preparation.imageMode == "test",
+                  preparation.provenance == "syntheticBenchmarkFixture", preparation.spaceID == manifest.spaceID,
                   preparation.itemId == entry.itemId, preparation.photoVersionId == entry.photoVersionId,
                   preparation.sourceSetVersionId == entry.sourceSetVersionId, preparation.cutoutOperationId == entry.cutoutOperationId,
                   preparation.illustrationOperationId == illustration.operationId, preparation.revision == illustration.revision,
@@ -256,7 +263,7 @@ enum VisualFixtures {
             guard squaredNorm.isFinite, squaredNorm > 1e-12, squaredNorm < 1e12 else { throw FixtureError.invalidConfiguration }
             var item = WardrobeItem(id: entry.itemId, operationID: entry.cutoutOperationId, photoVersionID: entry.photoVersionId)
             item.sourceSetVersionID = entry.sourceSetVersionId
-            item.status = .ready; item.mode = .live; item.resultMode = .live; item.uploadStarted = true
+            item.status = .ready; item.mode = .demo; item.resultMode = .demo; item.uploadStarted = true
             item.originalFilename = entry.sourceFile; item.uploadFilename = entry.sourceFile
             item.resultFilename = entry.cutoutFile; item.resultSHA256 = cutoutHash
             item.type = features.type; item.colors = features.colors
@@ -267,7 +274,7 @@ enum VisualFixtures {
             item.illustration = request
             item.illustrationResult = IllustrationResult(filename: entry.illustrationFile, response: illustration)
             item.publishedVersion = ItemPublication(versionID: preparation.operationId, photoVersionID: entry.photoVersionId,
-                sourceSetVersionID: entry.sourceSetVersionId, cutoutFilename: entry.cutoutFile, cutoutMode: .live,
+                sourceSetVersionID: entry.sourceSetVersionId, cutoutFilename: entry.cutoutFile, cutoutMode: .demo,
                 illustration: item.illustrationResult, type: features.type, colors: features.colors, completeness: .prepared,
                 representation: StoredRepresentation(filename: entry.representationFile, response: preparation), cutoutOperationID: entry.cutoutOperationId)
             item.preparationRevision = preparation.revision; item.photosLocked = true

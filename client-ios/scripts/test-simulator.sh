@@ -108,9 +108,8 @@ token = os.environ.get('SAINT_LOOK_BENCHMARK_TOKEN', '')
 expected = os.environ.get('SAINT_LOOK_BENCHMARK_MANIFEST_SHA256', '')
 revision = os.environ.get('SAINT_LOOK_BENCHMARK_REVISION', '')
 url = urlparse(origin)
-if not (url.scheme == 'https' and url.hostname and url.hostname.endswith('.trycloudflare.com')
-        and url.hostname != 'trycloudflare.com' and not url.username and not url.password
-        and url.port in (None, 443) and url.path in ('', '/') and not url.query and not url.fragment
+if not (url.scheme == 'http' and url.hostname == '127.0.0.1' and not url.username and not url.password
+        and url.port is not None and 1 <= url.port <= 65535 and url.path in ('', '/') and not url.query and not url.fragment
         and re.fullmatch(r'bench-[a-f0-9]{64}', token) and re.fullmatch(r'[a-f0-9]{64}', expected)
         and re.fullmatch(r'[a-f0-9]{40}', revision)):
     raise SystemExit('Invalid isolated benchmark configuration.')
@@ -136,7 +135,9 @@ with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             and manifest['sourceRevision'] == '73700bab547ed71113dbf27db18136e054a1cca2'
             and manifest['benchmarkRevision'] == revision
             and manifest['spaceID'] == '5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b'
-            and manifest['tokenSHA256'] == hashlib.sha256(token.encode()).hexdigest()):
+            and manifest['tokenSHA256'] == hashlib.sha256(token.encode()).hexdigest()
+            and manifest['imageProviders'] == 'synthetic-public-photo-copies'
+            and manifest['sourceProvenance'] == 'public-manifest-encoder-on-runner'):
         raise SystemExit('Benchmark provenance mismatch.')
     assets = manifest['assets']
     if len({item['name'] for item in assets}) != len(assets) or set(names) != {'manifest.json', *(item['name'] for item in assets)}:
