@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalSingleRequestHash, createPublicBenchmarkProxy } from './ios-benchmark-public-proxy.mjs';
+import { canonicalSingleRequestHash, createPublicBenchmarkProxy, swiftUUIDRequestTemplate } from './ios-benchmark-public-proxy.mjs';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 
@@ -29,8 +29,36 @@ test('canonical single payload binds every field except distinct UUID correlatio
   assert.throws(() => canonicalSingleRequestHash({ ...request(), extra: 'not-bound' }), /shape/);
 });
 
+test('fixed scenario UUID fields use the Foundation Codable wire representation', () => {
+  const uuid = index => `b3000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
+  const input = request();
+  input.requestId = uuid(101); input.snapshotId = uuid(102); input.targetSlotId = uuid(3);
+  input.orderedSlots = [{ slotId: uuid(4), zone: 'head', itemId: uuid(5), publishedVersionId: uuid(6) }];
+  input.pinnedSlotIds = [uuid(4)]; input.excludedItemIds = [uuid(9)];
+  input.items = [{ itemId: uuid(5), publishedVersionId: uuid(6), photoVersionId: uuid(7), sourceSetVersionId: uuid(8),
+    features: { type: 'shirt', colors: [] }, effectiveFeatures: { version: 'fixture-v1', type: 'shirt', colors: [], traits: {} },
+    representationJSON: '{"spaceID":"fixture-space","vector":[1,0]}', representationSHA256: 'a'.repeat(64) }];
+  const wire = swiftUUIDRequestTemplate(input);
+  assert.equal(JSON.stringify(wire.items[0].itemId), '"B3000000-0000-4000-8000-000000000005"');
+  assert.equal(wire.items[0].representationJSON, input.items[0].representationJSON,
+    'Opaque representation bytes remain unchanged');
+  assert.deepEqual(Object.fromEntries(['requestId', 'snapshotId', 'targetSlotId'].map(key => [key, wire[key]])), {
+    requestId: 'B3000000-0000-4000-8000-000000000101',
+    snapshotId: 'B3000000-0000-4000-8000-000000000102',
+    targetSlotId: 'B3000000-0000-4000-8000-000000000003' });
+  assert.deepEqual(wire.pinnedSlotIds, ['B3000000-0000-4000-8000-000000000004']);
+  assert.deepEqual(wire.orderedSlots[0], { slotId: 'B3000000-0000-4000-8000-000000000004', zone: 'head',
+    itemId: 'B3000000-0000-4000-8000-000000000005', publishedVersionId: 'B3000000-0000-4000-8000-000000000006' });
+  assert.deepEqual([wire.items[0].publishedVersionId, wire.items[0].photoVersionId, wire.items[0].sourceSetVersionId],
+    ['B3000000-0000-4000-8000-000000000006', 'B3000000-0000-4000-8000-000000000007', 'B3000000-0000-4000-8000-000000000008']);
+  assert.equal(canonicalSingleRequestHash(wire), '53de32e89d78bb79ed804a1b018b38f85d322b6107982080aa5f6cbf074e9bb0');
+  assert.notEqual(canonicalSingleRequestHash(wire), canonicalSingleRequestHash(input),
+    'Typed UUID strings are case-sensitive fields in the canonical payload');
+});
+
 test('public proxy reserves two exact single attempts and exposes no owner credential or arbitrary route', async t => {
   const ownerNonce = 'bench-' + 'b'.repeat(64), modelSpaceID = 'e'.repeat(64), payload = request();
+  let preparationReason = 'illustration_unavailable';
   const upstreamCalls = [], upstream = createServer(async (req, res) => {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
@@ -40,7 +68,7 @@ test('public proxy reserves two exact single attempts and exposes no owner crede
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ protocolVersion: 1, publicationProtocol: 'prepared-item-v1', preparationRequired: true,
         representationEncoding: 'opaque-json-string-v1', encoder: { available: true, mode: 'real', activeSpaceID: modelSpaceID,
-          supportedSpaceIDs: [modelSpaceID], reason: null, ownerNonce }, newItemPreparation: { available: true, reason: null },
+        supportedSpaceIDs: [modelSpaceID], reason: null, ownerNonce }, newItemPreparation: { available: false, reason: preparationReason },
         encoderRefresh: { available: true, reason: null }, ownerSecret: ownerNonce }));
       return;
     }
@@ -73,6 +101,12 @@ test('public proxy reserves two exact single attempts and exposes no owner crede
   const configText = await config.text();
   assert.equal(config.status, 200);
   assert.doesNotMatch(configText, new RegExp(ownerNonce));
+  assert.deepEqual(JSON.parse(configText).newItemPreparation, { available: false, reason: 'illustration_unavailable' });
+  preparationReason = 'owner-secret';
+  const unsupportedConfig = await fetch(origin + '/v1/recommendations/config');
+  assert.equal(unsupportedConfig.status, 500);
+  assert.doesNotMatch(await unsupportedConfig.text(), /owner-secret/);
+  preparationReason = 'illustration_unavailable';
   const bundle = await fetch(origin + '/benchmark/bundle');
   const bundleText = await bundle.text();
   assert.equal(bundleText, 'public-bundle-sentinel');

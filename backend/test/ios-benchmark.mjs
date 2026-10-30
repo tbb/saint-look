@@ -13,7 +13,7 @@ import { canonicalFeatures, canonicalText, featureDigest, validateObserved } fro
 
 import { observableChoices } from '../src/illustration-features.mjs';
 import { illustrationTaxonomy, illustrationVersions } from '../src/illustration-provider.mjs';
-import { canonicalSingleRequestHash, createPublicBenchmarkProxy } from './ios-benchmark-public-proxy.mjs';
+import { canonicalSingleRequestHash, createPublicBenchmarkProxy, swiftUUIDRequestTemplate } from './ios-benchmark-public-proxy.mjs';
 
 const SOURCE_IDS = ['light-polo', 'pub-03', 'pub-13', 'black-jeans'];
 export const baseline = '73700bab547ed71113dbf27db18136e054a1cca2';
@@ -277,7 +277,7 @@ export async function startBenchmark(options) {
       check(bottomSource, 'benchmark_bottom_missing');
       const bottomIndex = data.sourceRecords.indexOf(bottomSource);
       const bottomItemID = fixtureID(0, bottomIndex), bottomPublishedVersionID = fixtureID(2, bottomIndex);
-      const body = { requestId: '00000000-0000-4000-8000-000000000001', snapshotId: '00000000-0000-4000-8000-000000000002',
+      const body = swiftUUIDRequestTemplate({ requestId: '00000000-0000-4000-8000-000000000001', snapshotId: '00000000-0000-4000-8000-000000000002',
         targetSlotId: '36000005-0000-4000-8000-000000000001', intent: 'complement',
         orderedSlots: [
           { slotId: '36000005-0000-4000-8000-000000000000', zone: 'head', itemId: null, publishedVersionId: null },
@@ -291,7 +291,7 @@ export async function startBenchmark(options) {
           effectiveFeatures: data.sourceRecords[Number(packet.itemId.slice(-12)) > 0
             ? (Number(packet.itemId.slice(-12)) - 1) % data.sourceRecords.length : 0].illustration.effectiveFeatures,
           representationJSON: packet.representationJSON, representationSHA256: packet.representationSHA256 }))
-          .sort((a, b) => a.itemId.localeCompare(b.itemId)) };
+          .sort((a, b) => a.itemId.localeCompare(b.itemId)) });
       const expectedCanonicalHash = canonicalSingleRequestHash(body);
       const originalServer = server;
       // The backend process remains private to loopback. The public-facing handler

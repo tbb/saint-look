@@ -82,6 +82,28 @@ export function canonicalSingleRequestHash(request) {
   return createHash('sha256').update(canonicalJSON(payload)).digest('hex');
 }
 
+const swiftUUID = value => {
+  if (typeof value !== 'string' || !uuidPattern.test(value)) throw new Error('invalid_swift_uuid');
+  return value.toUpperCase();
+};
+const swiftOptionalUUID = value => value === null ? null : swiftUUID(value);
+
+// Foundation's Codable encodes UUID strings in uppercase. The public server
+// precomputes this exact fixed portion; opaque representation strings are untouched.
+export function swiftUUIDRequestTemplate(request) {
+  const wire = { requestId: swiftUUID(request.requestId), snapshotId: swiftUUID(request.snapshotId),
+    targetSlotId: swiftUUID(request.targetSlotId), intent: request.intent,
+    orderedSlots: request.orderedSlots.map(slot => ({ slotId: swiftUUID(slot.slotId), zone: slot.zone,
+      itemId: swiftOptionalUUID(slot.itemId), publishedVersionId: swiftOptionalUUID(slot.publishedVersionId) })),
+    pinnedSlotIds: request.pinnedSlotIds.map(swiftUUID), excludedItemIds: request.excludedItemIds.map(swiftUUID),
+    items: request.items.map(item => ({ itemId: swiftUUID(item.itemId), publishedVersionId: swiftUUID(item.publishedVersionId),
+      photoVersionId: swiftUUID(item.photoVersionId), sourceSetVersionId: swiftUUID(item.sourceSetVersionId),
+      features: item.features, effectiveFeatures: item.effectiveFeatures, representationJSON: item.representationJSON,
+      representationSHA256: item.representationSHA256 })) };
+  canonicalSingleRequestHash(wire);
+  return wire;
+}
+
 const singleResponseKeys = ['requestId', 'snapshotId', 'targetSlotId', 'outcome', 'proposal', 'reason',
   'conflictingSlotIds', 'spaceID', 'mode', 'policyVersion', 'intent', 'rankingVersion'];
 const outcomes = new Set(['proposed', 'no_alternative', 'constraints_conflict', 'empty_context']);
@@ -129,14 +151,16 @@ function sanitizeConfiguration(value, modelSpaceID) {
     || !Array.isArray(encoder.supportedSpaceIDs) || !encoder.supportedSpaceIDs.includes(modelSpaceID)) {
     throw new Error('invalid_configuration');
   }
-  const capability = value => {
-    if (typeof value?.available !== 'boolean' || value.reason !== null) throw new Error('invalid_capability');
-    return { available: value.available, reason: null };
+  const capability = (value, unavailableReasons) => {
+    if (typeof value?.available !== 'boolean'
+      || (value.available ? value.reason !== null : !unavailableReasons.has(value.reason))) throw new Error('invalid_capability');
+    return { available: value.available, reason: value.reason };
   };
   return { protocolVersion: 1, publicationProtocol: 'prepared-item-v1', preparationRequired: true,
     representationEncoding: 'opaque-json-string-v1', encoder: { available: true, mode: 'real',
       activeSpaceID: modelSpaceID, supportedSpaceIDs: [modelSpaceID], reason: null },
-    newItemPreparation: capability(value.newItemPreparation), encoderRefresh: capability(value.encoderRefresh) };
+    newItemPreparation: capability(value.newItemPreparation, new Set(['illustration_unavailable'])),
+    encoderRefresh: capability(value.encoderRefresh, new Set()) };
 }
 
 function sanitizeSingleResponse(value, request, modelSpaceID) {
