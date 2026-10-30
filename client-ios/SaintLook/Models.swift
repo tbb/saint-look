@@ -335,11 +335,16 @@ struct IllustrationResult: Codable {
 
 enum IllustrationContract {
     static let currentModelVersion = "gemini-3-pro-image"
+    static let currentTemplateVersion = "category-front-anchors-v2"
+    static let currentGeometryVersion = "fitting-anchors-1024-v2"
     private static let supportedModels: Set<String> = [currentModelVersion, "fal-ai/nano-banana-pro/edit"]
 
     static func accepts(modelVersion: String, templateVersion: String, geometryVersion: String) -> Bool {
-        supportedModels.contains(modelVersion) && templateVersion == "front-360x560-proposed-v1"
+        let legacy = supportedModels.contains(modelVersion) && templateVersion == "front-360x560-proposed-v1"
             && geometryVersion == "fitting-square-1024-v1"
+        let current = modelVersion == currentModelVersion && templateVersion == currentTemplateVersion
+            && geometryVersion == currentGeometryVersion
+        return legacy || current
     }
 }
 
@@ -393,6 +398,11 @@ extension WardrobeItem {
             && request.manualType == manualType && request.manualColors == manualColors
     }
 
+    var needsFittingUpdate: Bool {
+        guard let result = displayedIllustration else { return false }
+        return result.response.geometryVersion != IllustrationContract.currentGeometryVersion
+    }
+
     var illustrationIsStale: Bool {
         guard let result = illustrationResult else { return false }
         return result.response.photoVersionId != photoVersionID || result.response.sourceSetVersionId != sourceSetVersionID
@@ -429,6 +439,7 @@ extension WardrobeItem {
             let detail = IllustrationFailure.message(for: error)
             return photosLocked ? "Не удалось обновить вещь. Предыдущая версия сохранена. " + detail : detail
         }
+        if needsFittingUpdate { return "Для этой иллюстрации нужно обновить посадку. Она сохранена в карточке; на манекене появится после обновления." }
         if illustrationIsStale { return "Признаки изменились. Обновите иллюстрацию, чтобы использовать их в луках. Пока используется предыдущая версия." }
         return hasPreparedVersion ? nil : "Нужно завершить подготовку. Фото и сохранённые луки доступны на устройстве."
     }
@@ -437,6 +448,8 @@ extension WardrobeItem {
 enum IllustrationFailure {
     static func message(for code: String) -> String {
         switch code {
+        case "illustration_geometry_invalid": return "Иллюстрация не совпала с посадкой на манекене. Исходное фото сохранено. Можно повторить подготовку."
+        case "illustration_type_unsupported": return "Для посадки нужно уточнить тип вещи. Выберите его в карточке и повторите подготовку."
         case "illustration_unavailable": return "Создание иллюстраций пока недоступно. Фото и вырезка сохранены."
         case "illustration_payload_too_large": return "Фото вместе с сохранёнными вырезками слишком большие для отправки. Уберите дополнительный ракурс или замените снимок меньшим."
         case "prepared_source_missing": return "Не удалось прочитать сохранённую вырезку исходного фото. Предыдущая версия сохранена; для другого снимка добавьте новую вещь."

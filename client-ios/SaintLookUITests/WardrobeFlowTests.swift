@@ -265,7 +265,8 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(restored.staticTexts["illustration-saved"].waitForExistence(timeout: 30),
                       "A successful replay must publish the durable candidate locally")
         XCTAssertTrue(restored.buttons["show-illustration"].isEnabled)
-        try tapVisibleButton("show-illustration", in: restored)
+        XCTAssertTrue(restored.buttons["show-illustration"].isSelected, "The first complete result becomes the main image automatically")
+        XCTAssertFalse(restored.buttons["show-cutout"].exists, "Intermediate background removal is not a user-facing result")
         XCTAssertTrue(restored.images["item-photo"].firstMatch.exists)
         try await control(mode: "offline")
         restored.terminate()
@@ -274,7 +275,7 @@ final class WardrobeFlowTests: XCTestCase {
         try openFirstItem(in: committed)
         XCTAssertTrue(committed.buttons["show-illustration"].isEnabled,
                       "The committed illustration remains available after an offline restart")
-        try tapVisibleButton("show-illustration", in: committed)
+        XCTAssertTrue(committed.buttons["show-illustration"].isSelected, "Reopening a complete item defaults to its illustration")
         XCTAssertTrue(committed.images["item-photo"].firstMatch.exists)
         let finalState = try await transportState()
         XCTAssertEqual(finalState["illustrationOperations"] as? Int, 1)
@@ -485,7 +486,7 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["show-original"].waitForExistence(timeout: 5))
         app.buttons["show-original"].tap()
         XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
-        app.buttons["show-cutout"].tap()
+        XCTAssertFalse(app.buttons["show-cutout"].exists)
         for _ in 0..<4 where !app.staticTexts["illustration-unavailable"].isHittable { app.swipeUp() }
         XCTAssertTrue(app.staticTexts["illustration-unavailable"].exists)
         XCTAssertFalse(app.buttons["generate-illustration"].isEnabled)

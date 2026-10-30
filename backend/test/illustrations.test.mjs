@@ -237,8 +237,9 @@ test('ready illustration survives restart, expires after seven days, and old ack
   const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
   const input = illustration(photo, { manualType: 'Худи', manualColors: ['Чёрный'] }); await requestIllustration(server, photo.itemId, input);
   const ready = await waitForIllustration(server, photo.itemId, input.operationId);
+  const beforeRestart = Buffer.from(await (await server.request(ready.resultPath)).arrayBuffer());
   await server.stop(); const restarted = await env.launch(config);
-  assert.deepEqual(Buffer.from(await (await restarted.request(ready.resultPath)).arrayBuffer()), fixture.result);
+  assert.deepEqual(Buffer.from(await (await restarted.request(ready.resultPath)).arrayBuffer()), beforeRestart);
   await writeFile(clock, JSON.stringify({ offsetMs: 8 * 24 * 60 * 60 * 1000 }));
   assert.equal((await restarted.request(ready.resultPath)).status, 410);
   const expired = await restarted.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}`);
@@ -261,7 +262,7 @@ test('multicolor JEV observations use the five most confident canonical colors b
   assert.deepEqual(ready.observedFeatures.colors, ['Белый', 'Оранжевый', 'Чёрный', 'Зелёный', 'Красный']);
   assert.deepEqual(ready.effectiveFeatures.colors, ready.observedFeatures.colors);
   const prompt = fixture.calls.generation[0].interaction.input.at(-1).text;
-  const effective = JSON.parse(prompt.slice(prompt.indexOf('{')));
+  const effective = JSON.parse(prompt.split('take precedence): ')[1]);
   assert.deepEqual(effective.colors, ['Белый', 'Оранжевый', 'Чёрный', 'Зелёный', 'Красный']);
 });
 

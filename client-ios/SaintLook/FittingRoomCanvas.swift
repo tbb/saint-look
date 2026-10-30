@@ -17,7 +17,7 @@ struct FittingRoomCanvas: View {
             guard let item = store.items.first(where: { $0.id == slot.itemID }) else {
                 return slot.needsReplacement ? "\(slot.zone.title): нужна замена" : nil
             }
-            let state = store.illustrationURL(for: item) == nil ? "без иллюстрации, фото ниже" : "иллюстрация"
+            let state = store.fittingIllustrationURL(for: item) == nil ? "без иллюстрации, фото ниже" : "иллюстрация"
             return "\(slot.zone.title): \(item.displayedType ?? "вещь"), \(state)"
         }
         return selected.isEmpty ? "Пустой манекен. Вещи не выбраны" : "Манекен. " + selected.joined(separator: ". ")
@@ -30,7 +30,7 @@ struct FittingRoomCanvas: View {
                 .fill(.secondary.opacity(0.20))
             ForEach(renderedSlots) { slot in
                 if let item = store.items.first(where: { $0.id == slot.itemID }),
-                   let url = store.illustrationURL(for: item),
+                   let url = store.fittingIllustrationURL(for: item),
                    let image = UIImage(contentsOfFile: url.path) {
                     Image(uiImage: image)
                         .resizable()

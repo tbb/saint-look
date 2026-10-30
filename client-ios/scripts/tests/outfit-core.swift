@@ -1038,6 +1038,8 @@ struct OutfitCoreChecks {
         try file.save(WardrobeCatalog(items: [legacy]))
         let restoredLegacy = try file.load().items[0]
         precondition(restoredLegacy.hasPreparedVersion)
+        precondition(restoredLegacy.needsFittingUpdate, "A legacy image remains saved but cannot cover the mannequin")
+        precondition(!(try preparedFixture(item)).needsFittingUpdate, "A current anchored publication can be fitted")
         precondition(restoredLegacy.publishedVersion?.illustration?.response.modelVersion == "fal-ai/nano-banana-pro/edit")
         for model in [IllustrationContract.currentModelVersion, "fal-ai/nano-banana-pro/edit", "unapproved-renderer"] {
             let cached = IllustrationPreparedPhoto(photoID: item.photoVersionID, filename: "prepared.png",
@@ -1134,7 +1136,8 @@ struct OutfitCoreChecks {
             photoVersionId: request.photoVersionID, sourceSetVersionId: request.sourceSetVersionID, revision: request.revision,
             status: .ready, mode: "test", processing: [:], observedFeatures: features, effectiveFeatures: features,
             manualType: request.manualType, manualColors: request.manualColors, modelVersion: modelVersion,
-            templateVersion: "front-360x560-proposed-v1", geometryVersion: "fitting-square-1024-v1", resultPath: nil, error: nil,
+            templateVersion: modelVersion == IllustrationContract.currentModelVersion ? IllustrationContract.currentTemplateVersion : "front-360x560-proposed-v1",
+            geometryVersion: modelVersion == IllustrationContract.currentModelVersion ? IllustrationContract.currentGeometryVersion : "fitting-square-1024-v1", resultPath: nil, error: nil,
             preparedSources: [IllustrationPreparedSource(photoId: item.photoVersionID, preparedPath: "/prepared")])
         return IllustrationResult(filename: filename, response: response)
     }

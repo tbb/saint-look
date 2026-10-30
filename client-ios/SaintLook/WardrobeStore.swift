@@ -189,7 +189,7 @@ final class WardrobeStore: ObservableObject {
                 item.sourceSetVersionID = UUID()
                 item.preparation = nil
                 item.downloadedIllustration = nil
-                item.automaticallyIllustrate = false
+                item.automaticallyIllustrate = true
                 if item.illustration?.status == .pending {
                     item.illustration?.status = .failed
                     item.illustration?.error = "source_changed"
@@ -229,7 +229,7 @@ final class WardrobeStore: ObservableObject {
 
     func displayImage(for item: WardrobeItem) -> UIImage? {
         guard let directory else { return nil }
-        let filename = item.displayedCutoutFilename ?? item.uploadFilename
+        let filename = item.displayedIllustration?.filename ?? item.uploadFilename
         let path = directory.appendingPathComponent(item.directoryName).appendingPathComponent(filename)
         return UIImage(contentsOfFile: path.path)
     }
@@ -327,6 +327,11 @@ final class WardrobeStore: ObservableObject {
                     try self?.restartPreparationAfterSpaceChange(config)
                     self?.startNewItemIllustrations()
                     self?.startNextPreparation()
+                    if !config.newItemPreparation.available,
+                       self?.items.contains(where: { $0.automaticallyIllustrate && $0.status == .ready }) == true {
+                        try await Task.sleep(nanoseconds: 5_000_000_000)
+                        continue
+                    }
                     self?.modeTask = nil
                     return
                 } catch {
@@ -629,6 +634,11 @@ extension WardrobeStore {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
+    func fittingIllustrationURL(for item: WardrobeItem) -> URL? {
+        guard !item.needsFittingUpdate else { return nil }
+        return illustrationURL(for: item)
+    }
+
     func requestIllustration(_ id: UUID) {
         guard storageAvailable, let index = items.firstIndex(where: { $0.id == id }),
               !items[index].isReconcilingLegacyPublication, items[index].pendingPublication == nil,
@@ -666,12 +676,9 @@ extension WardrobeStore {
         for item in items where item.automaticallyIllustrate && item.status == .ready {
             if illustrationAvailable && preparationConfiguration?.newItemPreparation.available == true {
                 requestIllustration(item.id)
-            } else if let index = items.firstIndex(where: { $0.id == item.id }) {
-                var updated = items
-                updated[index].automaticallyIllustrate = false
-                do { try persist(updated); items = updated }
-                catch { notice = "Не удалось сохранить состояние иллюстрации." }
             }
+            // A temporarily unavailable provider must not discard the required
+            // preparation intent. Foreground/config discovery resumes it.
         }
     }
 

@@ -17,7 +17,8 @@ let nextAttributes = null;
 let nextCutout = null;
 let illustrationMode = null;
 let illustrationPreparationCalls = 0, illustrationAttributesCalls = 0, illustrationGenerationCalls = 0, illustrationFinalizationCalls = 0;
-const illustrationCutout = await sharp(blue).resize(1024, 1024, { fit: 'contain', background: '#00000000' }).png().toBuffer();
+const illustrationCutout = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: '#00000000' } })
+  .composite([{ input: await sharp(blue).resize(260, 300, { fit: 'contain', background: '#00000000' }).png().toBuffer(), left: 382, top: 250 }]).png().toBuffer();
 const illustrationImage = await sharp(illustrationCutout).flatten({ background: '#ffffff' }).jpeg().toBuffer();
 const illustrationInteraction = { id: 'v1_ui-fixture', model: 'gemini-3-pro-image', status: 'completed', steps: [{ type: 'model_output', content: [
   { type: 'image', mime_type: 'image/jpeg', data: illustrationImage.toString('base64') },
