@@ -450,7 +450,7 @@ enum IllustrationFailure {
         switch code {
         case "illustration_geometry_invalid": return "Иллюстрация не совпала с посадкой на манекене. Исходное фото сохранено. Можно повторить подготовку."
         case "illustration_type_unsupported": return "Для посадки нужно уточнить тип вещи. Выберите его в карточке и повторите подготовку."
-        case "illustration_unavailable": return "Создание иллюстраций пока недоступно. Фото и вырезка сохранены."
+        case "illustration_unavailable": return "Создание иллюстраций пока недоступно. Фото сохранено."
         case "illustration_payload_too_large": return "Фото вместе с сохранёнными вырезками слишком большие для отправки. Уберите дополнительный ракурс или замените снимок меньшим."
         case "prepared_source_missing": return "Не удалось прочитать сохранённую вырезку исходного фото. Предыдущая версия сохранена; для другого снимка добавьте новую вещь."
         case "processing_in_progress": return "Предыдущая подготовка ещё идёт. Повторите обновление позже."

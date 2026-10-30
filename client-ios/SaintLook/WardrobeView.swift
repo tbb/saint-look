@@ -191,9 +191,7 @@ private struct ItemProcessingStatus: View {
                     .accessibilityIdentifier("failed-status")
             }
             if item.status != .ready, item.resultFilename != nil {
-                Text(item.resultMode == .demo
-                     ? "Пока показана предыдущая тестовая вырезка. Новая ещё не готова."
-                     : "Пока показана предыдущая вырезка. Новая ещё не готова.")
+                Text("Новое фото сохранено. Нужно завершить подготовку вещи.")
                     .accessibilityIdentifier("previous-result-notice")
             }
             if let error = item.errorMessage {
@@ -322,7 +320,7 @@ private struct ItemDetailView: View {
                 .accessibilityIdentifier("illustration-sources")
             }
             if store.illustrationAvailable == false && item.publishedVersion?.illustration == nil && item.downloadedIllustration == nil {
-                Text("Создание иллюстраций пока недоступно. Фото и вырезка сохранены.")
+                Text("Создание иллюстраций пока недоступно. Фото сохранено.")
                     .font(.footnote).foregroundStyle(.secondary)
                     .accessibilityIdentifier("illustration-unavailable")
             }

@@ -236,7 +236,7 @@ jobs:
           fi
           if [[ "$TEST_SUITE" == "wardrobe-recovery" ]]; then
             export SAINT_LOOK_UI_TEST_ONLY="SaintLookUITests/WardrobeFlowTests/testCancelDeletionKeepsPhotoAndDoesNotSendDelete
-          SaintLookUITests/WardrobeFlowTests/testOfflineReplacementRetainsPreviousCutoutAndEditsUntilNewResultAfterRelaunch
+          SaintLookUITests/WardrobeFlowTests/testOfflineReplacementShowsCurrentOriginalAndPreservesEditsAfterRelaunch
           SaintLookUITests/WardrobeFlowTests/testOpeningPhotoKeepsItemContextThroughEditingAndBackToCollection"
           fi
           bash client-ios/scripts/test-simulator.sh

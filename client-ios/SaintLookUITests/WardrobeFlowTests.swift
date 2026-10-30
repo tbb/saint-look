@@ -1142,7 +1142,7 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testOfflineReplacementRetainsPreviousCutoutAndEditsUntilNewResultAfterRelaunch() async throws {
+    func testOfflineReplacementShowsCurrentOriginalAndPreservesEditsAfterRelaunch() async throws {
         let app = launch(reset: true, baseURL: testURL)
         app.buttons["add-demo-photo"].tap()
         await waitForSummary(app, ready: 1, pending: 0)
@@ -1168,8 +1168,10 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["pending-status"].firstMatch.waitForExistence(timeout: 5))
         assertRecoveryDidNotOpenPhotoPicker(in: app)
         XCTAssertTrue(app.staticTexts["previous-result-notice"].exists)
-        XCTAssertTrue(app.images["item-photo"].firstMatch.screenshot().pngRepresentation == previousImage,
-                       "The previous cutout must remain visible instead of the red replacement source")
+        let replacementImage = app.images["item-photo"].firstMatch.screenshot().pngRepresentation
+        XCTAssertNotEqual(replacementImage, previousImage,
+                          "Before the first illustration, the current replacement source is the visible result")
+        XCTAssertFalse(app.buttons["show-cutout"].exists)
         // Replace again before either new photo reaches the server; the persisted revision may skip one.
         try tapVisibleButton("replace-demo-photo", in: app)
         assertRecoveryDidNotOpenPhotoPicker(in: app)
@@ -1179,8 +1181,8 @@ final class WardrobeFlowTests: XCTestCase {
         let restored = launch(reset: false, baseURL: testURL)
         try openFirstItem(in: restored)
         XCTAssertTrue(restored.staticTexts["previous-result-notice"].waitForExistence(timeout: 5))
-        XCTAssertTrue(restored.images["item-photo"].firstMatch.screenshot().pngRepresentation == previousImage,
-                      "The same previous cutout must survive offline relaunch")
+        XCTAssertEqual(restored.images["item-photo"].firstMatch.screenshot().pngRepresentation, replacementImage,
+                       "The current source must survive an offline relaunch")
         XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
         XCTAssertTrue(restored.staticTexts["Белый"].exists)
         _ = try await providerControl(["nextCutout": "red"])
@@ -1189,8 +1191,8 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertFalse(restored.staticTexts["previous-result-notice"].exists)
         XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
         XCTAssertTrue(restored.staticTexts["Белый"].exists)
-        XCTAssertFalse(restored.images["item-photo"].firstMatch.screenshot().pngRepresentation == previousImage,
-                          "The new red cutout must replace the previous blue one after becoming ready")
+        XCTAssertEqual(restored.images["item-photo"].firstMatch.screenshot().pngRepresentation, replacementImage,
+                       "A technical cutout must not replace the visible original before illustration is ready")
         let state = try await transportState()
         XCTAssertEqual(state["acceptedOperations"] as? Int, 2)
         XCTAssertEqual(state["forwardedUploads"] as? Int, 2)
