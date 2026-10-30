@@ -1039,7 +1039,8 @@ struct OutfitCoreChecks {
         let restoredLegacy = try file.load().items[0]
         precondition(restoredLegacy.hasPreparedVersion)
         precondition(restoredLegacy.needsFittingUpdate, "A legacy image remains saved but cannot cover the mannequin")
-        precondition(!(try preparedFixture(item)).needsFittingUpdate, "A current anchored publication can be fitted")
+        let currentFit = try preparedFixture(item)
+        precondition(!currentFit.needsFittingUpdate, "A current anchored publication can be fitted")
         precondition(restoredLegacy.publishedVersion?.illustration?.response.modelVersion == "fal-ai/nano-banana-pro/edit")
         for model in [IllustrationContract.currentModelVersion, "fal-ai/nano-banana-pro/edit", "unapproved-renderer"] {
             let cached = IllustrationPreparedPhoto(photoID: item.photoVersionID, filename: "prepared.png",
