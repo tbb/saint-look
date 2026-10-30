@@ -82,20 +82,35 @@ final class OutfitFlowTests: XCTestCase {
 
     private func benchmarkEnvironment() throws -> [String: String] {
         let source = ProcessInfo.processInfo.environment
-        let keys = ["SAINT_LOOK_BENCHMARK", "SAINT_LOOK_BENCHMARK_ORIGIN", "SAINT_LOOK_BENCHMARK_TOKEN",
-                    "SAINT_LOOK_BENCHMARK_MANIFEST_SHA256", "SAINT_LOOK_BENCHMARK_REVISION"]
-        guard keys.allSatisfy({ source[$0]?.isEmpty == false }), source["SAINT_LOOK_BENCHMARK"] == "1",
-              source["SAINT_LOOK_BENCHMARK_ORIGIN"]!.range(of: "^http://127\\.0\\.0\\.1:[0-9]{1,5}/?$", options: .regularExpression) != nil,
-              let origin = URL(string: source["SAINT_LOOK_BENCHMARK_ORIGIN"]!), origin.scheme == "http",
-              origin.host == "127.0.0.1", let port = origin.port, (1...65535).contains(port),
-              origin.user == nil, origin.password == nil, origin.query == nil, origin.fragment == nil,
-              ["", "/"].contains(origin.path),
-              source["SAINT_LOOK_BENCHMARK_TOKEN"]!.range(of: "^bench-[a-f0-9]{64}$", options: .regularExpression) != nil,
+        let publicFixture = source["SAINT_LOOK_BENCHMARK_PUBLIC"] == "1"
+        let keys = ["SAINT_LOOK_BENCHMARK", "SAINT_LOOK_BENCHMARK_ORIGIN", "SAINT_LOOK_BENCHMARK_MANIFEST_SHA256",
+                    "SAINT_LOOK_BENCHMARK_REVISION"] + (publicFixture ? [] : ["SAINT_LOOK_BENCHMARK_TOKEN"])
+        let rawOrigin = source["SAINT_LOOK_BENCHMARK_ORIGIN"] ?? ""
+        let origin = URL(string: rawOrigin)
+        let validOrigin: Bool
+        if publicFixture {
+            validOrigin = rawOrigin.range(of: "^https://[^/?#]+/?$", options: .regularExpression) != nil
+                && origin?.scheme == "https" && origin?.host != nil && origin?.host != "127.0.0.1"
+                && (origin?.port.map { (1...65535).contains($0) } ?? true)
+                && origin?.user == nil && origin?.password == nil && origin?.query == nil && origin?.fragment == nil
+                && ["", "/"].contains(origin?.path ?? "")
+        } else {
+            validOrigin = rawOrigin.range(of: "^http://127\\.0\\.0\\.1:[0-9]{1,5}/?$", options: .regularExpression) != nil
+                && origin?.scheme == "http" && origin?.host == "127.0.0.1"
+                && origin?.port.map { (1...65535).contains($0) } == true
+                && origin?.user == nil && origin?.password == nil && origin?.query == nil && origin?.fragment == nil
+                && ["", "/"].contains(origin?.path ?? "")
+        }
+        guard keys.allSatisfy({ source[$0]?.isEmpty == false }), source["SAINT_LOOK_BENCHMARK"] == "1", validOrigin,
               source["SAINT_LOOK_BENCHMARK_MANIFEST_SHA256"]!.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
-              source["SAINT_LOOK_BENCHMARK_REVISION"]!.range(of: "^[a-f0-9]{40}$", options: .regularExpression) != nil else {
+              source["SAINT_LOOK_BENCHMARK_REVISION"]!.range(of: "^[a-f0-9]{40}$", options: .regularExpression) != nil,
+              publicFixture ? (source["SAINT_LOOK_BENCHMARK_TOKEN"] == nil) :
+                (source["SAINT_LOOK_BENCHMARK_TOKEN"]!.range(of: "^bench-[a-f0-9]{64}$", options: .regularExpression) != nil) else {
             throw BenchmarkFailure.invalidConfiguration
         }
-        return Dictionary(uniqueKeysWithValues: keys.map { ($0, source[$0]!) })
+        var values = Dictionary(uniqueKeysWithValues: keys.map { ($0, source[$0]!) })
+        if publicFixture { values["SAINT_LOOK_BENCHMARK_PUBLIC"] = "1" }
+        return values
     }
 
     private func benchmarkJSON(_ path: String, environment: [String: String]) async throws -> [String: Any] {
@@ -106,10 +121,13 @@ final class OutfitFlowTests: XCTestCase {
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 20
-        request.setValue("Bearer " + environment["SAINT_LOOK_BENCHMARK_TOKEN"]!, forHTTPHeaderField: "Authorization")
+        if environment["SAINT_LOOK_BENCHMARK_PUBLIC"] != "1" {
+            request.setValue("Bearer " + environment["SAINT_LOOK_BENCHMARK_TOKEN"]!, forHTTPHeaderField: "Authorization")
+        }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.urlCredentialStorage = nil
+        configuration.httpShouldSetCookies = false
         let session = URLSession(configuration: configuration, delegate: BenchmarkRedirectBlocker(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         let (data, response) = try await session.data(for: request)
@@ -133,11 +151,14 @@ final class OutfitFlowTests: XCTestCase {
             throw BenchmarkFailure.invalidResponse
         }
         let app = XCUIApplication()
-        app.launchEnvironment = environment.merging([
+        var appEnvironment = environment.merging([
             "SAINT_LOOK_BASE_URL": environment["SAINT_LOOK_BENCHMARK_ORIGIN"]!,
-            "SAINT_LOOK_OWNER_TOKEN": environment["SAINT_LOOK_BENCHMARK_TOKEN"]!,
             "SAINT_LOOK_UI_TESTING": "1", "SAINT_LOOK_RESET_DATA": "1"
         ]) { _, supplied in supplied }
+        if environment["SAINT_LOOK_BENCHMARK_PUBLIC"] != "1" {
+            appEnvironment["SAINT_LOOK_OWNER_TOKEN"] = environment["SAINT_LOOK_BENCHMARK_TOKEN"]!
+        }
+        app.launchEnvironment = appEnvironment
         app.launch()
         defer { app.terminate() }
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
@@ -199,24 +220,44 @@ final class OutfitFlowTests: XCTestCase {
                   let last = requests.last, last["items"] as? Int == count,
                   last["endpoint"] as? String == "/v1/recommendations/single", last["status"] as? Int == 200,
                   last["outcome"] as? String == "proposed", let bytes = last["payloadBytes"] as? Int, bytes > 0,
-                  let elapsed = last["elapsedMilliseconds"] as? Double, elapsed >= 0 else { throw BenchmarkFailure.invalidResponse }
+                  let elapsed = last["elapsedMilliseconds"] as? Double, elapsed >= 0,
+                  let wireSHA = last["wireSHA256"] as? String,
+                  wireSHA.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+                  let canonicalSHA = last["canonicalSHA256"] as? String,
+                  canonicalSHA.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+                  let wireBytes = last["wireBytes"] as? Int, wireBytes == bytes else { throw BenchmarkFailure.invalidResponse }
+            if let previous = beforeRequests.last {
+                XCTAssertNotEqual(wireSHA, previous["wireSHA256"] as? String,
+                                  "The two real wire bodies differ because only request and snapshot UUIDs vary")
+                XCTAssertEqual(canonicalSHA, previous["canonicalSHA256"] as? String,
+                               "The fixed fixture fields must retain the same canonical request hash")
+            }
             let record: [String: Any] = ["evidence": "real-ios-cached-recommendation-observed-upper-bound", "phase": phase,
                 "datasetItems": count, "uniqueSourcePhotographs": 4, "syntheticClones": true,
                 "baselineRevision": "73700bab547ed71113dbf27db18136e054a1cca2",
                 "benchmarkRevision": environment["SAINT_LOOK_BENCHMARK_REVISION"]!, "spaceID": expectedSpace,
                 "requestId": last["requestId"] as? String ?? "", "snapshotId": last["snapshotId"] as? String ?? "",
                 "HTTPPayloadBytes": bytes, "serverHTTPMilliseconds": elapsed,
+                "wireSHA256": wireSHA, "wireBytes": wireBytes, "canonicalSHA256": canonicalSHA,
                 "tapToFirstObservedScreenshotUpperBoundMilliseconds": upperBoundMilliseconds,
                 "device": ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] ?? "iOS Simulator",
                 "operatingSystem": ProcessInfo.processInfo.operatingSystemVersionString,
                 "testHostLogicalProcessors": ProcessInfo.processInfo.processorCount,
                 "testHostPhysicalMemoryBytes": ProcessInfo.processInfo.physicalMemory,
-                "connectionClass": "GitHub Mac Simulator to same-runner loopback real backend",
-                "limitations": ["Includes native tap, catalog/serialization, loopback HTTP, real ranking, apply, AX observation and screenshot overhead.",
+                "connectionClass": environment["SAINT_LOOK_BENCHMARK_PUBLIC"] == "1"
+                    ? "GitHub Mac Simulator to operator-hosted public HTTPS isolated synthetic backend"
+                    : "GitHub Mac Simulator to same-runner loopback real backend",
+                "limitations": [environment["SAINT_LOOK_BENCHMARK_PUBLIC"] == "1"
+                    ? "Includes native tap, catalog/serialization, public HTTPS round trip, real ranking, apply, AX observation and screenshot overhead."
+                    : "Includes native tap, catalog/serialization, loopback HTTP, real ranking, apply, AX observation and screenshot overhead.",
                     "Upper bound, not an exact first rendered frame or a two-second guarantee; two observations are not p95.",
                     "The isolated catalog uses synthetic image fixtures copied from four public photographs; this is not live image-provider acceptance.",
-                    "The real encoder runs once per public photograph on the Mac runner; requests use 300 cached clones of those four vectors.",
-                    "Same-runner loopback excludes Internet and Fly latency. Repeated vectors are not 300 distinct things or taste acceptance."]]
+                    environment["SAINT_LOOK_BENCHMARK_PUBLIC"] == "1"
+                        ? "The real encoder ran once per public photograph when the isolated bundle was prepared on its Linux host; requests use 300 cached clones of those four vectors."
+                        : "The real encoder runs once per public photograph on the Mac runner; requests use 300 cached clones of those four vectors.",
+                    environment["SAINT_LOOK_BENCHMARK_PUBLIC"] == "1"
+                        ? "Uses remote public HTTPS to an operator-hosted isolated synthetic backend; includes WAN latency but is not production Fly300 or taste acceptance."
+                        : "Same-runner loopback excludes Internet and Fly latency. Repeated vectors are not 300 distinct things or taste acceptance."]]
             let data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
             print("BENCHMARK_REAL_IOS " + String(decoding: data, as: UTF8.self))
             if phase == "first-after-app-launch-warm-backend" {

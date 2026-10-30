@@ -1,5 +1,15 @@
 import Foundation
 
+#if DEBUG
+private final class PublicBenchmarkRedirectBlocker: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+#endif
+
 struct BackendClient {
     let settings: ConnectionSettings
 
@@ -8,7 +18,20 @@ struct BackendClient {
         var request = URLRequest(url: base.appendingPathComponent(path))
         request.httpMethod = method
         request.timeoutInterval = 15
+        #if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        let publicFixture = environment["SAINT_LOOK_UI_TESTING"] == "1"
+            && environment["SAINT_LOOK_BENCHMARK"] == "1" && environment["SAINT_LOOK_BENCHMARK_PUBLIC"] == "1"
+        if publicFixture {
+            guard settings.token.isEmpty, base.scheme == "https", environment["SAINT_LOOK_OWNER_TOKEN"] == nil else {
+                throw ClientError.invalidSettings
+            }
+        } else {
+            request.setValue("Bearer \(settings.token)", forHTTPHeaderField: "Authorization")
+        }
+        #else
         request.setValue("Bearer \(settings.token)", forHTTPHeaderField: "Authorization")
+        #endif
         request.cachePolicy = .reloadIgnoringLocalCacheData
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -18,7 +41,23 @@ struct BackendClient {
     }
 
     private func send(_ request: URLRequest, expectedStatus: Int? = nil) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response): (Data, URLResponse)
+        #if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        if environment["SAINT_LOOK_UI_TESTING"] == "1" && environment["SAINT_LOOK_BENCHMARK"] == "1"
+            && environment["SAINT_LOOK_BENCHMARK_PUBLIC"] == "1" {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.httpCookieStorage = nil; configuration.urlCredentialStorage = nil
+            configuration.httpShouldSetCookies = false
+            let session = URLSession(configuration: configuration, delegate: PublicBenchmarkRedirectBlocker(), delegateQueue: nil)
+            defer { session.invalidateAndCancel() }
+            (data, response) = try await session.data(for: request)
+        } else {
+            (data, response) = try await URLSession.shared.data(for: request)
+        }
+        #else
+        (data, response) = try await URLSession.shared.data(for: request)
+        #endif
         guard let response = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
         if [400, 409, 410, 503].contains(response.statusCode) {
             struct Failure: Decodable { let error: String }

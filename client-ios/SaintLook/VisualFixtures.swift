@@ -131,7 +131,7 @@ enum VisualFixtures {
         let sourceProvenance: String
         let benchmarkRevision: String
         let spaceID: String
-        let tokenSHA256: String
+        let tokenSHA256: String?
         let assets: [Asset]
         let items: [Entry]
     }
@@ -150,17 +150,28 @@ enum VisualFixtures {
         func matches(_ value: String?, _ pattern: String) -> Bool {
             value?.range(of: pattern, options: .regularExpression) != nil
         }
+        let publicFixture = environment["SAINT_LOOK_BENCHMARK_PUBLIC"] == "1"
         let token = environment["SAINT_LOOK_BENCHMARK_TOKEN"] ?? ""
+        let rawOrigin = environment["SAINT_LOOK_BENCHMARK_ORIGIN"] ?? ""
+        let origin = URL(string: rawOrigin)
+        let originPattern = publicFixture ? "^https://[^/?#]+/?$" : "^http://127\\.0\\.0\\.1:[0-9]{1,5}/?$"
+        let validOrigin: Bool
+        if publicFixture {
+            validOrigin = origin?.scheme == "https" && origin?.host != nil && origin?.host != "127.0.0.1"
+                && (origin?.port.map { (1...65535).contains($0) } ?? true)
+        } else {
+            validOrigin = origin?.scheme == "http" && origin?.host == "127.0.0.1"
+                && (origin?.port.map { (1...65535).contains($0) } ?? false)
+        }
         guard environment["SAINT_LOOK_BENCHMARK"] == "1", environment["SAINT_LOOK_UI_TESTING"] == "1",
               ["0", "1"].contains(environment["SAINT_LOOK_RESET_DATA"] ?? ""),
               environment["SAINT_LOOK_VISUAL_SCENARIO"] == nil,
-              let rawOrigin = environment["SAINT_LOOK_BENCHMARK_ORIGIN"], let origin = URL(string: rawOrigin),
-              matches(rawOrigin, "^http://127\\.0\\.0\\.1:[0-9]{1,5}/?$"),
-              origin.scheme == "http", origin.host == "127.0.0.1", let port = origin.port, (1...65535).contains(port),
+              matches(rawOrigin, originPattern), let origin, validOrigin,
               origin.user == nil, origin.password == nil, origin.query == nil, origin.fragment == nil,
               ["", "/"].contains(origin.path),
-              environment["SAINT_LOOK_BASE_URL"] == rawOrigin, environment["SAINT_LOOK_OWNER_TOKEN"] == token,
-              matches(token, "^bench-[a-f0-9]{64}$"),
+              environment["SAINT_LOOK_BASE_URL"] == rawOrigin,
+              publicFixture ? (token.isEmpty && environment["SAINT_LOOK_OWNER_TOKEN"] == nil) : (environment["SAINT_LOOK_OWNER_TOKEN"] == token),
+              publicFixture || matches(token, "^bench-[a-f0-9]{64}$"),
               matches(environment["SAINT_LOOK_BENCHMARK_MANIFEST_SHA256"], "^[a-f0-9]{64}$"),
               matches(environment["SAINT_LOOK_BENCHMARK_REVISION"], "^[a-f0-9]{40}$"),
               token != (Bundle.main.object(forInfoDictionaryKey: "SaintLookDefaultOwnerToken") as? String) else {
@@ -176,10 +187,11 @@ enum VisualFixtures {
         guard manifest.schemaVersion == 1, [4, 300].contains(manifest.count), manifest.uniqueSources == 4,
               manifest.sourceRevision == "73700bab547ed71113dbf27db18136e054a1cca2",
               manifest.imageProviders == "synthetic-public-photo-copies",
-              manifest.sourceProvenance == "public-manifest-encoder-on-runner",
+              manifest.sourceProvenance == (publicFixture ? "public-manifest-encoder-on-isolated-linux-host" : "public-manifest-encoder-on-runner"),
               manifest.benchmarkRevision == environment["SAINT_LOOK_BENCHMARK_REVISION"],
               manifest.spaceID == "df268e5dab58fc14040ec8d5966455e546943406bf04380d24ee8ffcf4ca7e17",
-              manifest.tokenSHA256 == (try benchmarkDigest(Data(token.utf8))), manifest.items.count == manifest.count,
+              publicFixture ? manifest.tokenSHA256 == nil : manifest.tokenSHA256 == (try benchmarkDigest(Data(token.utf8))),
+              (!publicFixture || manifest.count == 300), manifest.items.count == manifest.count,
               manifest.assets.count <= 512, Set(manifest.assets.map(\.name)).count == manifest.assets.count else {
             throw FixtureError.invalidConfiguration
         }
@@ -293,7 +305,10 @@ enum VisualFixtures {
         guard let body = items.first(where: { OutfitZone.body.accepts($0, taxonomy: taxonomy) }),
               let bottom = items.first(where: { OutfitZone.bottom.accepts($0, taxonomy: taxonomy) }) else { throw FixtureError.invalidConfiguration }
         // A valid saved look is opened, then its body is cleared through the UI before measuring a draft.
-        var outfit = Outfit(id: UUID(uuidString: "36000004-0000-4000-8000-000000000300")!, name: "Benchmark300")
+        let slots = publicFixture ? OutfitZone.allCases.enumerated().map { index, zone in
+            OutfitSlot(id: UUID(uuidString: "36000005-0000-4000-8000-\(String(format: "%012d", index))")!, zone: zone)
+        } : nil
+        var outfit = Outfit(id: UUID(uuidString: "36000004-0000-4000-8000-000000000300")!, name: "Benchmark300", slots: slots)
         outfit.selectItem(body.id, for: outfit.slots[1].id); outfit.selectItem(bottom.id, for: outfit.slots[2].id)
         let file = WardrobeCatalogFile(directory: root)
         try file.save(WardrobeCatalog(items: items, pendingAcknowledgements: [], outfits: [outfit]))

@@ -1,6 +1,6 @@
 // Explicit, temporary load fixture. Never a production publication/import API.
 import assert from 'node:assert/strict';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, readFileSync } from 'node:fs';
@@ -13,6 +13,7 @@ import { canonicalFeatures, canonicalText, featureDigest, validateObserved } fro
 
 import { observableChoices } from '../src/illustration-features.mjs';
 import { illustrationTaxonomy, illustrationVersions } from '../src/illustration-provider.mjs';
+import { canonicalSingleRequestHash, createPublicBenchmarkProxy } from './ios-benchmark-public-proxy.mjs';
 
 const SOURCE_IDS = ['light-polo', 'pub-03', 'pub-13', 'black-jeans'];
 export const baseline = '73700bab547ed71113dbf27db18136e054a1cca2';
@@ -74,7 +75,7 @@ async function loadSources(directory) {
   return records;
 }
 
-async function exportFixture({ source, count, token, revision, bundleDirectory }) {
+async function exportFixture({ source, count, token, revision, bundleDirectory, publicFixture }) {
   check([4, 300].includes(count), 'unsupported_item_count');
   const sources = await loadSources(source), assets = new Map(), items = [], packets = [];
   for (const original of sources) for (const kind of ['source', 'cutout', 'illustration', 'prepared']) {
@@ -110,8 +111,9 @@ async function exportFixture({ source, count, token, revision, bundleDirectory }
       license: entry.attribution.license, licenseURL: entry.attribution.licenseUrl, sourceSHA256: entry.sha256 };
   }));
   const manifest = { schemaVersion: 1, count, uniqueSources: 4, sourceRevision: baseline, benchmarkRevision: revision, sourceAttribution,
-    spaceID: realSpace, tokenSHA256: sha(token), provenance: 'isolated synthetic clones of four public real-encoder inputs',
-    imageProviders: 'synthetic-public-photo-copies', sourceProvenance: 'public-manifest-encoder-on-runner',
+    spaceID: realSpace, ...(publicFixture ? {} : { tokenSHA256: sha(token) }), provenance: 'isolated synthetic clones of four public real-encoder inputs',
+    imageProviders: 'synthetic-public-photo-copies', sourceProvenance: publicFixture
+      ? 'public-manifest-encoder-on-isolated-linux-host' : 'public-manifest-encoder-on-runner',
     assets: [...assets].map(([name, bytes]) => ({ name, sha256: sha(bytes), bytes: bytes.length })), items };
   await mkdir(bundleDirectory, { mode: 0o700 });
   const manifestBytes = Buffer.from(JSON.stringify(manifest));
@@ -120,7 +122,7 @@ async function exportFixture({ source, count, token, revision, bundleDirectory }
     check(safeAsset(name), 'invalid_asset_name');
     await privateWrite(join(bundleDirectory, name), bytes);
   }
-  return { manifest, manifestSHA256: sha(manifestBytes), packets };
+  return { manifest, manifestSHA256: sha(manifestBytes), packets, sourceRecords: sources };
 }
 
 function processTreeRSS(pid) {
@@ -182,6 +184,7 @@ export async function startBenchmark(options) {
   check(/^bench-[a-f0-9]{64}$/.test(options.token), 'invalid_benchmark_token');
   check([4, 300].includes(options.count), 'unsupported_item_count');
   check(Number.isInteger(options.ttlSeconds) && options.ttlSeconds >= 30 && options.ttlSeconds <= 3600, 'invalid_ttl');
+  if (options.publicFixture) check(options.count === 300 && options.ttlSeconds <= 45 * 60 && process.platform === 'linux', 'public_fixture_requires_isolated_linux_300');
   const startupTimeoutMilliseconds = options.startupTimeoutMilliseconds ?? 180_000;
   check(Number.isInteger(startupTimeoutMilliseconds) && startupTimeoutMilliseconds >= 1000 && startupTimeoutMilliseconds <= 180_000, 'invalid_startup_deadline');
   const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: backend, encoding: 'utf8' }).trim();
@@ -205,10 +208,11 @@ export async function startBenchmark(options) {
   const zipPath = join(directory, 'benchmark.zip');
   execFileSync('python3', ['-c', 'import pathlib,sys,zipfile; p=pathlib.Path(sys.argv[1]); z=zipfile.ZipFile(sys.argv[2],"x",compression=zipfile.ZIP_DEFLATED); [z.write(f,f.name) for f in sorted(p.iterdir())]; z.close()', join(directory, 'bundle'), zipPath], { stdio: ['ignore', 'pipe', 'pipe'] });
   const sampleIntervalMilliseconds = process.platform === 'darwin' ? 1000 : 250;
-  let server, backendProcess, closed = false, timer, peakKiB = null, sample, requests = [];
+  let server, privateGateway, backendProcess, closed = false, timer, peakKiB = null, sample, requests = [];
   const stop = async () => {
     if (closed) return; closed = true; clearTimeout(timer); clearInterval(sample);
     if (server) { server.closeAllConnections(); await new Promise(done => server.close(done)); }
+    if (privateGateway) { privateGateway.closeAllConnections(); await new Promise(done => privateGateway.close(done)); }
     if (backendProcess) await backendProcess.stop();
     await privateWrite(join(directory, 'result.json'), JSON.stringify({ provenance: 'isolated synthetic benchmark', revision,
       count: options.count, uniqueSources: 4, modelSpaceID: realSpace, requests, sampledBackendTreePeakRSSKiB: peakKiB,
@@ -262,11 +266,53 @@ export async function startBenchmark(options) {
           let outcome; try { outcome = JSON.parse(bytes).outcome; } catch {}
           requests.push({ requestId: input.requestId, snapshotId: input.snapshotId, items: input.items?.length, path: request.url,
             endpoint: request.url, outcome, status: result.status, payloadBytes: body.length, responseBytes: bytes.length,
+            wireSHA256: sha(body), wireBytes: body.length, canonicalSHA256: canonicalSingleRequestHash(input),
             elapsedMilliseconds: performance.now() - start });
         }
         send(result.status, bytes);
       } catch { send(503, '{"error":"benchmark_request_failed"}'); }
     });
+    if (options.publicFixture) {
+      const bottomSource = data.sourceRecords.find(record => ['jeans', 'trousers', 'shorts', 'skirt'].includes(record.packet.features.type));
+      check(bottomSource, 'benchmark_bottom_missing');
+      const bottomIndex = data.sourceRecords.indexOf(bottomSource);
+      const bottomItemID = fixtureID(0, bottomIndex), bottomPublishedVersionID = fixtureID(2, bottomIndex);
+      const body = { requestId: '00000000-0000-4000-8000-000000000001', snapshotId: '00000000-0000-4000-8000-000000000002',
+        targetSlotId: '36000005-0000-4000-8000-000000000001', intent: 'complement',
+        orderedSlots: [
+          { slotId: '36000005-0000-4000-8000-000000000000', zone: 'head', itemId: null, publishedVersionId: null },
+          { slotId: '36000005-0000-4000-8000-000000000001', zone: 'body', itemId: null, publishedVersionId: null },
+          { slotId: '36000005-0000-4000-8000-000000000002', zone: 'bottom', itemId: bottomItemID,
+            publishedVersionId: bottomPublishedVersionID },
+          { slotId: '36000005-0000-4000-8000-000000000003', zone: 'shoes', itemId: null, publishedVersionId: null }
+        ], pinnedSlotIds: ['36000005-0000-4000-8000-000000000002'], excludedItemIds: [],
+        items: data.packets.map(packet => ({ itemId: packet.itemId, publishedVersionId: packet.publishedVersionId,
+          photoVersionId: packet.photoVersionId, sourceSetVersionId: packet.sourceSetVersionId, features: packet.features,
+          effectiveFeatures: data.sourceRecords[Number(packet.itemId.slice(-12)) > 0
+            ? (Number(packet.itemId.slice(-12)) - 1) % data.sourceRecords.length : 0].illustration.effectiveFeatures,
+          representationJSON: packet.representationJSON, representationSHA256: packet.representationSHA256 }))
+          .sort((a, b) => a.itemId.localeCompare(b.itemId)) };
+      const expectedCanonicalHash = canonicalSingleRequestHash(body);
+      const originalServer = server;
+      // The backend process remains private to loopback. The public-facing handler
+      // is a strict projection and injects the nonce only on this local hop.
+      await new Promise(done => originalServer.listen(0, '127.0.0.1', done));
+      privateGateway = originalServer;
+      const publicProxy = createPublicBenchmarkProxy({ backendOrigin: `http://127.0.0.1:${originalServer.address().port}`,
+        ownerNonce: options.token, bundle: await readFile(zipPath), expectedCanonicalHash,
+        metadata: { revision, modelSpaceID: realSpace, manifestSHA256: data.manifestSHA256, count: options.count,
+          startupMilliseconds, uniqueSources: 4, provenance: 'public-pinned-fixture',
+          serverEnvironment: 'isolated-linux-host', environment: 'github-hosted-macos-simulator' },
+        ttlSeconds: Math.min(options.ttlSeconds, 45 * 60) });
+      server = publicProxy;
+      await new Promise(done => server.listen(0, '127.0.0.1', done));
+      // Keep both processes owned by this result; stop() closes the public edge before the private backend.
+      const stopPublic = stop;
+      timer = setTimeout(() => { void stopPublic(); }, Math.min(options.ttlSeconds, 45 * 60) * 1000);
+      const origin = 'http://127.0.0.1:' + server.address().port;
+      return { origin, directory, manifest: data.manifest, manifestSHA256: data.manifestSHA256, startupMilliseconds, packets: data.packets,
+        expectedCanonicalHash, stop: stopPublic };
+    }
     await new Promise(done => server.listen(0, '127.0.0.1', done));
     const origin = 'http://127.0.0.1:' + server.address().port;
     timer = setTimeout(() => { void stop(); }, options.ttlSeconds * 1000);
@@ -277,26 +323,32 @@ export async function startBenchmark(options) {
 async function main() {
   const args = process.argv.slice(2), opts = {};
   if (!args.length || args.includes('--help')) {
-    console.log('Local-only fixture: --source FOUR_PUBLIC_REAL_ENCODER_DIR --python PYTHON --assets MODEL_ASSETS --token-file PRIVATE_FILE --count 4|300 [--ttl-seconds 1800] [--directory NEW_TMP_BENCHMARK_DIR]'); return;
+    console.log('Local-only fixture: --source FOUR_PUBLIC_REAL_ENCODER_DIR --python PYTHON --assets MODEL_ASSETS (--token-file PRIVATE_FILE | --public-fixture) --count 4|300 [--ttl-seconds 1800] [--directory NEW_TMP_BENCHMARK_DIR]'); return;
   }
-  for (let i = 0; i < args.length; i += 2) {
-    check(['--source', '--python', '--assets', '--token-file', '--count', '--ttl-seconds', '--directory'].includes(args[i]) && args[i + 1] && !Object.hasOwn(opts, args[i]), 'invalid_arguments');
-    opts[args[i]] = args[i + 1];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--public-fixture') { check(!Object.hasOwn(opts, args[i]), 'invalid_arguments'); opts[args[i]] = true; continue; }
+    check(['--source', '--python', '--assets', '--token-file', '--count', '--ttl-seconds', '--directory'].includes(args[i])
+      && args[i + 1] && !Object.hasOwn(opts, args[i]), 'invalid_arguments');
+    opts[args[i]] = args[++i];
   }
-  for (const name of ['source', 'python', 'assets', 'token-file', 'count']) check(opts['--' + name], 'missing_argument');
-  check(((await stat(opts['--token-file'])).mode & 0o777) === 0o600, 'private_token_file_required');
+  for (const name of ['source', 'python', 'assets', 'count']) check(opts['--' + name], 'missing_argument');
+  const publicFixture = opts['--public-fixture'] === true;
+  check(publicFixture ? !opts['--token-file'] : Boolean(opts['--token-file']), 'benchmark_token_source_invalid');
+  if (!publicFixture) check(((await stat(opts['--token-file'])).mode & 0o777) === 0o600, 'private_token_file_required');
   // Preserve a venv's interpreter symlink: dereferencing it selects base Python
   // and loses the venv's installed torch/transformers packages.
   const result = await startBenchmark({ source: await realpath(opts['--source']), python: resolve(opts['--python']),
-    assets: await realpath(opts['--assets']), token: (await readFile(opts['--token-file'], 'utf8')).trim(), count: Number(opts['--count']),
-    ttlSeconds: Number(opts['--ttl-seconds'] ?? 1800), directory: opts['--directory'] });
+    assets: await realpath(opts['--assets']), token: publicFixture ? 'bench-' + randomBytes(32).toString('hex')
+      : (await readFile(opts['--token-file'], 'utf8')).trim(), count: Number(opts['--count']),
+    ttlSeconds: Number(opts['--ttl-seconds'] ?? 1800), directory: opts['--directory'], publicFixture });
   let stopping = false;
   const stop = async () => { if (stopping) return; stopping = true; await result.stop(); process.exit(0); };
   process.on('SIGINT', () => { void stop(); }); process.on('SIGTERM', () => { void stop(); });
   console.log(JSON.stringify({ ready: true, origin: result.origin, directory: result.directory, count: result.manifest.count,
     uniqueSources: 4, modelSpaceID: realSpace, benchmarkRevision: result.manifest.benchmarkRevision,
     manifestSHA256: result.manifestSHA256, startupMilliseconds: result.startupMilliseconds,
-    tokenStoredInBundle: false, paidProviderCalls: 0, ttlSeconds: Number(opts['--ttl-seconds'] ?? 1800) }));
+    tokenStoredInBundle: false, paidProviderCalls: 0, ttlSeconds: Number(opts['--ttl-seconds'] ?? 1800),
+    profile: opts['--public-fixture'] ? 'public-wan-fixture' : 'same-runner' }));
 }
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   main().catch(() => { console.error('{"error":"benchmark_initialization_failed"}'); process.exitCode = 1; });

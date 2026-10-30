@@ -27,6 +27,19 @@ on:
         type: choice
         default: all
         options: [all, iphone-light, iphone-dark, iphone-max-text, ipad-light]
+      benchmark_mode:
+        description: Optional benchmark profile (only used when ios_suite is benchmark)
+        type: choice
+        default: local
+        options: [local, public-wan]
+      public_fixture_origin:
+        description: Operator-provided public HTTPS origin for public-wan benchmark
+        type: string
+        required: false
+      public_fixture_manifest_sha256:
+        description: SHA-256 of the public fixture manifest
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -130,14 +143,17 @@ jobs:
       - name: ${{ matrix.suite == 'benchmark' && 'Simulator with isolated real-model benchmark' || 'Real Simulator and local backend (controlled providers)' }}
         env:
           TEST_SUITE: ${{ matrix.suite }}
-          # The optional benchmark creates its nonce only on this runner.
+          # Same-runner mode creates its nonce here; public-wan mode sends none.
           SAINT_LOOK_BENCHMARK: ${{ matrix.suite == 'benchmark' && '1' || '0' }}
+          SAINT_LOOK_PUBLIC_BENCHMARK_ORIGIN: ${{ matrix.suite == 'benchmark' && inputs.benchmark_mode == 'public-wan' && inputs.public_fixture_origin || '' }}
+          SAINT_LOOK_PUBLIC_BENCHMARK_MANIFEST_SHA256: ${{ matrix.suite == 'benchmark' && inputs.benchmark_mode == 'public-wan' && inputs.public_fixture_manifest_sha256 || '' }}
+          SAINT_LOOK_PUBLIC_BENCHMARK_MODE: ${{ inputs.benchmark_mode || 'local' }}
           SAINT_LOOK_VISUAL_PROFILES: ${{ matrix.profile || 'all' }}
           SAINT_LOOK_UI_TEST_ONLY: ${{ matrix.suite == 'outfits' && 'SaintLookUITests/OutfitFlowTests' || 'SaintLookUITests/WardrobeFlowTests' }}
           NODE_ENV: test
           SAINT_LOOK_TEST_CLOCK_FILE: ${{ runner.temp }}/saint-look-clock.json
           SAINT_LOOK_RECORD_VIDEO: '1'
-          SAINT_LOOK_OWNER_TOKEN: saint-look-ui-tests-owner-token-00000001
+          SAINT_LOOK_OWNER_TOKEN: ${{ matrix.suite == 'benchmark' && inputs.benchmark_mode == 'public-wan' && 'disabled' || 'saint-look-ui-tests-owner-token-00000001' }}
           SAINT_LOOK_PROVIDER: live
           SAINT_LOOK_TEST_PROVIDER_ORIGIN: http://127.0.0.1:8789
           # Fixture capability is off until a focused test opts in through provider control.
@@ -145,20 +161,20 @@ jobs:
           SAINT_LOOK_TEST_MODEL_ORIGIN: http://127.0.0.1:8789
           SAINT_LOOK_ILLUSTRATION_TEST_ORIGIN: http://127.0.0.1:8789
           SAINT_LOOK_ILLUSTRATION_TEST_CONTROLLED: 'true'
-          PHOTOROOM_SANDBOX_API_KEY: sandbox_fixture
-          GEMINI_API_KEY: fixture
-          TYPESAFE_API_KEY: fixture-typesafe-key
-          PHOTOROOM_API_KEY: fixture-photoroom-key
+          PHOTOROOM_SANDBOX_API_KEY: ${{ matrix.suite == 'benchmark' && inputs.benchmark_mode == 'public-wan' && 'disabled' || 'sandbox_fixture' }}
+          GEMINI_API_KEY: ${{ matrix.suite == 'benchmark' && inputs.benchmark_mode == 'public-wan' && 'disabled' || 'fixture' }}
+          TYPESAFE_API_KEY: ${{ matrix.suite == 'benchmark' && inputs.benchmark_mode == 'public-wan' && 'disabled' || 'fixture-typesafe-key' }}
+          PHOTOROOM_API_KEY: ${{ matrix.suite == 'benchmark' && inputs.benchmark_mode == 'public-wan' && 'disabled' || 'fixture-photoroom-key' }}
           SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED: 'true'
           SAINT_LOOK_STAGE_DELAY_MS: '100'
           SAINT_LOOK_PROVIDER_TIMEOUT_MS: '5000'
           SAINT_LOOK_UI_PROVIDER_CONTROL_URL: http://127.0.0.1:8789/__control
-          SAINT_LOOK_UI_PROVIDER_CONTROL_TOKEN: saint-look-ui-provider-control-token-00000001
+          SAINT_LOOK_UI_PROVIDER_CONTROL_TOKEN: ${{ matrix.suite == 'benchmark' && inputs.benchmark_mode == 'public-wan' && 'disabled' || 'saint-look-ui-provider-control-token-00000001' }}
           SAINT_LOOK_DATA_DIR: ${{ runner.temp }}/saint-look-backend
           SAINT_LOOK_UI_TEST_URL: http://127.0.0.1:8788
-          SAINT_LOOK_UI_TEST_TOKEN: saint-look-ui-tests-owner-token-00000001
+          SAINT_LOOK_UI_TEST_TOKEN: ${{ matrix.suite == 'benchmark' && inputs.benchmark_mode == 'public-wan' && 'disabled' || 'saint-look-ui-tests-owner-token-00000001' }}
           SAINT_LOOK_UI_TEST_CONTROL_URL: http://127.0.0.1:8788/__control
-          SAINT_LOOK_UI_TEST_CONTROL_TOKEN: saint-look-ui-control-test-token-00000001
+          SAINT_LOOK_UI_TEST_CONTROL_TOKEN: ${{ matrix.suite == 'benchmark' && inputs.benchmark_mode == 'public-wan' && 'disabled' || 'saint-look-ui-control-test-token-00000001' }}
         run: |
           if [[ "$TEST_SUITE" == benchmark ]]; then
             set -euo pipefail

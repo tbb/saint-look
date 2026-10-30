@@ -112,19 +112,29 @@ import hashlib, io, json, os, re, stat, sys, urllib.request, zipfile
 from pathlib import Path
 from urllib.parse import urlparse
 origin = os.environ.get('SAINT_LOOK_BENCHMARK_ORIGIN', '')
+public_fixture = os.environ.get('SAINT_LOOK_BENCHMARK_PUBLIC', '') == '1'
 token = os.environ.get('SAINT_LOOK_BENCHMARK_TOKEN', '')
 expected = os.environ.get('SAINT_LOOK_BENCHMARK_MANIFEST_SHA256', '')
 revision = os.environ.get('SAINT_LOOK_BENCHMARK_REVISION', '')
 url = urlparse(origin)
-if not (url.scheme == 'http' and url.hostname == '127.0.0.1' and not url.username and not url.password
-        and url.port is not None and 1 <= url.port <= 65535 and url.path in ('', '/') and not url.query and not url.fragment
-        and re.fullmatch(r'bench-[a-f0-9]{64}', token) and re.fullmatch(r'[a-f0-9]{64}', expected)
+local_ok = (url.scheme == 'http' and url.hostname == '127.0.0.1' and url.port is not None
+            and 1 <= url.port <= 65535 and re.fullmatch(r'bench-[a-f0-9]{64}', token))
+public_ok = (url.scheme == 'https' and url.hostname not in (None, '127.0.0.1', 'localhost') and not token
+             and not os.environ.get('SAINT_LOOK_BENCHMARK_TOKEN'))
+try:
+    public_ok = public_ok and (url.port is None or 1 <= url.port <= 65535)
+except ValueError:
+    public_ok = False
+if not ((public_ok if public_fixture else local_ok) and not url.username and not url.password
+        and url.path in ('', '/') and not url.query and not url.fragment
+        and re.fullmatch(r'[a-f0-9]{64}', expected)
         and re.fullmatch(r'[a-f0-9]{40}', revision)):
     raise SystemExit('Invalid isolated benchmark configuration.')
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args):
         raise RuntimeError('Benchmark redirects are forbidden.')
-request = urllib.request.Request(origin.rstrip('/') + '/benchmark/bundle', headers={'Authorization': 'Bearer ' + token})
+headers = {} if public_fixture else {'Authorization': 'Bearer ' + token}
+request = urllib.request.Request(origin.rstrip('/') + '/benchmark/bundle', headers=headers)
 with urllib.request.build_opener(NoRedirect()).open(request, timeout=60) as response:
     if response.status != 200:
         raise SystemExit('Benchmark bundle was not served.')
@@ -139,14 +149,35 @@ with zipfile.ZipFile(io.BytesIO(raw)) as archive:
     if hashlib.sha256(manifest_bytes).hexdigest() != expected:
         raise SystemExit('Benchmark manifest digest mismatch.')
     manifest = json.loads(manifest_bytes)
+    if public_fixture and set(manifest) != {'schemaVersion', 'count', 'uniqueSources', 'sourceRevision', 'benchmarkRevision',
+            'sourceAttribution', 'spaceID', 'provenance', 'imageProviders', 'sourceProvenance', 'assets', 'items'}:
+        raise SystemExit('Public benchmark manifest has unexpected fields.')
     if not (manifest['schemaVersion'] == 1 and manifest['count'] == 300 and manifest['uniqueSources'] == 4
             and manifest['sourceRevision'] == '73700bab547ed71113dbf27db18136e054a1cca2'
             and manifest['benchmarkRevision'] == revision
             and manifest['spaceID'] == 'df268e5dab58fc14040ec8d5966455e546943406bf04380d24ee8ffcf4ca7e17'
-            and manifest['tokenSHA256'] == hashlib.sha256(token.encode()).hexdigest()
+            and (('tokenSHA256' not in manifest) if public_fixture else
+                 manifest.get('tokenSHA256') == hashlib.sha256(token.encode()).hexdigest())
             and manifest['imageProviders'] == 'synthetic-public-photo-copies'
-            and manifest['sourceProvenance'] == 'public-manifest-encoder-on-runner'):
+            and manifest['sourceProvenance'] == ('public-manifest-encoder-on-isolated-linux-host' if public_fixture
+                                                  else 'public-manifest-encoder-on-runner')):
         raise SystemExit('Benchmark provenance mismatch.')
+    if public_fixture:
+        metadata_request = urllib.request.Request(origin.rstrip('/') + '/benchmark/metadata')
+        with urllib.request.build_opener(NoRedirect()).open(metadata_request, timeout=20) as response:
+            metadata = json.loads(response.read(1024 * 1024 + 1))
+        if not (set(metadata) == {'revision', 'count', 'uniqueSources', 'modelSpaceID', 'manifestSHA256', 'transport',
+                                  'startupMilliseconds', 'provenance', 'serverEnvironment', 'clientEnvironment', 'imageProviders'}
+                and metadata.get('revision') == revision and metadata.get('count') == 300
+                and metadata.get('uniqueSources') == 4 and metadata.get('modelSpaceID') == manifest['spaceID']
+                and metadata.get('manifestSHA256') == expected and metadata.get('transport') == 'remote-public-https'
+                and metadata.get('provenance') == 'public-pinned-fixture-synthetic-receipts'
+                and metadata.get('serverEnvironment') == 'isolated-linux-host'
+                and metadata.get('clientEnvironment') == 'github-hosted-macos-simulator'
+                and isinstance(metadata.get('startupMilliseconds'), (int, float)) and metadata['startupMilliseconds'] >= 0):
+            raise SystemExit('Public benchmark metadata mismatch.')
+        Path('build/benchmark/public-fixture-metadata.json').parent.mkdir(parents=True, exist_ok=True)
+        Path('build/benchmark/public-fixture-metadata.json').write_text(json.dumps(metadata, indent=2) + '\n')
     assets = manifest['assets']
     if len({item['name'] for item in assets}) != len(assets) or set(names) != {'manifest.json', *(item['name'] for item in assets)}:
         raise SystemExit('Unexpected benchmark assets.')
@@ -165,7 +196,7 @@ with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             raise SystemExit('Benchmark asset digest mismatch.')
         (output / name).write_bytes(data)
     (output / 'manifest.json').write_bytes(manifest_bytes)
-print('Verified isolated benchmark: 300 packets, four unique public sources; no production credentials.')
+print('Verified benchmark bundle: 300 synthetic packets from four pinned public photos; no owner token in public profile.')
 PYTHON
 fi
 simulator_id="${SAINT_LOOK_SIMULATOR_UDID:-}"
@@ -331,8 +362,12 @@ if os.environ.get('SAINT_LOOK_REMOTE_DATA_VERSION'):
 if os.environ.get('SAINT_LOOK_LIVE_TRIAL') == '1':
     keys = tuple(key for key in keys if key != 'SAINT_LOOK_REMOTE_SMOKE') + ('SAINT_LOOK_LIVE_TRIAL', 'SAINT_LOOK_TRIAL_PHOTO_COUNT')
 if os.environ.get('SAINT_LOOK_BENCHMARK') == '1':
-    keys = ('SAINT_LOOK_BENCHMARK', 'SAINT_LOOK_BENCHMARK_ORIGIN', 'SAINT_LOOK_BENCHMARK_TOKEN',
-            'SAINT_LOOK_BENCHMARK_MANIFEST_SHA256', 'SAINT_LOOK_BENCHMARK_REVISION')
+    if os.environ.get('SAINT_LOOK_BENCHMARK_PUBLIC') == '1':
+        keys = ('SAINT_LOOK_BENCHMARK', 'SAINT_LOOK_BENCHMARK_PUBLIC', 'SAINT_LOOK_BENCHMARK_ORIGIN',
+                'SAINT_LOOK_BENCHMARK_MANIFEST_SHA256', 'SAINT_LOOK_BENCHMARK_REVISION')
+    else:
+        keys = ('SAINT_LOOK_BENCHMARK', 'SAINT_LOOK_BENCHMARK_ORIGIN', 'SAINT_LOOK_BENCHMARK_TOKEN',
+                'SAINT_LOOK_BENCHMARK_MANIFEST_SHA256', 'SAINT_LOOK_BENCHMARK_REVISION')
 if os.environ.get('SAINT_LOOK_VISUAL_PROFILE'):
     if os.environ.get('SAINT_LOOK_REMOTE_SMOKE') == '1' or os.environ.get('SAINT_LOOK_LIVE_TRIAL') == '1':
         raise SystemExit('Visual fixtures cannot be combined with remote or live trials.')
@@ -375,16 +410,16 @@ from pathlib import Path
 allowed = {'evidence', 'phase', 'datasetItems', 'uniqueSourcePhotographs', 'syntheticClones',
            'baselineRevision', 'benchmarkRevision', 'spaceID', 'requestId', 'snapshotId',
            'HTTPPayloadBytes', 'serverHTTPMilliseconds', 'tapToFirstObservedScreenshotUpperBoundMilliseconds',
-           'device', 'operatingSystem', 'testHostLogicalProcessors', 'testHostPhysicalMemoryBytes',
+           'wireSHA256', 'wireBytes', 'canonicalSHA256', 'device', 'operatingSystem', 'testHostLogicalProcessors', 'testHostPhysicalMemoryBytes',
            'connectionClass', 'limitations'}
 records = []
-token = os.environ['SAINT_LOOK_BENCHMARK_TOKEN']
+token = os.environ.get('SAINT_LOOK_BENCHMARK_TOKEN', '')
 for line in Path(sys.argv[1]).read_text().splitlines():
     if 'BENCHMARK_REAL_IOS ' not in line:
         continue
     encoded = line.split('BENCHMARK_REAL_IOS ', 1)[1].strip()
     value = json.loads(encoded)
-    if set(value) != allowed or token in encoded or value['datasetItems'] != 300 or value['uniqueSourcePhotographs'] != 4:
+    if set(value) != allowed or (token and token in encoded) or value['datasetItems'] != 300 or value['uniqueSourcePhotographs'] != 4:
         raise SystemExit('Unexpected benchmark observation fields.')
     records.append(value)
 if int(sys.argv[2]) == 0 and len(records) != 2:

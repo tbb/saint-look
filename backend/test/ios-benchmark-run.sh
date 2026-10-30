@@ -1,9 +1,38 @@
 #!/usr/bin/env bash
-# Explicit same-runner benchmark only. No tunnel, production token, API or provider.
+# Explicit benchmark dispatcher: same-runner real model or public-WAN client. No tunnel or paid provider.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 [[ "${GITHUB_EVENT_NAME:-}" == workflow_dispatch && "${SAINT_LOOK_BENCHMARK:-0}" == 1 ]] || { echo 'Explicit manual benchmark required.' >&2; exit 1; }
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || { echo 'Benchmark requires the existing ARM Mac runner.' >&2; exit 1; }
+if [[ "${SAINT_LOOK_PUBLIC_BENCHMARK_MODE:-local}" == public-wan ]]; then
+  [[ -z "${SAINT_LOOK_BENCHMARK_TOKEN:-}" && "${SAINT_LOOK_OWNER_TOKEN:-}" == disabled \
+     && "${GEMINI_API_KEY:-}" == disabled && "${TYPESAFE_API_KEY:-}" == disabled \
+     && "${PHOTOROOM_API_KEY:-}" == disabled && "${PHOTOROOM_SANDBOX_API_KEY:-}" == disabled ]] \
+    || { echo 'Public WAN benchmark must not receive owner/provider credentials.' >&2; exit 1; }
+  python3 - "$SAINT_LOOK_PUBLIC_BENCHMARK_ORIGIN" "$SAINT_LOOK_PUBLIC_BENCHMARK_MANIFEST_SHA256" <<'PY'
+import re, sys
+from urllib.parse import urlparse
+url = urlparse(sys.argv[1])
+try:
+    port_ok = url.port is None or 1 <= url.port <= 65535
+except ValueError:
+    port_ok = False
+if not (url.scheme == 'https' and port_ok and url.hostname not in (None, '127.0.0.1', 'localhost')
+        and not url.username and not url.password and url.path in ('', '/') and not url.query and not url.fragment
+        and re.fullmatch(r'[a-f0-9]{64}', sys.argv[2])):
+    raise SystemExit('Invalid public fixture URL or manifest SHA.')
+PY
+  export SAINT_LOOK_BENCHMARK_PUBLIC=1
+  export SAINT_LOOK_BENCHMARK_ORIGIN="$SAINT_LOOK_PUBLIC_BENCHMARK_ORIGIN"
+  export SAINT_LOOK_BENCHMARK_MANIFEST_SHA256="$SAINT_LOOK_PUBLIC_BENCHMARK_MANIFEST_SHA256"
+  export SAINT_LOOK_BENCHMARK_REVISION="$(git rev-parse HEAD)"
+  unset SAINT_LOOK_BENCHMARK_TOKEN SAINT_LOOK_OWNER_TOKEN GEMINI_API_KEY TYPESAFE_API_KEY PHOTOROOM_API_KEY PHOTOROOM_SANDBOX_API_KEY
+  unset SAINT_LOOK_UI_PROVIDER_CONTROL_TOKEN SAINT_LOOK_UI_TEST_TOKEN SAINT_LOOK_UI_TEST_CONTROL_TOKEN
+  SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/OutfitFlowTests/testCachedRealBenchmarkFirstObservedResult \
+    bash client-ios/scripts/test-simulator.sh
+  exit $?
+fi
+[[ "${SAINT_LOOK_PUBLIC_BENCHMARK_MODE:-local}" == local ]] || { echo 'Unknown benchmark mode.' >&2; exit 1; }
 private_directory="$(mktemp -d /tmp/saint-look-benchmark-controller-XXXXXX)"
 chmod 700 "$private_directory"
 benchmark_pid=''

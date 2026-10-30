@@ -9,6 +9,18 @@ struct ConnectionSettings {
         #if DEBUG
         let environment = ProcessInfo.processInfo.environment
         if environment["SAINT_LOOK_UI_TESTING"] == "1" {
+            if environment["SAINT_LOOK_BENCHMARK_PUBLIC"] == "1" {
+                guard environment["SAINT_LOOK_BENCHMARK"] == "1",
+                      let baseURL = environment["SAINT_LOOK_BASE_URL"],
+                      environment["SAINT_LOOK_OWNER_TOKEN"] == nil,
+                      environment["SAINT_LOOK_BENCHMARK_MANIFEST_SHA256"]?.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+                      environment["SAINT_LOOK_BENCHMARK_REVISION"]?.range(of: "^[a-f0-9]{40}$", options: .regularExpression) != nil else {
+                    throw ClientError.invalidSettings
+                }
+                let settings = Self(baseURL: baseURL, token: "")
+                guard try settings.validatedURL().scheme == "https" else { throw ClientError.invalidSettings }
+                return settings
+            }
             guard let baseURL = environment["SAINT_LOOK_BASE_URL"],
                   let token = environment["SAINT_LOOK_OWNER_TOKEN"] else {
                 throw ClientError.invalidSettings
@@ -59,12 +71,29 @@ struct ConnectionSettings {
               let host = url.host, url.user == nil, url.password == nil,
               url.query == nil, url.fragment == nil,
               url.path.isEmpty || url.path == "/",
-              url.scheme == "https" || (url.scheme == "http" && ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host)),
-              token.count >= 32 else { throw ClientError.invalidSettings }
+              url.scheme == "https" || (url.scheme == "http" && ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host)) else {
+            throw ClientError.invalidSettings
+        }
+        #if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        if environment["SAINT_LOOK_UI_TESTING"] == "1" && environment["SAINT_LOOK_BENCHMARK"] == "1"
+            && environment["SAINT_LOOK_BENCHMARK_PUBLIC"] == "1" {
+            guard token.isEmpty, url.scheme == "https", environment["SAINT_LOOK_OWNER_TOKEN"] == nil else {
+                throw ClientError.invalidSettings
+            }
+            return url
+        }
+        #endif
+        guard token.count >= 32 else { throw ClientError.invalidSettings }
         return url
     }
 
     func save() throws {
+        #if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        guard !(environment["SAINT_LOOK_UI_TESTING"] == "1" && environment["SAINT_LOOK_BENCHMARK"] == "1"
+                && environment["SAINT_LOOK_BENCHMARK_PUBLIC"] == "1") else { throw ClientError.invalidSettings }
+        #endif
         _ = try validatedURL()
         try OwnerToken.save(token)
         UserDefaults.standard.set(baseURL, forKey: "backendURL")
