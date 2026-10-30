@@ -36,17 +36,24 @@ jobs:
               'response_format': {'type': 'image', 'mime_type': 'image/png', 'image_size': '1K', 'aspect_ratio': '1:1'},
           }
           pathlib.Path(os.environ['RUNNER_TEMP'], 'gemini-request.json').write_text(json.dumps(request))
+          key = os.environ['GEMINI_API_KEY']
+          curl_config = pathlib.Path(os.environ['RUNNER_TEMP'], 'gemini-curl.conf')
+          curl_config.write_text('header = "x-goog-api-key: ' + key.replace('\\', '\\\\').replace('"', '\\"') + '"\n')
+          curl_config.chmod(0o600)
           PY
+          trap 'rm -f "$RUNNER_TEMP/gemini-curl.conf" "$RUNNER_TEMP/gemini-request.json" "$RUNNER_TEMP/gemini-response.json"' EXIT
           curl --silent --show-error --fail-with-body --max-redirs 0 --retry 0 --max-time 180 \
             -X POST 'https://generativelanguage.googleapis.com/v1beta/interactions' \
-            -H "x-goog-api-key: $GEMINI_API_KEY" \
+            --config "$RUNNER_TEMP/gemini-curl.conf" \
             -H 'content-type: application/json' \
             --data-binary "@$RUNNER_TEMP/gemini-request.json" \
             --output "$RUNNER_TEMP/gemini-response.json"
           python3 - <<'PY'
           import base64, json, os, pathlib, sys
           data = json.loads(pathlib.Path(os.environ['RUNNER_TEMP'], 'gemini-response.json').read_text())
-          image = data.get('output_image', {}).get('data')
+          image = next((content.get('data') for step in data.get('steps', [])
+                        for content in step.get('content', [])
+                        if step.get('type') == 'model_output' and content.get('type') == 'image'), None)
           if not image:
               print('Gemini returned no output_image; response omitted to protect request data.')
               sys.exit(1)
