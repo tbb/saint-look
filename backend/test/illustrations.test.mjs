@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { providerFixture } from './providers/fixture.mjs';
 import { environment, photoRequest, upload, waitForItem } from './support.mjs';
 import { illustrationFixture } from './providers/illustration.mjs';
+import { createIllustrationProvider } from '../src/illustration-provider.mjs';
 
 function illustration(photo, changes = {}) {
   return { operationId: randomUUID(), photoVersionId: photo.photoVersionId,
@@ -60,7 +61,15 @@ test('single photo produces a separate transparent illustration with observed tr
   assert.equal(ready.observedFeatures.type, 'Футболка');
   assert.deepEqual(ready.effectiveFeatures.colors, ['Красный']);
   assert.equal(ready.effectiveFeatures.traits.silhouette, 'unknown');
-  assert.deepEqual(ready.processing, { preparation: 'done', attributes: 'done', generation: 'done', finalization: 'skipped' });
+  assert.deepEqual(ready.processing, { preparation: 'done', attributes: 'done', generation: 'done', finalization: 'done' });
+  const generation = fixture.calls.generation[0];
+  assert.equal(generation.path, '/v1beta/interactions');
+  assert.equal(generation.headers['x-goog-api-key'], 'fixture');
+  const request = JSON.parse(generation.body);
+  assert.equal(request.model, 'gemini-3-pro-image');
+  assert.equal(request.store, true);
+  assert.equal(request.generation_config.max_output_tokens, 2048);
+  assert.deepEqual(request.response_format, { type: 'image', mime_type: 'image/jpeg', aspect_ratio: '1:1', image_size: '1K' });
   const image = await server.request(ready.resultPath);
   assert.equal(image.status, 200);
   assert.deepEqual(Buffer.from(await image.arrayBuffer()), fixture.result);
@@ -92,7 +101,7 @@ test('multiple views preserve manual type and colors, reuse prepared photos, and
   assert.equal(fixture.calls.preparation.length, 2);
   const payload = JSON.parse(fixture.calls.attributes.at(-1).body);
   assert.deepEqual(Object.keys(payload.state), ['photo_0_prepared_front', 'photo_1_original_front', 'photo_2_prepared_detail', 'photo_3_original_detail']);
-  assert.ok(JSON.parse(fixture.calls.generation.at(-1).body).prompt.includes('Худи'));
+  assert.ok(fixture.calls.generation.at(-1).interaction.input.at(-1).text.includes('Худи'));
   assert.equal((await requestIllustration(server, photo.itemId, update)).status, 200);
   assert.equal((await requestIllustration(server, photo.itemId, { ...update, manualColors: ['Белый'] })).status, 409);
   const changedSet = { ...update, operationId: randomUUID(), revision: 3, photos: initial.photos.slice(0, 1) };
@@ -128,7 +137,7 @@ test('native test fixture explicitly enables illustrations without changing exis
   const [line] = await once(reader, 'line'), origin = JSON.parse(line).url;
   const env = await environment(t), server = await env.launch({ NODE_ENV: 'test', SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true',
     SAINT_LOOK_ILLUSTRATION_TEST_ORIGIN: origin, SAINT_LOOK_ILLUSTRATION_TEST_CONTROLLED: 'true',
-    TYPESAFE_API_KEY: 'fixture-typesafe-key', PHOTOROOM_SANDBOX_API_KEY: 'sandbox_fixture', FAL_KEY: 'fixture' });
+    TYPESAFE_API_KEY: 'fixture-typesafe-key', PHOTOROOM_SANDBOX_API_KEY: 'sandbox_fixture', GEMINI_API_KEY: 'fixture' });
   const control = input => fetch(`${origin}/__control`, { method: 'POST', headers: { 'Content-Type': 'application/json',
     Authorization: 'Bearer saint-look-ui-provider-control-token-00000001' }, body: JSON.stringify(input) });
   assert.equal((await (await server.request('/health')).json()).illustrationAvailable, false);
@@ -186,9 +195,9 @@ test('generation refusal supports explicit retry with cached preparation while u
 
 test('delete during generation permanently removes illustrations and rejects late receipt, result and replay', async t => {
   let release;
-  const fixture = await illustrationFixture(t, { generation: async (request, response) => {
+  const fixture = await illustrationFixture(t, { generation: async (request, response, { interaction }) => {
     await new Promise(resolve => { release = resolve; });
-    response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ request_id: 'fixture-1' }));
+    response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(interaction));
   } });
   const env = await environment(t), server = await env.launch(fixture.env);
   const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
@@ -250,20 +259,19 @@ test('multicolor JEV observations use the five most confident canonical colors b
   const ready = await waitForIllustration(server, photo.itemId, input.operationId);
   assert.deepEqual(ready.observedFeatures.colors, ['Белый', 'Оранжевый', 'Чёрный', 'Зелёный', 'Красный']);
   assert.deepEqual(ready.effectiveFeatures.colors, ready.observedFeatures.colors);
-  const prompt = JSON.parse(fixture.calls.generation[0].body).prompt;
+  const prompt = fixture.calls.generation[0].interaction.input.at(-1).text;
   const effective = JSON.parse(prompt.slice(prompt.indexOf('{')));
   assert.deepEqual(effective.colors, ['Белый', 'Оранжевый', 'Чёрный', 'Зелёный', 'Красный']);
 });
 
-test('fal retrieval refusal after acceptance is unknown and never permits a second generation submission', async t => {
-  const fixture = await illustrationFixture(t, { status: async (request, response) => { response.writeHead(429); response.end(); } });
-  const env = await environment(t), server = await env.launch(fixture.env);
-  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
-  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
-  const failed = await waitForIllustration(server, photo.itemId, input.operationId, 'failed');
-  assert.equal(failed.error, 'processing_unknown');
-  assert.equal((await requestIllustration(server, photo.itemId, { ...input, operationId: randomUUID(), revision: 2 })).status, 409);
-  assert.equal(fixture.calls.generation.length, 1);
+test('Gemini saved receipt uses GET retrieval and never submits a second generation', async t => {
+  const fixture = await illustrationFixture(t, { recovery: async (request, response) => { response.writeHead(429); response.end(); } });
+  const provider = createIllustrationProvider(fixture.env);
+  await assert.rejects(provider.generate([], {}, new AbortController().signal, () => assert.fail('No new receipt'), 'v1_fixture-1'), error => {
+    assert.equal(error.code, 'processing_unknown'); assert.equal(error.unknown, true); return true;
+  });
+  assert.equal(fixture.calls.generation.length, 0);
+  assert.equal(fixture.calls.recovery.length, 1);
 });
 
 test('a malformed successful generation receipt remains uncertain rather than allowing another paid submission', async t => {
@@ -331,12 +339,7 @@ test('a completed source set stays immutable after delivery and restart, while a
 });
 
 test('editing angles before first publication supersedes generated output; commit alone freezes the accepted set', async t => {
-  let finishGeneration;
-  const gate = new Promise(resolve => { finishGeneration = resolve; });
-  const fixture = await illustrationFixture(t, { generation: async (request, response) => {
-    await gate; response.writeHead(200, { 'Content-Type': 'application/json' });
-    response.end(JSON.stringify({ request_id: 'fixture-1' }));
-  } });
+  const fixture = await illustrationFixture(t);
   const env = await environment(t);
   let server = await env.launch(fixture.env);
   const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
@@ -346,7 +349,6 @@ test('editing angles before first publication supersedes generated output; commi
   const detail = await photoRequest();
   const newer = illustration(photo, { revision: 2, photos: [...initial.photos,
     { id: detail.photoVersionId, role: 'detail', imageBase64: detail.imageBase64 }] });
-  finishGeneration();
   await waitForIllustration(server, photo.itemId, initial.operationId);
   await server.stop();
   server = await env.launch(fixture.env);

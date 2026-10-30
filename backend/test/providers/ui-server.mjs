@@ -17,7 +17,11 @@ let nextAttributes = null;
 let nextCutout = null;
 let illustrationMode = null;
 let illustrationPreparationCalls = 0, illustrationAttributesCalls = 0, illustrationGenerationCalls = 0, illustrationFinalizationCalls = 0;
-const illustrationImage = await sharp(blue).resize(1024, 1024, { fit: 'contain', background: '#00000000' }).png().toBuffer();
+const illustrationCutout = await sharp(blue).resize(1024, 1024, { fit: 'contain', background: '#00000000' }).png().toBuffer();
+const illustrationImage = await sharp(illustrationCutout).flatten({ background: '#ffffff' }).jpeg().toBuffer();
+const illustrationInteraction = { id: 'v1_ui-fixture', model: 'gemini-3-pro-image', status: 'completed', steps: [{ type: 'model_output', content: [
+  { type: 'image', mime_type: 'image/jpeg', data: illustrationImage.toString('base64') },
+] }] };
 function reply(response, status, body) {
   response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   response.end(JSON.stringify(body));
@@ -55,20 +59,16 @@ const server = createServer(async (request, response) => {
       } else if (request.method !== 'GET') return reply(response, 405, { error: 'method_not_allowed' });
       return reply(response, 200, { attributesCalls, cutoutCalls, illustrationPreparationCalls, illustrationAttributesCalls, illustrationGenerationCalls, illustrationFinalizationCalls, encoderPreparationCalls, modelRankCalls });
     }
-    if (request.method === 'GET' && request.url === '/fal-ai/nano-banana-pro/requests/ui-fixture/status') return reply(response, 200, { status: 'COMPLETED' });
-    if (request.method === 'GET' && request.url === '/fal-ai/nano-banana-pro/requests/ui-fixture') return reply(response, 200, { images: [{ url: `http://127.0.0.1:${server.address().port}/illustration.png` }] });
-    if (request.method === 'GET' && request.url === '/illustration.png') {
-      response.writeHead(200, { 'Content-Type': 'image/png' }); return response.end(illustrationImage);
-    }
+    if (request.method === 'GET' && request.url === '/v1beta/interactions/ui-fixture') return reply(response, 200, illustrationInteraction);
     if (request.method !== 'POST') return reply(response, 404, { error: 'not_found' });
     const body = await bodyOf(request, 16 * 1024 * 1024);
     if (await modelFixture(request, response, body, {}, modelCalls, rankCalls)) return;
-    if (request.url === '/fal-ai/nano-banana-pro/edit') {
+    if (request.url === '/v1beta/interactions') {
       illustrationGenerationCalls++;
       if (illustrationMode === 'unknown') { response.destroy(); return; }
       if (illustrationMode === 'failed') return reply(response, 422, { error: 'fixture_generation_failed' });
       if (illustrationMode !== 'success') return reply(response, 503, { error: 'fixture_unavailable' });
-      return reply(response, 200, { request_id: 'ui-fixture' });
+      return reply(response, 200, illustrationInteraction);
     }
     if (request.url === '/v1/systemone') {
       const payload = JSON.parse(body);
@@ -96,7 +96,7 @@ const server = createServer(async (request, response) => {
     if (request.url === '/v1/segment') {
       if (body.includes(Buffer.from('filename="preparation.png"')) || body.includes(Buffer.from('filename="finalization.png"'))) {
         if (body.includes(Buffer.from('filename="finalization.png"'))) {
-          illustrationFinalizationCalls++; response.writeHead(200, { 'Content-Type': 'image/png' }); return response.end(illustrationImage);
+          illustrationFinalizationCalls++; response.writeHead(200, { 'Content-Type': 'image/png' }); return response.end(illustrationCutout);
         }
         illustrationPreparationCalls++;
         const start = body.indexOf(Buffer.from('\x89PNG', 'latin1')), end = body.indexOf(Buffer.from('\r\n--'), start);

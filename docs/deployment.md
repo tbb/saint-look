@@ -128,15 +128,15 @@ Upload проверяет одну существующую shared CPU / 1 CPU �
 
 `live-trial.yml` берёт только `PHOTOROOM_SANDBOX_API_KEY`, без fallback на production.
 Для включения иллюстраций нужны отдельные `SAINT_LOOK_ILLUSTRATIONS_ENABLED=true`,
-секрет `FAL_KEY` и утверждённый `SAINT_LOOK_API_BUDGET_JSON`. Подготовленный предел
-для согласования: 60 sandbox Photoroom, 48 Jev, 24 fal Nano Banana Pro 1K,
+секрет `GEMINI_API_KEY` и утверждённый `SAINT_LOOK_API_BUDGET_JSON`. Подготовленный предел
+для согласования: 60 sandbox Photoroom, 48 Jev, 24 Gemini Nano Banana Pro 1K,
 до $4.50 суммарно на публичном наборе `epic63-public-v1`. Это не автоматическое
 одобрение и не разрешение на другие фотографии или повторный бюджет.
 
 Политика содержит `id: epic63-public-v1-5d85dde081e8`, `approved: true`,
 `pricesCheckedAt` (проверены не более 24 часов назад),
-`limits: {photoroom:60, jev:48, fal:24}`,
-`ratesMicrousd: {photoroom:0, jev:2753, fal:150000}` и `maxCostMicrousd:4500000`.
+`limits: {photoroom:60, jev:48, gemini:24}`,
+`ratesMicrousd: {photoroom:0, jev:2753, gemini:135100}` и `maxCostMicrousd:4500000`.
 Счётчик в SQLite резервирует попытку **до** внешнего запроса. Ошибка, timeout или
 перезапуск не возвращают резерв. Изменение того же ID не сбрасывает счётчик;
 обновление времени проверки цены также его сохраняет. После истечения проверки

@@ -140,7 +140,7 @@ jobs:
           SAINT_LOOK_ILLUSTRATION_TEST_ORIGIN: http://127.0.0.1:8789
           SAINT_LOOK_ILLUSTRATION_TEST_CONTROLLED: 'true'
           PHOTOROOM_SANDBOX_API_KEY: sandbox_fixture
-          FAL_KEY: fixture
+          GEMINI_API_KEY: fixture
           TYPESAFE_API_KEY: fixture-typesafe-key
           PHOTOROOM_API_KEY: fixture-photoroom-key
           SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED: 'true'

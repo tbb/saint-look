@@ -2,8 +2,10 @@
 
 Контракт `fitting-square-1024-v1` согласован для реализации #46/#47. Качество
 реальной стилизации ещё не подтверждено (#45). По решению владельца от
-28 октября 2026 это не блокирует продуктовую реализацию; настоящие вызовы fal
-пока отложены. Иллюстрации — отдельный цикл от обычной обработки вещей.
+28 октября 2026 это не блокирует продуктовую реализацию. С 30 октября генератор
+подключён к прямому Gemini Interactions API; одной публичной фотографией
+подтверждён формат JPEG 1K. Полная реальная подготовка с JEV и Photoroom sandbox
+ещё требует проверки. Иллюстрации — отдельный цикл от обычной обработки вещей.
 
 `GET /health` возвращает `illustrationAvailable: boolean`. По умолчанию false:
 готовый гардероб продолжает работать, фиктивная иллюстрация не создаётся.
@@ -52,7 +54,7 @@
   "processing": {"preparation":"pending", "attributes":"pending", "generation":"pending", "finalization":"pending"},
   "observedFeatures": null, "effectiveFeatures": null,
   "manualType": null, "manualColors": null,
-  "modelVersion": "fal-ai/nano-banana-pro/edit",
+  "modelVersion": "gemini-3-pro-image",
   "templateVersion": "front-360x560-proposed-v1",
   "geometryVersion": "fitting-square-1024-v1",
   "preparedSources": [], "resultPath": null, "error": null
@@ -113,16 +115,17 @@ POST той же операции возвращают 410 `result_delivered` и
 основного фото ещё выполняется: повторить явное действие после завершения.
 До первой готовности замена основного фото завершает старую операцию как superseded и не блокирует
 запрос новой версии. 409 `processing_unknown` запрещает новую платную попытку
-до разбирательства с неизвестным исходом. Ошибка чтения fal после получения
-receipt (включая 401/403/429) не доказывает отказ генерации и остаётся unknown.
+до разбирательства с неизвестным исходом. Ошибка чтения Gemini interaction после
+получения receipt (включая 401/403/429) не доказывает отказ генерации и остаётся
+unknown.
 
 ## Конфигурация и миграция
 
 Реальный путь требует явного `SAINT_LOOK_ILLUSTRATIONS_ENABLED=true`, серверных
-`PHOTOROOM_SANDBOX_API_KEY` (только `sandbox_…`), `TYPESAFE_API_KEY`, `FAL_KEY`.
+`PHOTOROOM_SANDBOX_API_KEY` (только `sandbox_…`), `TYPESAFE_API_KEY`, `GEMINI_API_KEY`.
 По умолчанию он отключён; этот документ не включает его и не разрешает новую
-пробу. Цепочка: Photoroom sandbox → JEV → fal Nano Banana → Photoroom sandbox
-только если итог пока непрозрачный. Оригинал и подготовленный ракурс идут
+пробу. Цепочка: Photoroom sandbox → JEV → Gemini Nano Banana Pro → Photoroom sandbox
+для снятия фона у непрозрачного JPEG. Оригинал и подготовленный ракурс идут
 отдельными подписанными референсами; манекен передаётся только генератору.
 
 CI использует `NODE_ENV=test` и `SAINT_LOOK_ILLUSTRATION_TEST_ORIGIN` с loopback
@@ -141,3 +144,18 @@ HTTP. Внешний адрес или отсутствие test-origin при N
 Удаление вещи охватывает все иллюстрации и исходники; tombstone запрещает
 воскрешение поздним ответом. Допустимая замена до готовности делает прежнюю операцию
 неактуальной. Неизвестный исход внешней операции не повторяется автоматически.
+
+### Gemini trial accounting and recovery
+
+The trial reserves $0.40 before each Gemini POST. This is a conservative ceiling,
+not the observed unit price: the request caps combined output/thinking at 2048
+tokens; the 65,536 input-token model limit at $2/M plus 2048 output tokens priced
+entirely at the higher $120/M image rate totals $0.376832. No grounding tools are
+enabled. The $4.50 total trial ceiling is unchanged. Historical fal reservations
+remain in both the total spend and the 24-generation count after migration.
+
+Gemini uses `store:true` so a saved interaction ID can be recovered with GET.
+Google therefore stores the interaction, including uploaded photos. The current
+trial uses public photos only; GET recovery does not submit another generation.
+Sources: [pricing](https://ai.google.dev/gemini-api/docs/pricing),
+[output/thinking cap](https://ai.google.dev/gemini-api/docs/thinking/).

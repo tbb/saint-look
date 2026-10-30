@@ -91,7 +91,7 @@ jobs:
           FLY_APP_NAME: ${{ vars.FLY_APP_NAME }}
           AI_TRIAL_PREFLIGHT_VERIFIED: ${{ vars.AI_TRIAL_PREFLIGHT_VERIFIED }}
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-          FAL_KEY: ${{ secrets.FAL_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SAINT_LOOK_ILLUSTRATIONS_ENABLED: ${{ vars.SAINT_LOOK_ILLUSTRATIONS_ENABLED }}
           SAINT_LOOK_API_BUDGET_JSON: ${{ vars.SAINT_LOOK_API_BUDGET_JSON }}
           # Owner chose sandbox on 2026-10-26. Production requires a new explicit request.
