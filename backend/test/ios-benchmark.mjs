@@ -16,7 +16,7 @@ import { illustrationTaxonomy, illustrationVersions } from '../src/illustration-
 
 const SOURCE_IDS = ['light-polo', 'pub-03', 'pub-13', 'black-jeans'];
 export const baseline = '73700bab547ed71113dbf27db18136e054a1cca2';
-export const realSpace = '5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b';
+export const realSpace = 'df268e5dab58fc14040ec8d5966455e546943406bf04380d24ee8ffcf4ca7e17';
 const backend = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sha = value => createHash('sha256').update(value).digest('hex');
 const check = (value, code) => { if (!value) throw new Error(code); };

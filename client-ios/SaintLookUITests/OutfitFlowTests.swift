@@ -123,7 +123,7 @@ final class OutfitFlowTests: XCTestCase {
     @MainActor
     func testCachedRealBenchmarkFirstObservedResult() async throws {
         let environment = try benchmarkEnvironment()
-        let expectedSpace = "5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b"
+        let expectedSpace = "df268e5dab58fc14040ec8d5966455e546943406bf04380d24ee8ffcf4ca7e17"
         let health = try await benchmarkJSON("/health", environment: environment)
         let configuration = try await benchmarkJSON("/v1/recommendations/config", environment: environment)
         guard health["revision"] as? String == environment["SAINT_LOOK_BENCHMARK_REVISION"],

@@ -4,6 +4,13 @@ from contract import canonical_text, representation, validate_representation, SP
 
 
 class RepresentationContract(unittest.TestCase):
+    def test_explicit_epoch_changes_space_and_rejects_prior_checkpoint_space(self):
+        self.assertEqual(SPACE_ID, 'df268e5dab58fc14040ec8d5966455e546943406bf04380d24ee8ffcf4ca7e17')
+        item = representation([2.0] * 128, 'photo-1', 'a' * 64, 'shirt. Colors: blue.')
+        item['spaceID'] = '5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b'
+        with self.assertRaisesRegex(ValueError, 'incompatible_representation'):
+            validate_representation(item)
+
     def test_text_is_reproducible_from_current_type_and_colors(self):
         self.assertEqual(canonical_text('t_shirt', ['white', 'black', 'white']),
                          't shirt. Colors: black, white.')

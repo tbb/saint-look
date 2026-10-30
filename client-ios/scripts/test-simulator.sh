@@ -134,7 +134,7 @@ with zipfile.ZipFile(io.BytesIO(raw)) as archive:
     if not (manifest['schemaVersion'] == 1 and manifest['count'] == 300 and manifest['uniqueSources'] == 4
             and manifest['sourceRevision'] == '73700bab547ed71113dbf27db18136e054a1cca2'
             and manifest['benchmarkRevision'] == revision
-            and manifest['spaceID'] == '5232e383c329cb71cea3217bfd78b7f36128b1abb6657c94e2909635b638a24b'
+            and manifest['spaceID'] == 'df268e5dab58fc14040ec8d5966455e546943406bf04380d24ee8ffcf4ca7e17'
             and manifest['tokenSHA256'] == hashlib.sha256(token.encode()).hexdigest()
             and manifest['imageProviders'] == 'synthetic-public-photo-copies'
             and manifest['sourceProvenance'] == 'public-manifest-encoder-on-runner'):
