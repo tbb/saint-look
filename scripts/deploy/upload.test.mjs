@@ -209,20 +209,28 @@ test('approved illustrations stage only sandbox and Gemini secrets and pass boun
   const config = { SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', AI_TRIAL_PREFLIGHT_VERIFIED: 'true',
     TYPESAFE_API_KEY: 'typesafe-fixture-secret', PHOTOROOM_API_KEY: 'sandbox_fixture_secret',
     SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true', GEMINI_API_KEY: 'fixture-gemini-key', FAL_KEY: 'legacy-fal-secret', SAINT_LOOK_API_BUDGET_JSON: JSON.stringify(budget) };
-  const result = f.run(config);
-  assert.equal(result.status, 0, result.stderr);
-  const secrets = f.calls().find(call => call.args[0] === 'secrets');
-  assert.match(secrets.secretInput, /PHOTOROOM_SANDBOX_API_KEY=sandbox_fixture_secret\nGEMINI_API_KEY=fixture-gemini-key/);
-  const deploy = f.calls().find(call => call.args[0] === 'deploy');
-  assert.ok(deploy.args.includes('SAINT_LOOK_ILLUSTRATIONS_ENABLED=true'));
-  assert.ok(deploy.args.some(arg => arg.startsWith('SAINT_LOOK_API_BUDGET_JSON=') && arg.includes('4500000')));
-  assert.doesNotMatch(result.stdout + result.stderr + JSON.stringify(deploy.args), /fixture-gemini-key|sandbox_fixture_secret|legacy-fal-secret/);
-  assert.doesNotMatch(secrets.secretInput, /legacy-fal-secret/);
+  for (const maxCostMicrousd of [4500000, 8800000]) {
+    const approved = { ...budget, maxCostMicrousd }, previousCalls = f.calls().length;
+    const result = f.run({ ...config, SAINT_LOOK_API_BUDGET_JSON: JSON.stringify(approved) });
+    assert.equal(result.status, 0, result.stderr);
+    const calls = f.calls().slice(previousCalls);
+    const secrets = calls.find(call => call.args[0] === 'secrets');
+    assert.match(secrets.secretInput, /PHOTOROOM_SANDBOX_API_KEY=sandbox_fixture_secret\nGEMINI_API_KEY=fixture-gemini-key/);
+    const deploy = calls.find(call => call.args[0] === 'deploy');
+    assert.ok(deploy.args.includes('SAINT_LOOK_ILLUSTRATIONS_ENABLED=true'));
+    const forwarded = deploy.args.find(arg => arg.startsWith('SAINT_LOOK_API_BUDGET_JSON='));
+    assert.deepEqual(JSON.parse(forwarded.slice('SAINT_LOOK_API_BUDGET_JSON='.length)), approved);
+    assert.doesNotMatch(result.stdout + result.stderr + JSON.stringify(calls.map(call => call.args)),
+      /fixture-gemini-key|sandbox_fixture_secret|legacy-fal-secret|typesafe-fixture-secret/);
+    assert.doesNotMatch(secrets.secretInput, /legacy-fal-secret/);
+  }
   assert.ok(f.calls().every(call => !call.providerKeyPresent));
   const before = f.calls().length;
   for (const changed of [{ approved: false }, { limits: { ...budget.limits, gemini: 25 } },
-    { pricesCheckedAt: new Date(Date.now() - 86400001).toISOString() }, { maxCostMicrousd: 4500001 }]) {
-    assert.equal(f.run({ ...config, SAINT_LOOK_API_BUDGET_JSON: JSON.stringify({ ...budget, ...changed }) }).status, 1);
+    { pricesCheckedAt: new Date(Date.now() - 86400001).toISOString() }, { maxCostMicrousd: 8800001 }]) {
+    const result = f.run({ ...config, SAINT_LOOK_API_BUDGET_JSON: JSON.stringify({ ...budget, ...changed }) });
+    assert.equal(result.status, 1);
+    assert.doesNotMatch(result.stdout + result.stderr, /fixture-gemini-key|sandbox_fixture_secret|legacy-fal-secret|typesafe-fixture-secret/);
     assert.equal(f.calls().length, before);
   }
 });
