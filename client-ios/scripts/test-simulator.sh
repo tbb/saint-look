@@ -393,6 +393,12 @@ Path('build/benchmark/observations.json').write_text(json.dumps({'scope': 'obser
     'testExitCode': int(sys.argv[2]), 'observations': records}, indent=2) + '\n')
 PYTHON
   exit "$benchmark_status"
+elif [[ "${SAINT_LOOK_LAUNCH_PAIR:-0}" == 1 ]]; then
+  [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" != 1 && "${SAINT_LOOK_LIVE_TRIAL:-0}" != 1 && -z "${SAINT_LOOK_VISUAL_PROFILE:-}" ]] || exit 1
+  # The ordinary project/scheme invocation is retained; no xctestrun rewrite.
+  python3 scripts/observe-visual-stalls.py --udid "$simulator_id" \
+    --profile outfits-launch-pair --output "$(pwd)/build/launch-pair-diagnostics" \
+    -- xcodebuild "${test_options[@]}" -resultBundlePath "$result_path" test-without-building
 elif [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" ]]; then
   # Capture selected-device state and whitelisted platform fields after build,
   # immediately before the existing test launch. The helper is best-effort only.
