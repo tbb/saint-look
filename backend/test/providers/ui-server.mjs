@@ -1,5 +1,7 @@
 // Controlled external HTTP providers for Simulator and the isolated dev profile; never live AI.
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
+import { garmentLayout } from '../../src/illustration-layout.mjs';
 import sharp from 'sharp';
 import { modelFixture } from './model.mjs';
 import { jevAnswer, validateJevRequest } from './jev.mjs';
@@ -21,9 +23,11 @@ let illustrationPreparationCalls = 0, illustrationAttributesCalls = 0, illustrat
 const illustrationCutout = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: '#00000000' } })
   .composite([{ input: await sharp(blue).resize(260, 300, { fit: 'contain', background: '#00000000' }).png().toBuffer(), left: 382, top: 250 }]).png().toBuffer();
 const illustrationImage = await sharp(illustrationCutout).flatten({ background: '#ffffff' }).jpeg().toBuffer();
-const illustrationInteraction = { id: 'v1_ui-fixture', model: 'gemini-3-pro-image', status: 'completed', steps: [{ type: 'model_output', content: [
+let illustrationInteraction = { id: 'v1_ui-fixture', model: 'gemini-3-pro-image', status: 'completed', steps: [{ type: 'model_output', content: [
   { type: 'image', mime_type: 'image/jpeg', data: illustrationImage.toString('base64') },
 ] }] };
+const imageKey = async bytes => createHash('sha256').update(await sharp(bytes).ensureAlpha().raw().toBuffer()).digest('hex');
+const illustrationCutouts = new Map([[await imageKey(illustrationImage), illustrationCutout]]);
 function reply(response, status, body) {
   response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   response.end(JSON.stringify(body));
@@ -62,7 +66,7 @@ const server = createServer(async (request, response) => {
       } else if (request.method !== 'GET') return reply(response, 405, { error: 'method_not_allowed' });
       return reply(response, 200, { attributesCalls, cutoutCalls, illustrationPreparationCalls, illustrationAttributesCalls, illustrationGenerationCalls, illustrationFinalizationCalls, encoderPreparationCalls, modelRankCalls });
     }
-    if (request.method === 'GET' && request.url === '/v1beta/interactions/ui-fixture') return reply(response, 200, illustrationInteraction);
+    if (request.method === 'GET' && request.url === '/v1beta/interactions/v1_ui-fixture') return reply(response, 200, illustrationInteraction);
     if (request.method !== 'POST') return reply(response, 404, { error: 'not_found' });
     const body = await bodyOf(request, 16 * 1024 * 1024);
     if (await modelFixture(request, response, body, {}, modelCalls, rankCalls)) return;
@@ -72,6 +76,18 @@ const server = createServer(async (request, response) => {
       if (illustrationMode === 'unknown') { response.destroy(); return; }
       if (illustrationMode === 'failed') return reply(response, 422, { error: 'fixture_generation_failed' });
       if (illustrationMode !== 'success') return reply(response, 503, { error: 'fixture_unavailable' });
+      const payload = JSON.parse(body);
+      const features = JSON.parse(payload.input.at(-1).text.split('take precedence): ')[1]);
+      let cutout = illustrationCutout;
+      if (features.type !== 'Футболка') {
+        const layout = garmentLayout(features);
+        cutout = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-100 0 560 560"><path d="${layout.path}" fill="#315c93"/></svg>`)).png().toBuffer();
+      }
+      const jpeg = await sharp(cutout).flatten({background:'#ffffff'}).jpeg().toBuffer();
+      illustrationCutouts.set(await imageKey(jpeg), cutout);
+      illustrationInteraction = { ...illustrationInteraction, steps: [{type:'model_output',content:[
+        {type:'image',mime_type:'image/jpeg',data:jpeg.toString('base64')},
+      ]}] };
       return reply(response, 200, illustrationInteraction);
     }
     if (request.url === '/v1/systemone') {
@@ -100,7 +116,11 @@ const server = createServer(async (request, response) => {
     if (request.url === '/v1/segment') {
       if (body.includes(Buffer.from('filename="preparation.png"')) || body.includes(Buffer.from('filename="finalization.png"'))) {
         if (body.includes(Buffer.from('filename="finalization.png"'))) {
-          illustrationFinalizationCalls++; response.writeHead(200, { 'Content-Type': 'image/png' }); return response.end(illustrationCutout);
+          illustrationFinalizationCalls++;
+          const start = body.indexOf(Buffer.from('\x89PNG', 'latin1')), end = body.indexOf(Buffer.from('\r\n--'), start);
+          const cutout = illustrationCutouts.get(await imageKey(body.subarray(start,end)));
+          if (!cutout) throw new Error('Unknown generated fixture');
+          response.writeHead(200, { 'Content-Type': 'image/png' }); return response.end(cutout);
         }
         illustrationPreparationCalls++;
         const start = body.indexOf(Buffer.from('\x89PNG', 'latin1')), end = body.indexOf(Buffer.from('\r\n--'), start);
