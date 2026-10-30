@@ -585,6 +585,7 @@ final class WardrobeStore: ObservableObject {
                     completed.errorCode = nil
                     try replace(completed, acknowledgement: ResultAcknowledgement(itemID: item.id, operationID: item.operationID))
                     startNewItemIllustrations()
+                    if items.contains(where: { $0.id == id && $0.automaticallyIllustrate }) { discoverMode() }
                     startNextPreparation()
                     return
                 }
@@ -943,7 +944,7 @@ extension WardrobeStore {
         updated[index].sourceSetVersionID = UUID()
         updated[index].preparation = nil
         updated[index].downloadedIllustration = nil
-        updated[index].automaticallyIllustrate = false
+        updated[index].automaticallyIllustrate = true
         if updated[index].illustration?.status == .pending {
             updated[index].illustration?.status = .failed
             updated[index].illustration?.error = "source_changed"
@@ -959,6 +960,10 @@ extension WardrobeStore {
         for photo in previous where !photos.contains(where: { $0.id == photo.id }) {
             try? FileManager.default.removeItem(at: folder.appendingPathComponent(photo.originalFilename))
             try? FileManager.default.removeItem(at: folder.appendingPathComponent(photo.uploadFilename))
+        }
+        if observing {
+            startNewItemIllustrations()
+            discoverMode()
         }
     }
 

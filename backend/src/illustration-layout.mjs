@@ -89,7 +89,7 @@ export async function registerGarmentLayout(bytes, features) {
   if((await checkGarmentLayout(bytes,features)).valid) return bytes;
   const guide=await sharp(Buffer.from(guideSVG(features,false))).ensureAlpha().raw().toBuffer({resolveWithObject:true});
   const target=inkBounds(guide.data,guide.info.width,guide.info.height);
-  const scale=Math.min(target.width/source.width,target.height/source.height);
+  const scale=layout.legs ? target.height/source.height : Math.min(target.width/source.width,target.height/source.height);
   // One global similarity transform, never independent x/y stretch or per-leg warp.
   const size=Math.round(1024*scale);
   if(size<64 || size>2048) throw new ProviderError('illustration_geometry_invalid');
@@ -100,7 +100,15 @@ export async function registerGarmentLayout(bytes, features) {
   const sourceLeft=Math.max(0,-offsetX), sourceTop=Math.max(0,-offsetY);
   const width=Math.min(size-sourceLeft,1024-left), height=Math.min(size-sourceTop,1024-top);
   if(width<=0 || height<=0) throw new ProviderError('illustration_geometry_invalid');
-  const transformed=await sharp(bytes).resize(size,size).extract({left:sourceLeft,top:sourceTop,width,height}).png().toBuffer();
+  const resized=await sharp(bytes).resize(size,size).png().toBuffer();
+  if (sourceLeft || sourceTop || width<size || height<size) {
+    const pixels=await sharp(resized).ensureAlpha().raw().toBuffer();
+    for(let y=0;y<size;y++) for(let x=0;x<size;x++) {
+      if((x<sourceLeft || x>=sourceLeft+width || y<sourceTop || y>=sourceTop+height)
+        && pixels[(y*size+x)*4+3]!==0) throw new ProviderError('illustration_geometry_invalid');
+    }
+  }
+  const transformed=await sharp(resized).extract({left:sourceLeft,top:sourceTop,width,height}).png().toBuffer();
   const result=await sharp({create:{width:1024,height:1024,channels:4,background:'#00000000'}})
     .composite([{input:transformed,left,top}]).png().toBuffer();
   if(!(await checkGarmentLayout(result,features)).valid) throw new ProviderError('illustration_geometry_invalid');
@@ -129,7 +137,12 @@ export async function checkGarmentLayout(bytes, features) {
   }
   const outsideFraction = solid ? outside/solid : 1;
   const coverage = solid / ((right-left)*(bottom-top));
-  const legsValid = !layout.legs || separatedLegs(data,info.width,inkBounds(data,info.width,info.height));
-  return { valid: solid > 256 && outsideFraction <= 0.04 && coverage >= 0.08 && legsValid,
-    outsideFraction, coverage, legsValid, bounds: { left,top,right,bottom } };
+  const ink = inkBounds(data,info.width,info.height);
+  const legsValid = !layout.legs || separatedLegs(data,info.width,ink);
+  // Full-length trousers must reach both waist and ankles. Containment alone
+  // would silently turn a wide silhouette into cropped trousers.
+  const anchorsValid = !layout.legs || (ink && Math.abs(ink.top-point(layout.anchors.leftWaist)[1])<=24
+    && Math.abs(ink.top+ink.height-1-point(layout.anchors.leftAnkle)[1])<=28);
+  return { valid: solid > 256 && outsideFraction <= 0.04 && coverage >= 0.08 && legsValid && anchorsValid,
+    outsideFraction, coverage, legsValid, anchorsValid, bounds: { left,top,right,bottom } };
 }

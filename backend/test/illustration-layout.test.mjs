@@ -45,3 +45,16 @@ test('a front-facing pair of trousers is placed below the waist with one uniform
 test('unseparated leg silhouettes fail instead of being warped into trousers', async () => {
   await assert.rejects(registerGarmentLayout(await rectangle(350,100,320,820),{type:'Брюки'}), {code:'illustration_geometry_invalid'});
 });
+
+
+test('registration never crops visible sandbox watermark pixels outside the garment', async () => {
+  const source = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect x="100" y="100" width="200" height="80" fill="#222"/><rect x="900" y="900" width="50" height="50" fill="red" opacity="0.5"/></svg>')).png().toBuffer();
+  await assert.rejects(registerGarmentLayout(source, {type:'shoes'}), {code:'illustration_geometry_invalid'});
+});
+
+test('wide full-length trousers cannot pass by shrinking their hems above the ankles', async () => {
+  const source = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M250 100 H750 V900 H550 L525 350 H475 L450 900 H250 Z" fill="#222"/></svg>')).png().toBuffer();
+  await assert.rejects(registerGarmentLayout(source, {type:'trousers'}), {code:'illustration_geometry_invalid'});
+  const shortened = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M430 483 H590 V746 H530 L520 570 H500 L490 746 H430 Z" fill="#222"/></svg>')).png().toBuffer();
+  assert.equal((await checkGarmentLayout(shortened,{type:'trousers'})).valid, false);
+});

@@ -449,7 +449,7 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testAdditionalPhotoDraftCancellationAndSaveDoNotGenerate() async throws {
+    func testAdditionalPhotoDraftSavePreservesAutomaticPreparation() async throws {
         let app = launch(reset: true, baseURL: testURL)
         app.buttons["add-demo-photo"].tap()
         await waitForSummary(app, ready: 1, pending: 0)
@@ -475,10 +475,19 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(offline.buttons["remove-detail-photo"].firstMatch.exists)
         let state = try await transportState()
         XCTAssertEqual(state["illustrationUploads"] as? Int ?? 0, 0)
+        offline.terminate()
+        _ = try await providerControl(["illustrationMode": "success"])
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 1, pending: 0)
+        try openFirstItem(in: restored)
+        XCTAssertTrue(restored.staticTexts["illustration-saved"].waitForExistence(timeout: 30),
+                      "Saving another angle must preserve mandatory preparation across restart")
+        let prepared = try await transportState()
+        XCTAssertEqual(prepared["illustrationUploads"] as? Int, 1)
     }
 
     @MainActor
-    func testIllustrationUnavailablePreservesOriginalAndCutout() async throws {
+    func testIllustrationUnavailableResumesAutomaticallyWhenProviderRecovers() async throws {
         let app = launch(reset: true, baseURL: testURL)
         app.buttons["add-demo-photo"].tap()
         await waitForSummary(app, ready: 1, pending: 0)
@@ -490,6 +499,12 @@ final class WardrobeFlowTests: XCTestCase {
         for _ in 0..<4 where !app.staticTexts["illustration-unavailable"].isHittable { app.swipeUp() }
         XCTAssertTrue(app.staticTexts["illustration-unavailable"].exists)
         XCTAssertFalse(app.buttons["generate-illustration"].isEnabled)
+        _ = try await providerControl(["illustrationMode": "success"])
+        XCTAssertTrue(app.staticTexts["illustration-saved"].waitForExistence(timeout: 30),
+                      "A provider recovery must resume preparation without a manual retry or relaunch")
+        XCTAssertTrue(app.buttons["show-illustration"].isSelected)
+        let prepared = try await transportState()
+        XCTAssertEqual(prepared["illustrationUploads"] as? Int, 1)
         app.terminate()
         let offline = launch(reset: false, baseURL: "http://127.0.0.1:1")
         await waitForSummary(offline, ready: 1, pending: 0)
