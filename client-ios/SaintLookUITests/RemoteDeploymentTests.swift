@@ -86,7 +86,7 @@ final class RemoteDeploymentTests: XCTestCase {
 final class LiveTrialTests: XCTestCase {
     @MainActor
     private func readyCard(in app: XCUIApplication) -> XCUIElement {
-        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'wardrobe-item-' AND value == 'Готово'")).firstMatch
+        app.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH 'wardrobe-item-' AND value == 'Готово'")).firstMatch
     }
 
     @MainActor
@@ -140,7 +140,7 @@ final class LiveTrialTests: XCTestCase {
             let add = app.buttons["add-trial-photo"]
             XCTAssertTrue(add.waitForExistence(timeout: 5))
             XCTAssertFalse(app.buttons["add-demo-photo"].exists)
-            let cards = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'wardrobe-item-'"))
+            let cards = app.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH 'wardrobe-item-'"))
             let previousCardIDs = Set(cards.allElementsBoundByIndex.map(\.identifier))
             // Exactly one upload action per selected photo. Never retry a failed provider result.
             add.tap()
@@ -167,7 +167,7 @@ final class LiveTrialTests: XCTestCase {
             let image = preparedCard.images["item-photo"].firstMatch.screenshot().pngRepresentation
             app.terminate()
             let offline = launch(reset: false, online: false, index: index)
-            let retainedCard = offline.buttons[cardIdentifier]
+            let retainedCard = offline.otherElements[cardIdentifier]
             XCTAssertTrue(retainedCard.waitForExistence(timeout: 5))
             XCTAssertEqual(retainedCard.value as? String, "Готово")
             XCTAssertEqual(offline.staticTexts["wardrobe-summary"].label, expected)
