@@ -151,8 +151,14 @@ The trial reserves $0.40 before each Gemini POST. This is a conservative ceiling
 not the observed unit price: the request caps combined output/thinking at 2048
 tokens; the 65,536 input-token model limit at $2/M plus 2048 output tokens priced
 entirely at the higher $120/M image rate totals $0.376832. No grounding tools are
-enabled. The $4.50 total trial ceiling is unchanged. Historical fal reservations
+enabled. The owner's total API ceiling is $10: the prepared server lifetime cap
+is $8.80, leaving $1.20 for three earlier standalone Google probes outside this
+ledger. The same-ID $4.50 → $8.80 policy migration preserves every reservation;
+the 60/48/24 provider limits and rates stay unchanged. Historical fal reservations
 remain in both the total spend and the 24-generation count after migration.
+Downgrading the policy to $4.50 is permitted only while the entire reserved cost
+fits; older backend budget code cannot accept $8.80 and must not be rolled back
+without the compatible policy downgrade or a reviewed budget-code backport.
 
 Gemini uses `store:true` so a saved interaction ID can be recovered with GET.
 Google therefore stores the interaction, including uploaded photos. The current
