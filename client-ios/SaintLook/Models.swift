@@ -418,6 +418,10 @@ extension WardrobeItem {
             return "Не удалось подтвердить старую версию на сервере. Изображение и луки сохранены на устройстве."
         }
         if illustration?.status == .pending {
+            if illustration?.error == "offline" {
+                return IllustrationFailure.message(for: "offline")
+                    + (photosLocked ? " В луках пока используется предыдущая версия." : "")
+            }
             return photosLocked ? "Обновляем вещь. В луках пока используется предыдущая версия."
                 : "Иллюстрация готовится. Можно продолжать пользоваться гардеробом."
         }
