@@ -54,6 +54,15 @@ final class WardrobeStore: ObservableObject {
             pendingAcknowledgements = saved.pendingAcknowledgements ?? []
             let needsAcknowledgementMigration = saved.pendingAcknowledgements == nil
             storageAvailable = true
+            #if DEBUG
+            if env["SAINT_LOOK_BENCHMARK"] == "1" {
+                // Admit fixture publications through the same complete local
+                // artifact checks used by the picker and wardrobe summary.
+                guard usesVisualFixtures, items.allSatisfy({ preparedFilesAvailable(for: $0) }) else {
+                    throw ClientError.invalidResponse
+                }
+            }
+            #endif
             for id in pendingDeletionIDs {
                 // Cleanup does not depend on valid credentials or a working connection.
                 try? removeLocalFiles(for: id)

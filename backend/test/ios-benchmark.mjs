@@ -8,6 +8,7 @@ import { cp, mkdir, mkdtemp, readFile, writeFile, realpath, stat, symlink } from
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { clonePreparedPacket, installReceiptFixture } from './prepared-receipt-fixture.mjs';
+import sharp from 'sharp';
 import { canonicalFeatures, canonicalText, featureDigest, validateObserved } from '../src/publication-contract.mjs';
 
 import { observableChoices } from '../src/illustration-features.mjs';
@@ -33,8 +34,13 @@ async function loadSources(directory) {
   const records = [];
   for (const [index, input] of sourceManifest.items.entries()) {
     const entry = publicManifest.items.find(item => item.id === input.id);
-    check([input.sourceFile, input.representationFile, input.publicJPEGFile].every(safeAsset), 'source_filename');
+    check([input.sourceFile, input.representationFile, input.publicJPEGFile, input.illustrationFile].every(safeAsset), 'source_filename');
     const source = await readFile(join(directory, input.sourceFile));
+    const illustrationBytes = await readFile(join(directory, input.illustrationFile));
+    const imageMetadata = await sharp(illustrationBytes).metadata();
+    check(sha(illustrationBytes) === input.illustrationSHA256 && illustrationBytes.length <= 6 * 1024 * 1024
+      && imageMetadata.format === 'png' && imageMetadata.width === 1024 && imageMetadata.height === 1024
+      && imageMetadata.hasAlpha && imageMetadata.channels === 4, 'illustration_fixture_geometry');
     const representation = await readFile(join(directory, input.representationFile));
     check(source.length > 0 && source.length <= 6 * 1024 * 1024 && sha(source) === input.sourceSHA256
       && sha(await readFile(join(directory, input.publicJPEGFile))) === entry.sha256
@@ -52,18 +58,18 @@ async function loadSources(directory) {
     const illustration = { itemId, operationId: fixtureID(5, index), photoVersionId, sourceSetVersionId,
       revision: 1, status: 'ready', mode: 'test', processing: {}, observedFeatures: effective, effectiveFeatures: effective,
       observedFeaturesSHA256: featureDigest(effective), effectiveFeaturesSHA256: featureDigest(effective),
-      manualType: null, manualColors: null, ...illustrationVersions, resultPath: null, resultSHA256: sha(source), error: null,
+      manualType: null, manualColors: null, ...illustrationVersions, resultPath: null, resultSHA256: sha(illustrationBytes), error: null,
       preparedSources: [{ photoId: photoVersionId, sourceSHA256: sha(source), preparedSHA256: sha(source), versions: illustrationVersions }] };
     const preparation = { itemId, operationId: fixtureID(2, index), revision: 1, photoVersionId, sourceSetVersionId,
       illustrationOperationId: illustration.operationId, cutoutOperationId: fixtureID(4, index), spaceID: realSpace,
       status: 'ready', mode: 'real', imageMode: 'test', provenance: 'syntheticBenchmarkFixture', effectiveFeatures: features,
       representationJSON: representation.toString('utf8'), representationSHA256: sha(representation),
-      input: { sourceSHA256: sha(source), textSHA256: rep.textSHA256 }, artifacts: { cutoutSHA256: sha(source), illustrationSHA256: sha(source),
+      input: { sourceSHA256: sha(source), textSHA256: rep.textSHA256 }, artifacts: { cutoutSHA256: sha(source), illustrationSHA256: sha(illustrationBytes),
         observedFeaturesSHA256: featureDigest(effective), effectiveFeaturesSHA256: featureDigest(effective) }, error: null };
     const packet = { itemId, photoVersionId, publishedVersionId: preparation.operationId, sourceSetVersionId,
       features, effectiveFeatures: effective, representationJSON: representation.toString('utf8'), representationSHA256: sha(representation) };
     records.push({ publicID: input.id, illustration, preparation, packet,
-      files: { source, cutout: source, illustration: source, prepared: source, representation } });
+      files: { source, cutout: source, illustration: illustrationBytes, prepared: source, representation } });
   }
   return records;
 }

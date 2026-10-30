@@ -20,6 +20,17 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def make_illustration(photo, output):
+    from PIL import Image
+    # Match the actual client artifact contract without changing encoder bytes.
+    with Image.open(photo) as original:
+        content = original.convert('RGBA')
+        content.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+        canvas = Image.new('RGBA', (1024, 1024), (0, 0, 0, 0))
+        canvas.alpha_composite(content, ((1024 - content.width) // 2, (1024 - content.height) // 2))
+        canvas.save(output, format='PNG')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--assets', type=Path, required=True)
@@ -59,6 +70,11 @@ def main():
         photo = args.output / (source_id + '.png')
         with Image.open(jpeg) as original:
             ImageOps.exif_transpose(original).convert('RGB').save(photo, format='PNG')
+        # Product readiness requires a square RGBA illustration. This remains an
+        # explicit image fixture: preserve the public photo and add transparent
+        # padding without changing the encoder's original RGB input bytes.
+        illustration = args.output / (source_id + '-illustration.png')
+        make_illustration(photo, illustration)
         photo_id = 'b4000001-0000-4000-8000-' + str(index + 1).zfill(12)
         before = time.monotonic()
         representation = adapter.prepare(photo, photo_id, entry['type'], entry['colors'])
@@ -67,6 +83,7 @@ def main():
         (args.output / representation_file).write_bytes(representation_bytes)
         records.append({'id': source_id, 'photoVersionId': photo_id, 'sourceFile': photo.name,
                         'representationFile': representation_file, 'publicJPEGFile': jpeg.name,
+                        'illustrationFile': illustration.name, 'illustrationSHA256': digest(illustration.read_bytes()),
                         'sourceSHA256': digest(photo.read_bytes()), 'publicJPEG_SHA256': entry['sha256'],
                         'representationSHA256': digest(representation_bytes),
                         'encoderMilliseconds': (time.monotonic() - before) * 1000})

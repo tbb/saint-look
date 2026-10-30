@@ -226,7 +226,7 @@ enum VisualFixtures {
                   let features = illustration.effectiveFeatures, let observed = illustration.observedFeatures,
                   features.isValid, observed.isValid, illustration.status == .ready, illustration.mode == "test",
                   features.traits.values.allSatisfy({ $0 == "unknown" }), observed.traits.values.allSatisfy({ $0 == "unknown" }),
-                  sourceHash == cutoutHash, sourceHash == illustrationHash, sourceHash == preparedHash,
+                  sourceHash == cutoutHash, sourceHash == preparedHash,
                   illustration.modelVersion == IllustrationContract.currentModelVersion,
                   illustration.resultSHA256 == illustrationHash,
                   illustration.observedFeaturesSHA256 == (try benchmarkDigest(featuresEncoder.encode(observed))),
