@@ -12,6 +12,15 @@ const parse = value => value === null ? null : JSON.parse(value);
 const json = value => JSON.stringify(value ?? null);
 const cleared = "source=NULL,prepared=NULL";
 
+function compatiblePreparedVersions(serialized) {
+  let versions;
+  try { versions = JSON.parse(serialized); } catch { return false; }
+  // Switching these renderers does not change the sandbox source cutout.
+  return versions && ['fal-ai/nano-banana-pro/edit', illustrationVersions.modelVersion].includes(versions.modelVersion)
+    && versions.templateVersion === illustrationVersions.templateVersion
+    && versions.geometryVersion === illustrationVersions.geometryVersion;
+}
+
 async function readInput(request, itemId) {
   if (!request.headers['content-type']?.toLowerCase().startsWith('application/json')) throw new RequestError(415, 'unsupported_content_type');
   const chunks = []; let size = 0;
@@ -306,7 +315,7 @@ export function createIllustrations(database, env, retention, budget) {
           const known = database.prepare('SELECT * FROM illustration_sources WHERE item_id=? AND photo_id=?').get(input.itemId, photo.id);
           if (known && known.digest !== photo.digest) throw new RequestError(409, 'identity_conflict');
           if (photo.prepared && (!known || known.prepared_digest !== digest(photo.prepared)
-            || known.prepared_versions !== json(illustrationVersions))) throw new RequestError(409, 'prepared_source_conflict');
+            || !compatiblePreparedVersions(known.prepared_versions))) throw new RequestError(409, 'prepared_source_conflict');
           database.prepare(`INSERT INTO illustration_sources(item_id,photo_id,digest,source,expires_at) VALUES (?,?,?,?,?)
             ON CONFLICT(item_id,photo_id) DO UPDATE SET source=excluded.source,expires_at=excluded.expires_at`)
             .run(input.itemId, photo.id, photo.digest, photo.source, deadline);

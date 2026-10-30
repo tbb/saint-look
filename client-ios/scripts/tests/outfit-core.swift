@@ -31,6 +31,7 @@ struct OutfitCoreChecks {
         jeans.status = .ready
         jeans.type = "Джинсы"
         jeans.resultFilename = "result.png"
+        try illustrationProviderChecks(item: shirt, file: file)
         catalog.items = [shirt, jeans]
         catalog.outfits = []
         let cutouts: Set<UUID> = [shirtID, jeansID]
@@ -1019,11 +1020,45 @@ struct OutfitCoreChecks {
             input: .init(sourceSHA256: intent.sourceSHA256, textSHA256: String(repeating: "c", count: 64)), artifacts: intent.artifacts, error: nil)
     }
 
-    static func preparedFixture(_ input: WardrobeItem) throws -> WardrobeItem {
+    static func illustrationProviderChecks(item: WardrobeItem, file: WardrobeCatalogFile) throws {
+        let request = IllustrationRequest(operationID: UUID(), photoVersionID: item.photoVersionID,
+            sourceSetVersionID: item.sourceSetVersionID, revision: 1, manualType: nil, manualColors: nil, status: .ready)
+        for model in ["gemini-3-pro-image", "fal-ai/nano-banana-pro/edit"] {
+            let result = illustrationResult(item: item, request: request, type: item.type!, filename: "illustration.png", modelVersion: model)
+            try result.response.validate(for: item, request: request)
+        }
+        let unknown = illustrationResult(item: item, request: request, type: item.type!, filename: "illustration.png", modelVersion: "unapproved-renderer")
+        do {
+            try unknown.response.validate(for: item, request: request)
+            fatalError("An unknown illustration renderer must remain invalid")
+        } catch ClientError.invalidResponse { }
+        var legacy = try preparedFixture(item, modelVersion: "fal-ai/nano-banana-pro/edit")
+        legacy.photosLocked = true
+        try file.save(WardrobeCatalog(items: [legacy]))
+        let restoredLegacy = try file.load().items[0]
+        precondition(restoredLegacy.hasPreparedVersion)
+        precondition(restoredLegacy.publishedVersion?.illustration?.response.modelVersion == "fal-ai/nano-banana-pro/edit")
+        for model in [IllustrationContract.currentModelVersion, "fal-ai/nano-banana-pro/edit", "unapproved-renderer"] {
+            let cached = IllustrationPreparedPhoto(photoID: item.photoVersionID, filename: "prepared.png",
+                sourceDigest: "source-digest", preparedDigest: "prepared-digest", modelVersion: model,
+                templateVersion: "front-360x560-proposed-v1", geometryVersion: "fitting-square-1024-v1")
+            precondition(cached.matchesPreparationContract(photoID: item.photoVersionID) == (model != "unapproved-renderer"))
+            precondition(!cached.matchesPreparationContract(photoID: UUID()), "A different source cannot reuse the cached cutout")
+        }
+        for versions in [("changed-template", "fitting-square-1024-v1"), ("front-360x560-proposed-v1", "changed-geometry")] {
+            let cached = IllustrationPreparedPhoto(photoID: item.photoVersionID, filename: "prepared.png",
+                sourceDigest: "source-digest", preparedDigest: "prepared-digest", modelVersion: IllustrationContract.currentModelVersion,
+                templateVersion: versions.0, geometryVersion: versions.1)
+            precondition(!cached.matchesPreparationContract(photoID: item.photoVersionID), "Incompatible preparation geometry cannot be reused")
+        }
+        print("PASS: Gemini admission, legacy publication restart and same-source prepared cache compatibility")
+    }
+
+    static func preparedFixture(_ input: WardrobeItem, modelVersion: String = IllustrationContract.currentModelVersion) throws -> WardrobeItem {
         var item = input
         let request = IllustrationRequest(operationID: UUID(), photoVersionID: item.photoVersionID,
             sourceSetVersionID: item.sourceSetVersionID, revision: 1, manualType: nil, manualColors: nil, status: .ready)
-        let result = illustrationResult(item: item, request: request, type: item.type!, filename: "controlled-illustration.png")
+        let result = illustrationResult(item: item, request: request, type: item.type!, filename: "controlled-illustration.png", modelVersion: modelVersion)
         item.colors = result.response.effectiveFeatures!.colors
         let id = UUID(), digest = String(repeating: "a", count: 64)
         let response = PreparationResponse(itemId: item.id, operationId: id, revision: 1,
@@ -1040,14 +1075,15 @@ struct OutfitCoreChecks {
             representation: StoredRepresentation(filename: "controlled-representation.json", response: response))
         return item
     }
-    static func illustrationResult(item: WardrobeItem, request: IllustrationRequest, type: String, filename: String) -> IllustrationResult {
+    static func illustrationResult(item: WardrobeItem, request: IllustrationRequest, type: String, filename: String,
+                                   modelVersion: String = IllustrationContract.currentModelVersion) -> IllustrationResult {
         let keys = ["silhouette", "body_length", "sleeves", "pattern", "pattern_location", "pattern_size", "neckline", "fastening", "surface", "hood", "kangaroo_pocket", "patch_pockets", "dropped_shoulders", "contrast_cuffs", "lettering"]
         let features = IllustrationFeatures(version: "fitting-observable-v2-photoroom-sandbox", type: type,
             colors: request.manualColors ?? ["Белый"], traits: Dictionary(uniqueKeysWithValues: keys.map { ($0, "unknown") }))
         let response = IllustrationResponse(itemId: item.id, operationId: request.operationID,
             photoVersionId: request.photoVersionID, sourceSetVersionId: request.sourceSetVersionID, revision: request.revision,
             status: .ready, mode: "test", processing: [:], observedFeatures: features, effectiveFeatures: features,
-            manualType: request.manualType, manualColors: request.manualColors, modelVersion: "fal-ai/nano-banana-pro/edit",
+            manualType: request.manualType, manualColors: request.manualColors, modelVersion: modelVersion,
             templateVersion: "front-360x560-proposed-v1", geometryVersion: "fitting-square-1024-v1", resultPath: nil, error: nil,
             preparedSources: [IllustrationPreparedSource(photoId: item.photoVersionID, preparedPath: "/prepared")])
         return IllustrationResult(filename: filename, response: response)

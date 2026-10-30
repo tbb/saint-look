@@ -333,6 +333,16 @@ struct IllustrationResult: Codable {
     let response: IllustrationResponse
 }
 
+enum IllustrationContract {
+    static let currentModelVersion = "gemini-3-pro-image"
+    private static let supportedModels: Set<String> = [currentModelVersion, "fal-ai/nano-banana-pro/edit"]
+
+    static func accepts(modelVersion: String, templateVersion: String, geometryVersion: String) -> Bool {
+        supportedModels.contains(modelVersion) && templateVersion == "front-360x560-proposed-v1"
+            && geometryVersion == "fitting-square-1024-v1"
+    }
+}
+
 struct IllustrationResponse: Codable {
     let itemId: UUID
     let operationId: UUID
@@ -360,8 +370,8 @@ struct IllustrationResponse: Codable {
         guard itemId == item.id, operationId == request.operationID,
               photoVersionId == request.photoVersionID, sourceSetVersionId == request.sourceSetVersionID,
               revision == request.revision, manualType == request.manualType, manualColors == request.manualColors,
-              ["live", "test"].contains(mode), modelVersion == "fal-ai/nano-banana-pro/edit",
-              templateVersion == "front-360x560-proposed-v1", geometryVersion == "fitting-square-1024-v1" else {
+              ["live", "test"].contains(mode),
+              IllustrationContract.accepts(modelVersion: modelVersion, templateVersion: templateVersion, geometryVersion: geometryVersion) else {
             throw ClientError.invalidResponse
         }
         if status == .ready {
@@ -464,6 +474,11 @@ struct IllustrationPreparedPhoto: Codable {
     let modelVersion: String
     let templateVersion: String
     let geometryVersion: String
+
+    func matchesPreparationContract(photoID: UUID) -> Bool {
+        self.photoID == photoID && IllustrationContract.accepts(modelVersion: modelVersion,
+            templateVersion: templateVersion, geometryVersion: geometryVersion)
+    }
 }
 
 struct RecommendationConfiguration: Decodable {
