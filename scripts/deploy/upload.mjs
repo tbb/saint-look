@@ -47,7 +47,7 @@ try {
   }
   const cliEnvironment = { ...env, NO_COLOR: '1' };
   for (const name of Object.keys(cliEnvironment)) {
-    if (name.startsWith('RAILWAY_') || name.startsWith('SAINT_LOOK_') || ['TYPESAFE_API_KEY', 'GEMINI_API_KEY', 'PHOTOROOM_API_KEY', 'PHOTOROOM_SANDBOX_API_KEY', 'GH_TOKEN', 'GITHUB_TOKEN'].includes(name)) delete cliEnvironment[name];
+    if (name.startsWith('RAILWAY_') || name.startsWith('SAINT_LOOK_') || ['TYPESAFE_API_KEY', 'GEMINI_API_KEY', 'PHOTOROOM_API_KEY', 'PHOTOROOM_SANDBOX_API_KEY', 'FAL_KEY', 'GH_TOKEN', 'GITHUB_TOKEN'].includes(name)) delete cliEnvironment[name];
   }
   function fly(args, timeout = 30000, input) {
     return execFileSync('flyctl', args, { env: cliEnvironment, encoding: 'utf8', timeout, maxBuffer: 4 * 1024 * 1024, input, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });

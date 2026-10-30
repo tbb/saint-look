@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 const state = JSON.parse(fs.readFileSync(process.env.FIXTURE_STATE));
 const secretInput = args[0] === 'secrets' ? fs.readFileSync(0, 'utf8') : undefined;
-fs.appendFileSync(process.env.CAPTURE, JSON.stringify({ args, secretInput, token: process.env.FLY_API_TOKEN, ownerTokenPresent: !!process.env.SAINT_LOOK_DEV_OWNER_TOKEN, railwayTokenPresent: !!process.env.RAILWAY_TOKEN, providerKeyPresent: !!(process.env.TYPESAFE_API_KEY || process.env.PHOTOROOM_API_KEY || process.env.GEMINI_API_KEY || process.env.PHOTOROOM_SANDBOX_API_KEY), configText: args[0] === 'deploy' ? fs.readFileSync(args[args.indexOf('--config') + 1], 'utf8') : undefined }) + '\\n');
+fs.appendFileSync(process.env.CAPTURE, JSON.stringify({ args, secretInput, token: process.env.FLY_API_TOKEN, ownerTokenPresent: !!process.env.SAINT_LOOK_DEV_OWNER_TOKEN, railwayTokenPresent: !!process.env.RAILWAY_TOKEN, providerKeyPresent: !!(process.env.TYPESAFE_API_KEY || process.env.PHOTOROOM_API_KEY || process.env.GEMINI_API_KEY || process.env.FAL_KEY || process.env.PHOTOROOM_SANDBOX_API_KEY), configText: args[0] === 'deploy' ? fs.readFileSync(args[args.indexOf('--config') + 1], 'utf8') : undefined }) + '\\n');
 if (args[0] === 'deploy') {
   if (state.fail) { console.error(process.env.FLY_API_TOKEN); process.exit(1); }
   process.exit(0);
@@ -205,10 +205,10 @@ test('approved illustrations stage only sandbox and Gemini secrets and pass boun
   const f = fixture(t);
   writeFileSync(join(f.release, 'backend/release.json'), JSON.stringify({ profiles: ['live'], providerConfig: 'photoroom-jev-1.14.0-taxonomy-1' }));
   const budget = { id: 'epic63-public-v1-5d85dde081e8', approved: true, pricesCheckedAt: new Date().toISOString(),
-    limits: { photoroom: 60, jev: 48, gemini: 24 }, ratesMicrousd: { photoroom: 0, jev: 2753, gemini: 135100 }, maxCostMicrousd: 4500000 };
+    limits: { photoroom: 60, jev: 48, gemini: 24 }, ratesMicrousd: { photoroom: 0, jev: 2753, gemini: 400000 }, maxCostMicrousd: 4500000 };
   const config = { SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', AI_TRIAL_PREFLIGHT_VERIFIED: 'true',
     TYPESAFE_API_KEY: 'typesafe-fixture-secret', PHOTOROOM_API_KEY: 'sandbox_fixture_secret',
-    SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true', GEMINI_API_KEY: 'fixture-gemini-key', SAINT_LOOK_API_BUDGET_JSON: JSON.stringify(budget) };
+    SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true', GEMINI_API_KEY: 'fixture-gemini-key', FAL_KEY: 'legacy-fal-secret', SAINT_LOOK_API_BUDGET_JSON: JSON.stringify(budget) };
   const result = f.run(config);
   assert.equal(result.status, 0, result.stderr);
   const secrets = f.calls().find(call => call.args[0] === 'secrets');
@@ -216,7 +216,8 @@ test('approved illustrations stage only sandbox and Gemini secrets and pass boun
   const deploy = f.calls().find(call => call.args[0] === 'deploy');
   assert.ok(deploy.args.includes('SAINT_LOOK_ILLUSTRATIONS_ENABLED=true'));
   assert.ok(deploy.args.some(arg => arg.startsWith('SAINT_LOOK_API_BUDGET_JSON=') && arg.includes('4500000')));
-  assert.doesNotMatch(result.stdout + result.stderr + JSON.stringify(deploy.args), /fixture-gemini-key|sandbox_fixture_secret/);
+  assert.doesNotMatch(result.stdout + result.stderr + JSON.stringify(deploy.args), /fixture-gemini-key|sandbox_fixture_secret|legacy-fal-secret/);
+  assert.doesNotMatch(secrets.secretInput, /legacy-fal-secret/);
   assert.ok(f.calls().every(call => !call.providerKeyPresent));
   const before = f.calls().length;
   for (const changed of [{ approved: false }, { limits: { ...budget.limits, gemini: 25 } },
