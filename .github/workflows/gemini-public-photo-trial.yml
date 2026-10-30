@@ -33,7 +33,7 @@ jobs:
                   {'type': 'text', 'text': 'Create a clean, neutral catalog cutout illustration of the exact white short-sleeve t-shirt shown in the supplied photo. Keep its silhouette, neckline, sleeve length, and color faithful. Show only the garment, centered on a plain light gray background. Do not add text, logos, people, accessories, or other clothing.'},
                   {'type': 'image', 'mime_type': 'image/png', 'data': base64.b64encode(image).decode('ascii')},
               ],
-              'response_format': {'type': 'image', 'mime_type': 'image/png', 'image_size': '1K', 'aspect_ratio': '1:1'},
+              'response_format': {'type': 'image', 'mime_type': 'image/jpeg', 'image_size': '1K', 'aspect_ratio': '1:1'},
           }
           pathlib.Path(os.environ['RUNNER_TEMP'], 'gemini-request.json').write_text(json.dumps(request))
           key = os.environ['GEMINI_API_KEY']
@@ -92,14 +92,14 @@ jobs:
           out = pathlib.Path('gemini-trial-output')
           out.mkdir()
           raw = base64.b64decode(image, validate=True)
-          if not raw.startswith(b'\x89PNG\r\n\x1a\n'):
-              raise SystemExit('Gemini output was not a PNG.')
-          (out / 'garment-illustration.png').write_bytes(raw)
+          if not raw.startswith(b'\xff\xd8\xff'):
+              raise SystemExit('Gemini output was not a JPEG.')
+          (out / 'garment-illustration.jpg').write_bytes(raw)
           usage = data.get('usage', {})
           summary = {
               'model': data.get('model', 'gemini-3-pro-image'),
               'inputPhoto': 'client-ios/SaintLook/TrialPhotos/photo-1.png',
-              'output': 'garment-illustration.png',
+              'output': 'garment-illustration.jpg',
               'outputBytes': len(raw),
               'usage': usage,
               'interactionId': data.get('id'),
