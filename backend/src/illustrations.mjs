@@ -207,7 +207,7 @@ export function createIllustrations(database, env, retention, budget) {
       let generated = row.generated && { png: Buffer.from(row.generated), usableAlpha: Boolean(row.generated_alpha) };
       if (!generated) {
         setStage(operationId, stage, 'in_flight');
-        if (!row.provider_receipt) budget.reserve('fal', `${operationId}:illustration:generation:${row.photo_version_id}`);
+        if (!row.provider_receipt) budget.reserve('gemini', `${operationId}:illustration:generation:${row.photo_version_id}`);
         generated = await provider.generate(photos, effective, abort.signal, receipt => {
           if (live(operationId)) database.prepare('UPDATE illustrations SET provider_receipt=? WHERE operation_id=?').run(receipt, operationId);
         }, row.provider_receipt);

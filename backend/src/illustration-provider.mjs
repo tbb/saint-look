@@ -1,14 +1,12 @@
 import sharp from 'sharp';
 import { readFileSync } from 'node:fs';
-import { setTimeout as pause } from 'node:timers/promises';
 import { exchange, ProviderError } from './providers.mjs';
 import { featureRequest, featureAnswer } from './illustration-features.mjs';
 
-export const illustrationVersions = Object.freeze({ modelVersion: 'fal-ai/nano-banana-pro/edit',
+export const illustrationVersions = Object.freeze({ modelVersion: 'gemini-3-pro-image',
   templateVersion: 'front-360x560-proposed-v1', geometryVersion: 'fitting-square-1024-v1' });
 export const illustrationTaxonomy = JSON.parse(readFileSync(new URL('../../shared/wardrobe-taxonomy.json', import.meta.url)));
 const pngHeader = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-const dataURI = image => `data:image/png;base64,${image.toString('base64')}`;
 
 async function decode(bytes, { width, height, requireAlpha = false } = {}) {
   try {
@@ -29,12 +27,11 @@ async function decode(bytes, { width, height, requireAlpha = false } = {}) {
 export function createIllustrationProvider(env) {
   const origin = env.SAINT_LOOK_ILLUSTRATION_TEST_ORIGIN;
   const timeout = Number(env.SAINT_LOOK_ILLUSTRATION_TIMEOUT_MS || 60000);
-  const pollMs = Number(env.SAINT_LOOK_ILLUSTRATION_POLL_MS || 1500);
   let configured = env.SAINT_LOOK_ILLUSTRATIONS_ENABLED === 'true';
   const key = env.PHOTOROOM_SANDBOX_API_KEY;
-  if (!key?.startsWith('sandbox_') || !env.TYPESAFE_API_KEY?.trim() || !env.FAL_KEY?.trim()
+  if (!key?.startsWith('sandbox_') || !env.TYPESAFE_API_KEY?.trim() || !env.GEMINI_API_KEY?.trim()
     || !Number.isInteger(timeout) || timeout < 50 || timeout > 120000
-    || !Number.isInteger(pollMs) || pollMs < 1 || pollMs > 10000) configured = false;
+  ) configured = false;
   if (origin) {
     let parsed;
     try { parsed = new URL(origin); } catch { configured = false; }
@@ -43,12 +40,10 @@ export function createIllustrationProvider(env) {
   } else if (env.NODE_ENV === 'test') configured = false;
   const cutoutURL = `${origin || 'https://sdk.photoroom.com'}/v1/segment`;
   const jevURL = `${origin || 'https://api.typesafe.ai'}/v1/systemone`;
-  const falOrigin = origin || 'https://queue.fal.run';
-  const headers = { Authorization: `Key ${env.FAL_KEY}`, 'Content-Type': 'application/json', 'X-Fal-No-Retry': '1',
-    'x-app-fal-disable-fallback': 'true', 'X-Fal-Store-IO': '0',
-    'X-Fal-Object-Lifecycle-Preference': JSON.stringify({ expiration_duration_seconds: 3600 }), 'X-Fal-Request-Start-Timeout': '120' };
-  async function json(url, options, signal) {
-    const body = await exchange(url, options, signal, timeout, 256 * 1024);
+  const geminiOrigin = origin || 'https://generativelanguage.googleapis.com';
+  const geminiHeaders = { 'x-goog-api-key': env.GEMINI_API_KEY, 'Content-Type': 'application/json' };
+  async function json(url, options, signal, limit = 12 * 1024 * 1024) {
+    const body = await exchange(url, options, signal, timeout, limit);
     try { return JSON.parse(body); } catch { throw new ProviderError('invalid_provider_response'); }
   }
   function ensureConfigured() { if (!configured) throw new ProviderError('illustration_unavailable'); }
@@ -87,53 +82,50 @@ export function createIllustrationProvider(env) {
     },
     async generate(photos, features, signal, recordReceipt, savedReceipt) {
       ensureConfigured();
-      let requestId = savedReceipt;
-      if (!requestId) {
-        const template = await sharp(new URL('./fitting-mannequin.svg', import.meta.url).pathname)
-          .resize(1024, 1024, { fit: 'contain', background: '#ffffff' }).png().toBuffer();
-        const prompt = `Create a faithful restrained editorial illustration of ONLY ONE garment. Image pairs: ${photos.map(p => `original_${p.role}, prepared_${p.role}`).join('; ')}. LAST image is a common mannequin pose/style reference, not the item. Ignore PHOTOROOM sandbox watermarks; use originals as detail and color references. Never reproduce processing watermarks. Preserve garment silhouette, proportions, color, construction and prints. Do not invent text, brands, bodies, underlayers, or move back prints to the front. Render FRONT view on the full 1024 square canvas aligned to the reference shoulders, waist and feet; preserve white letterbox margins. Never independently crop, center or stretch garment. Use a plain white background. Effective features (manual type/colors take precedence): ${JSON.stringify(features)}`;
-        const payload = { prompt, image_urls: [...photos.flatMap(photo => [dataURI(photo.source), dataURI(photo.prepared)]), dataURI(template)],
-          num_images: 1, aspect_ratio: '1:1', output_format: 'png', resolution: '1K', limit_generations: true, enable_web_search: false };
-        if (Buffer.byteLength(JSON.stringify(payload)) > 32 * 1024 * 1024) throw new ProviderError('image_too_large');
-        let receipt;
-        try { receipt = await json(`${falOrigin}/${illustrationVersions.modelVersion}`, { method: 'POST', headers, body: JSON.stringify(payload) }, signal); }
-        catch (error) {
-          // A successful but undecodable receipt may already own a paid job.
-          if (error.code === 'invalid_provider_response') throw new ProviderError('processing_unknown', true);
-          throw error;
-        }
-        if (typeof receipt.request_id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(receipt.request_id)) throw new ProviderError('processing_unknown', true);
-        requestId = receipt.request_id;
-        recordReceipt(requestId);
-      }
-      const base = `${falOrigin}/fal-ai/nano-banana-pro/requests/${requestId}`;
-      let provenFailure = false;
+      const template = await sharp(new URL('./fitting-mannequin.svg', import.meta.url).pathname)
+        .resize(1024, 1024, { fit: 'contain', background: '#ffffff' }).png().toBuffer();
+      const prompt = `Create a faithful restrained editorial illustration of ONLY ONE garment. Image pairs: ${photos.map(p => `original_${p.role}, prepared_${p.role}`).join('; ')}. LAST image is a common mannequin pose/style reference, not the item. Ignore PHOTOROOM sandbox watermarks; use originals as detail and color references. Never reproduce processing watermarks. Preserve garment silhouette, proportions, color, construction and prints. Do not invent text, brands, bodies, underlayers, or move back prints to the front. Render FRONT view on the full 1024 square canvas aligned to the reference shoulders, waist and feet; preserve white letterbox margins. Never independently crop, center or stretch garment. Use a plain white background. Effective features (manual type/colors take precedence): ${JSON.stringify(features)}`;
+      const payload = { model: illustrationVersions.modelVersion, store: true,
+        generation_config: { max_output_tokens: 2048 },
+        input: [...photos.flatMap(photo => [
+          { type: 'text', text: `Image original_${photo.role}.` },
+          { type: 'image', mime_type: 'image/png', data: photo.source.toString('base64') },
+          { type: 'text', text: `Image prepared_${photo.role}.` },
+          { type: 'image', mime_type: 'image/png', data: photo.prepared.toString('base64') },
+        ]), { type: 'image', mime_type: 'image/png', data: template.toString('base64') }, { type: 'text', text: prompt }],
+        response_format: { type: 'image', mime_type: 'image/jpeg', aspect_ratio: '1:1', image_size: '1K' } };
+      if (Buffer.byteLength(JSON.stringify(payload)) > 32 * 1024 * 1024) throw new ProviderError('image_too_large');
+      let answer;
       try {
-      for (let poll = 0; poll < 120; poll++) {
-        const state = await json(`${base}/status`, { headers }, signal);
-        if (state.status === 'COMPLETED') {
-          if (state.error || state.error_type) { provenFailure = true; throw new ProviderError('provider_rejected'); }
-          const output = await json(base, { headers }, signal);
-          let url;
-          try {
-            if (!Array.isArray(output.images) || output.images.length !== 1) throw new Error();
-            url = new URL(output.images[0].url);
-            const allowed = origin ? url.origin === origin : url.protocol === 'https:' && (url.hostname === 'fal.media' || url.hostname.endsWith('.fal.media'));
-            if (!allowed || url.username || url.password || url.hash) throw new Error();
-          } catch { throw new ProviderError('invalid_provider_response'); }
-          const bytes = await exchange(url, {}, signal, timeout, 10 * 1024 * 1024);
-          return decode(bytes, { width: 1024, height: 1024 });
-        }
-        if (!['IN_QUEUE', 'IN_PROGRESS'].includes(state.status)) throw new ProviderError('processing_unknown', true);
-        await pause(pollMs, undefined, { signal });
-      }
-      throw new ProviderError('processing_unknown', true);
+        const url = savedReceipt
+          ? `${geminiOrigin}/v1beta/interactions/${encodeURIComponent(savedReceipt)}`
+          : `${geminiOrigin}/v1beta/interactions`;
+        answer = await json(url, savedReceipt ? { headers: geminiHeaders } : {
+          method: 'POST', headers: geminiHeaders, body: JSON.stringify(payload),
+        }, signal);
       } catch (error) {
-        // Retrieval authentication, quota, corrupt payload or network failure
-        // says nothing about whether an accepted generation finished and billed.
-        if (provenFailure) throw error;
+        // Once Google may have accepted a generation, only its durable interaction
+        // id can be replayed. Never submit a second POST after an unknown outcome.
+        if (savedReceipt || error.unknown || error.code === 'invalid_provider_response') throw new ProviderError('processing_unknown', true);
+        throw error;
+      }
+      const interactionId = answer.id;
+      if (answer.model !== illustrationVersions.modelVersion || (savedReceipt && interactionId !== savedReceipt)) {
         throw new ProviderError('processing_unknown', true);
       }
+      if (!savedReceipt) {
+        if (typeof interactionId !== 'string' || !/^v1_[a-zA-Z0-9_-]{1,180}$/.test(interactionId)) throw new ProviderError('processing_unknown', true);
+        recordReceipt(interactionId);
+      }
+      if (answer.status !== 'completed') throw new ProviderError('processing_unknown', true);
+      const image = answer.steps?.flatMap(step => step.type === 'model_output' ? step.content || [] : [])
+        .find(content => content.type === 'image')?.data;
+      if (typeof image !== 'string' || image.length > 14 * 1024 * 1024) throw new ProviderError('processing_unknown', true);
+      let generated;
+      try { generated = Buffer.from(image, 'base64'); if (generated.length > 10 * 1024 * 1024) throw new Error(); }
+      catch { throw new ProviderError('processing_unknown', true); }
+      const normalized = await sharp(generated, { limitInputPixels: 16_000_000, failOn: 'warning' }).png().toBuffer();
+      return decode(normalized, { width: 1024, height: 1024 });
     },
   };
 }

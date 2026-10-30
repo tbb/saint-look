@@ -43,7 +43,7 @@ if len(items) != 16:
     parser.error('The recorded workload requires the pinned sixteen-photo manifest')
 control_token = 'controlled-public-memory-token'
 owner_token = 'controlled-public-memory-measurement-token'
-env = {**os.environ, 'NODE_ENV': 'test', 'SAINT_LOOK_UI_PROVIDER_PORT': '0', 'SAINT_LOOK_UI_PROVIDER_CONTROL_TOKEN': control_token, 'TYPESAFE_API_KEY': 'fixture-typesafe-key', 'PHOTOROOM_API_KEY': 'sandbox_fixture', 'PHOTOROOM_SANDBOX_API_KEY': 'sandbox_fixture', 'FAL_KEY': 'fixture'}
+env = {**os.environ, 'NODE_ENV': 'test', 'SAINT_LOOK_UI_PROVIDER_PORT': '0', 'SAINT_LOOK_UI_PROVIDER_CONTROL_TOKEN': control_token, 'TYPESAFE_API_KEY': 'fixture-typesafe-key', 'PHOTOROOM_API_KEY': 'sandbox_fixture', 'PHOTOROOM_SANDBOX_API_KEY': 'sandbox_fixture', 'GEMINI_API_KEY': 'fixture'}
 children = []
 try:
     fixture = subprocess.Popen([node, 'backend/test/providers/ui-server.mjs'], cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

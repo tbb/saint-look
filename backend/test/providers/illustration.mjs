@@ -5,30 +5,31 @@ import { modelFixture } from './model.mjs';
 
 // The fixture implements external HTTP boundaries, never production fallback.
 export async function illustrationFixture(t, handlers = {}) {
-  const calls = { preparation: [], attributes: [], generation: [], finalization: [], model: [], rank: [] };
+  const calls = { preparation: [], attributes: [], generation: [], recovery: [], finalization: [], model: [], rank: [] };
   const result = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: '#00000000' } })
     .composite([{ input: await sharp({ create: { width: 120, height: 160, channels: 4, background: '#dd3322ff' } }).png().toBuffer(), left: 452, top: 260 }]).png().toBuffer();
+  const generated = await sharp(result).flatten({ background: '#ffffff' }).jpeg().toBuffer();
   let url;
+  const interaction = { id: 'v1_fixture-1', model: 'gemini-3-pro-image', status: 'completed', steps: [{ type: 'model_output', content: [
+    { type: 'image', mime_type: 'image/jpeg', data: generated.toString('base64') },
+  ] }] };
   const server = createServer(async (request, response) => {
     try {
       const chunks = []; for await (const chunk of request) chunks.push(chunk);
       const body = Buffer.concat(chunks);
       if (await modelFixture(request, response, body, handlers, calls.model, calls.rank)) return;
-      if (request.url === '/fal-ai/nano-banana-pro/requests/fixture-1/status') {
-        if (handlers.status) { await handlers.status(request, response); return; }
-        response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ status: 'COMPLETED' })); return;
-      }
-      if (request.url === '/fal-ai/nano-banana-pro/requests/fixture-1') {
-        if (handlers.result) { await handlers.result(request, response); return; }
-        response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ images: [{ url: `${url}/result.png` }] })); return;
+      if (request.url === '/v1beta/interactions/v1_fixture-1') {
+        calls.recovery.push({ headers: request.headers });
+        if (handlers.recovery) { await handlers.recovery(request, response); return; }
+        response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(interaction)); return;
       }
       if (request.url === '/result.png') {
         response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(handlers.opaque ? await sharp(result).flatten({ background: '#ffffff' }).png().toBuffer() : result); return;
       }
-      const stage = request.url === '/v1/systemone' ? 'attributes' : request.url === '/fal-ai/nano-banana-pro/edit' ? 'generation'
+      const stage = request.url === '/v1/systemone' ? 'attributes' : request.url === '/v1beta/interactions' ? 'generation'
         : request.url === '/v1/segment' ? (body.includes(Buffer.from('finalization.png')) ? 'finalization' : 'preparation') : null;
       if (!stage) { response.writeHead(404); response.end(); return; }
-      calls[stage].push({ body, headers: request.headers });
+      calls[stage].push({ body, headers: request.headers, path: request.url });
       if (handlers[stage]) { await handlers[stage](request, response, { body, result }); return; }
       if (stage === 'attributes') {
         const payload = JSON.parse(body);
@@ -41,7 +42,9 @@ export async function illustrationFixture(t, handlers = {}) {
         }));
         response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ model: payload.model, answers, usage: { input_tokens: 1000 } }));
       } else if (stage === 'generation') {
-        response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ request_id: 'fixture-1' }));
+        if (handlers.generation) { await handlers.generation(request, response, { body, result, interaction }); return; }
+        calls.generation.at(-1).interaction = JSON.parse(body);
+        response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(interaction));
       } else if (stage === 'finalization') {
         response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(result);
       } else {
@@ -60,6 +63,6 @@ export async function illustrationFixture(t, handlers = {}) {
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
   return { calls, result, env: { NODE_ENV: 'test', SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true', SAINT_LOOK_ILLUSTRATION_TEST_ORIGIN: url,
     ...(!handlers.modelDisabled ? { SAINT_LOOK_TEST_MODEL_ORIGIN: url } : {}),
-    PHOTOROOM_SANDBOX_API_KEY: 'sandbox_fixture', TYPESAFE_API_KEY: 'fixture', FAL_KEY: 'fixture',
-    SAINT_LOOK_ILLUSTRATION_TIMEOUT_MS: '2000', SAINT_LOOK_ILLUSTRATION_POLL_MS: '1' } };
+    PHOTOROOM_SANDBOX_API_KEY: 'sandbox_fixture', TYPESAFE_API_KEY: 'fixture', GEMINI_API_KEY: 'fixture',
+    SAINT_LOOK_ILLUSTRATION_TIMEOUT_MS: '2000' } };
 }

@@ -1,8 +1,8 @@
 // One explicitly approved trial budget. Reservations survive crashes and failed
 // provider calls: uncertainty must never create another free attempt.
-const providers = ['photoroom', 'jev', 'fal'];
-const ceilings = { photoroom: 60, jev: 48, fal: 24 };
-const prices = { photoroom: 0, jev: 2753, fal: 150000 };
+const providers = ['photoroom', 'jev', 'gemini'];
+const ceilings = { photoroom: 60, jev: 48, gemini: 24 };
+const prices = { photoroom: 0, jev: 2753, gemini: 400000 };
 export class ProviderBudgetError extends Error {
   constructor(code) { super(code); this.code = code; }
 }
@@ -41,12 +41,26 @@ export function createProviderBudget(database, env) {
   }
   function remaining(policy, provider) {
     const total = database.prepare('SELECT COALESCE(SUM(cost_microusd),0) AS cost FROM provider_reservations WHERE budget_id=?').get(policy.id).cost;
-    const count = database.prepare('SELECT COUNT(*) AS count FROM provider_reservations WHERE budget_id=? AND provider=?').get(policy.id, provider).count;
+    // Keep Nano Banana trial counts continuous across the fal -> Gemini rename.
+    const count = provider === 'gemini'
+      ? database.prepare("SELECT COUNT(*) AS count FROM provider_reservations WHERE budget_id=? AND provider IN ('gemini','fal')").get(policy.id).count
+      : database.prepare('SELECT COUNT(*) AS count FROM provider_reservations WHERE budget_id=? AND provider=?').get(policy.id, provider).count;
     return count < policy.limits[provider] && total + policy.ratesMicrousd[provider] <= policy.maxCostMicrousd;
   }
   function assertPolicy(policy) {
     const old = database.prepare('SELECT policy FROM provider_budgets WHERE id=?').get(policy.id);
-    if (old && old.policy !== policyIdentity(policy)) throw new ProviderBudgetError('provider_budget_not_approved');
+    if (!old || old.policy === policyIdentity(policy)) return;
+    // The deployed trial ledger originally named Nano Banana Pro's provider
+    // `fal`. Migrate only that exact known policy identity in place. Historical
+    // reservation rows remain untouched and continue contributing to total cost.
+    let previous;
+    try { previous = JSON.parse(old.policy); } catch {}
+    const isFalPolicy = previous?.id === policy.id && previous.approved === true
+      && previous.maxCostMicrousd === policy.maxCostMicrousd
+      && JSON.stringify(previous.limits) === JSON.stringify({ photoroom: 60, jev: 48, fal: 24 })
+      && JSON.stringify(previous.ratesMicrousd) === JSON.stringify({ photoroom: 0, jev: 2753, fal: 150000 });
+    if (!isFalPolicy) throw new ProviderBudgetError('provider_budget_not_approved');
+    database.prepare('UPDATE provider_budgets SET policy=? WHERE id=?').run(policyIdentity(policy), policy.id);
   }
   return {
     available(provider) {
