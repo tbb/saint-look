@@ -13,8 +13,8 @@ try {
   const apiBudget = env.SAINT_LOOK_API_BUDGET_JSON ? validateApiBudget(env.SAINT_LOOK_API_BUDGET_JSON) : null;
   if (illustrationsEnabled && !apiBudget) throw new Error('An explicitly approved API budget is required.');
   if (illustrationsEnabled && (profile !== 'live' || !env.PHOTOROOM_API_KEY?.startsWith('sandbox_')
-    || !/^[A-Za-z0-9_+/.=:-]{8,1024}$/.test(env.FAL_KEY || ''))) {
-    throw new Error('Illustrations require explicit live configuration, sandbox Photoroom and fal credentials.');
+    || !/^[A-Za-z0-9_+/.=:-]{8,1024}$/.test(env.GEMINI_API_KEY || ''))) {
+    throw new Error('Illustrations require explicit live configuration, sandbox Photoroom and Gemini credentials.');
   }
   const modelProfile = env.SAINT_LOOK_MODEL_PROFILE || 'disabled';
   const memoryMB = Number(env.SAINT_LOOK_FLY_MEMORY_MB || 1024);
@@ -47,7 +47,7 @@ try {
   }
   const cliEnvironment = { ...env, NO_COLOR: '1' };
   for (const name of Object.keys(cliEnvironment)) {
-    if (name.startsWith('RAILWAY_') || name.startsWith('SAINT_LOOK_') || ['TYPESAFE_API_KEY', 'GEMINI_API_KEY', 'PHOTOROOM_API_KEY', 'PHOTOROOM_SANDBOX_API_KEY', 'FAL_KEY', 'GH_TOKEN', 'GITHUB_TOKEN'].includes(name)) delete cliEnvironment[name];
+    if (name.startsWith('RAILWAY_') || name.startsWith('SAINT_LOOK_') || ['TYPESAFE_API_KEY', 'GEMINI_API_KEY', 'PHOTOROOM_API_KEY', 'PHOTOROOM_SANDBOX_API_KEY', 'GH_TOKEN', 'GITHUB_TOKEN'].includes(name)) delete cliEnvironment[name];
   }
   function fly(args, timeout = 30000, input) {
     return execFileSync('flyctl', args, { env: cliEnvironment, encoding: 'utf8', timeout, maxBuffer: 4 * 1024 * 1024, input, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
@@ -93,7 +93,7 @@ try {
     try {
       fly(['secrets', 'import', '--stage', '--app', app], 30000,
         `TYPESAFE_API_KEY=${env.TYPESAFE_API_KEY}\nPHOTOROOM_API_KEY=${env.PHOTOROOM_API_KEY}\n`
-        + (illustrationsEnabled ? `PHOTOROOM_SANDBOX_API_KEY=${env.PHOTOROOM_API_KEY}\nFAL_KEY=${env.FAL_KEY}\n` : ''));
+        + (illustrationsEnabled ? `PHOTOROOM_SANDBOX_API_KEY=${env.PHOTOROOM_API_KEY}\nGEMINI_API_KEY=${env.GEMINI_API_KEY}\n` : ''));
     } catch { throw new Error('Could not stage provider secrets. No deployment was started.'); }
   }
   const deploymentId = randomUUID();
