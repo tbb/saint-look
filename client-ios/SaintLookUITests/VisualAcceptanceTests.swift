@@ -246,18 +246,13 @@ final class VisualAcceptanceTests: XCTestCase {
             XCUIElement.ElementType.menuItem.rawValue, XCUIElement.ElementType.button.rawValue,
             selectionLabels + forwardLabels))
         for page in 0..<3 {
-            var selection: XCUIElement?
-            var forward: XCUIElement?
-            let available = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                selection = nil
-                forward = nil
-                for command in offeredCommands.allElementsBoundByIndex where command.isHittable {
-                    if selectionLabels.contains(command.label) { selection = command }
-                    else { forward = command }
-                }
-                return selection != nil || forward != nil
-            }, object: app)
-            guard XCTWaiter.wait(for: [available], timeout: 5) == .completed else { break }
+            // Only existence belongs inside the waiter. Several remote property
+            // reads in one predicate inherit its deadline and can be cancelled
+            // midway through an already-visible Forward button's hit test.
+            guard offeredCommands.firstMatch.waitForExistence(timeout: 5) else { break }
+            let visible = offeredCommands.allElementsBoundByIndex.filter { $0.isHittable }
+            let selection = visible.first { selectionLabels.contains($0.label) }
+            let forward = visible.first { forwardLabels.contains($0.label) }
             if let command = selection {
                 try require(command.isEnabled, "Native Select All must be enabled")
                 try performNativeTap(command)
