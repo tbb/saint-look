@@ -142,7 +142,8 @@ final class OutfitFlowTests: XCTestCase {
         let status = app.staticTexts["wardrobe-summary"]
         let expectedSummaries = [4, 300].map { "Всего: \($0). Готово: \($0). Ожидают: 0." }
         let complete = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label IN %@", expectedSummaries), object: status)
-        XCTAssertEqual(XCTWaiter.wait(for: [complete], timeout: 60), .completed,
+        let catalogReady = await XCTWaiter.fulfillment(of: [complete], timeout: 60)
+        XCTAssertEqual(catalogReady, .completed,
                        "The isolated catalog must contain every complete cached publication before measuring")
         let count = status.label == expectedSummaries[1] ? 300 : 4
         app.tabBars.buttons["Луки"].tap()
@@ -178,7 +179,7 @@ final class OutfitFlowTests: XCTestCase {
             command.tap()
             let changed = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "label != %@ AND NOT (label CONTAINS 'Выбрать вещь')", emptyLabel), object: body)
-            let observed = XCTWaiter.wait(for: [changed], timeout: 30)
+            let observed = await XCTWaiter.fulfillment(of: [changed], timeout: 30)
             let screenshot = body.screenshot()
             let upperBoundMilliseconds = (ProcessInfo.processInfo.systemUptime - started) * 1000
             let attachment = XCTAttachment(screenshot: screenshot)
@@ -218,7 +219,8 @@ final class OutfitFlowTests: XCTestCase {
             if phase == "first-after-app-launch-warm-backend" {
                 tap(app.buttons["fitting-undo"], in: app)
                 let restored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", emptyLabel), object: body)
-                XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 5), .completed)
+                let undoRestored = await XCTWaiter.fulfillment(of: [restored], timeout: 5)
+                XCTAssertEqual(undoRestored, .completed)
                 XCTAssertEqual(bottom.value as? String, bottomValue)
             }
         }

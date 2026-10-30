@@ -270,21 +270,22 @@ jobs:
             output="client-ios/build/screenshots/$(basename "$result" .xcresult)"
             xcrun xcresulttool export attachments --path "$result" --output-path "$output"
           done
-          if [[ "${{ matrix.suite }}" == benchmark ]]; then
-            # Raw XCTest metadata can contain the temporary launch nonce. Publish PNG only.
-            python3 - <<'PY'
+      - name: Sanitize benchmark screenshots after any export outcome
+        if: always() && matrix.suite == 'benchmark'
+        run: |
+          # Export can leave partial metadata before failing. Never publish that metadata.
+          python3 - <<'PY'
           from pathlib import Path
           for path in Path('client-ios/build/screenshots').rglob('*'):
-              if path.is_file() and path.suffix.lower() != '.png':
+              if path.is_file() and path.suffix != '.png':
                   path.unlink()
           PY
-          fi
       - name: Upload Simulator screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: simulator-screenshots-${{ matrix.label }}
-          path: client-ios/build/screenshots
+          path: ${{ matrix.suite == 'benchmark' && 'client-ios/build/screenshots/**/*.png' || 'client-ios/build/screenshots' }}
           if-no-files-found: warn
           retention-days: 7
       - name: Upload visual stall diagnostics
