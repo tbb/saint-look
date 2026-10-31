@@ -144,3 +144,30 @@ test('an elongated tee keeps its proportions and remains visible below a regular
   const combined=await sharp(registered).composite([{input:hoodie}]).ensureAlpha().raw().toBuffer();
   assert.deepEqual([...combined.subarray((600*1024+512)*4,(600*1024+512)*4+4)],[247,242,224,255]);
 });
+
+test('a shoe pair must follow the two ankles instead of standing together below the crotch', async () => {
+  const pair=async (left,right,rx)=>sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><ellipse cx="${left}" cy="920" rx="${rx}" ry="30" fill="#222"/><ellipse cx="${right}" cy="920" rx="${rx}" ry="30" fill="#222"/></svg>`)).png().toBuffer();
+  const narrow=await pair(494,529,14);
+  assert.equal((await checkGarmentLayout(narrow,{type:'shoes'})).valid,false);
+  await assert.rejects(registerGarmentLayout(narrow,{type:'shoes'}),{code:'illustration_geometry_invalid'});
+  const standing=await pair(466,558,25);
+  assert.equal((await checkGarmentLayout(standing,{type:'shoes'})).valid,true);
+  assert.deepEqual(await registerGarmentLayout(standing,{type:'shoes'}),standing);
+});
+
+test('footwear generation receives a large pose reference and keeps the placement canvas last', async t => {
+  const fixture=await illustrationFixture(t), provider=createIllustrationProvider(fixture.env);
+  const source=await rectangle(400,200,200,400), features={type:'Туфли',colors:['Чёрный']};
+  const signal=new AbortController().signal;
+  const generated=await provider.generate([{source,prepared:source,role:'front'}],features,signal,()=>{});
+  const images=fixture.calls.generation[0].interaction.input.filter(x=>x.type==='image');
+  assert.equal(images.length,4);
+  assert.equal(images[0].data,source.toString('base64'));
+  assert.equal(images[1].data,source.toString('base64'));
+  assert.equal(images.at(-1).data,(await layoutGuide(features)).toString('base64'));
+  const pose=await sharp(Buffer.from(images[2].data,'base64')).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+  assert.equal(pose.info.width,1024);assert.equal(pose.info.height,1024);
+  assert.ok(pose.data[(484*1024+336)*4]<240,'The pose reference must expose the enlarged foot shape');
+  assert.equal((await checkGarmentLayout(await provider.prepare(generated.png,signal,'finalization',features),features)).valid,true);
+  assert.equal(fixture.calls.generation.length,1);
+});

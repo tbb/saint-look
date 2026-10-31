@@ -154,7 +154,9 @@ final class VisualAcceptanceTests: XCTestCase {
             // Error destinations may intentionally offer no toolbar actions.
             bar.exists && bar.identifier == title && !bar.frame.intersection(app.frame).isEmpty
         }, object: bar)
-        guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
+        // A Simulator accessibility snapshot can itself take several seconds.
+        // Allow a second observation after the transition; keep the same destination checks.
+        guard XCTWaiter.wait(for: [ready], timeout: 30) == .completed else {
             diagnose("unavailable-navigation", app: app, detail: "Expected destination: \(title)")
             try require(false, "Expected navigation title must be visible")
             return
