@@ -339,7 +339,7 @@ class ObserverTests(unittest.TestCase):
                        if 'timeout-minutes:' in line and 'matrix.suite' in line)
         timeout = timeout.replace('matrix.suite', 'suite').replace('&&', 'and').replace('||', 'or')
         for suite, minutes in [('outfits-launch-pair', 20), ('wardrobe-expired-retry', 20),
-                               ('wardrobe', 60), ('outfits', 60), ('visual', 60), ('camera', 40)]:
+                               ('wardrobe', 60), ('outfits', 75), ('outfits-max-text', 60), ('visual', 60), ('camera', 40)]:
             self.assertEqual(eval(timeout, {'__builtins__': {}}, {'suite': suite}), minutes)
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder) / 'output'
