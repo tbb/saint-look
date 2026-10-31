@@ -181,3 +181,56 @@ test('exact-cap downgrade preserves unknown cost and cannot bypass the separate 
     assert.deepEqual(reservations(database), before);
   } finally { database.close(); }
 });
+
+function expandedPolicy() {
+  return { ...fullPolicy(28800000), limits: { photoroom: 135, jev: 70, gemini: 65 } };
+}
+test('owner-approved $30 expansion preserves all reservations and continues counting at the new ceiling', () => {
+  const database = new DatabaseSync(':memory:');
+  try {
+    const env = { NODE_ENV: 'production', SAINT_LOOK_API_BUDGET_JSON: JSON.stringify(fullPolicy(8800000)) };
+    let budget = createProviderBudget(database, env);
+    for (let index=0; index<20; index++) budget.reserve('gemini', `old-${index}`);
+    budget.reserve('jev', 'old-attributes');
+    database.prepare('INSERT INTO provider_reservations VALUES (?,?,?,?,?)')
+      .run(fullPolicy().id, 'fal', 'legacy-failed-attempt', 150000, 1);
+    const before=reservations(database);
+    env.SAINT_LOOK_API_BUDGET_JSON=JSON.stringify(expandedPolicy());
+    assert.equal(budget.available('gemini'), true);
+    assert.deepEqual(reservations(database), before);
+    assert.equal(storedPolicy(database).maxCostMicrousd, 28800000);
+    budget=createProviderBudget(database, env);
+    for(let index=21;index<65;index++) budget.reserve('gemini', `new-${index}`);
+    assert.equal(budget.available('gemini'), false);
+    assert.throws(()=>budget.reserve('gemini','one-too-many'), {code:'provider_budget_exhausted'});
+    assert.throws(()=>budget.reserve('gemini','old-0'), {code:'provider_request_already_reserved'});
+    for(const row of before) assert.deepEqual(reservations(database).find(x=>x.provider===row.provider && x.operation_key===row.operation_key),row);
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM provider_budgets').get().n,1);
+  } finally {database.close();}
+});
+test('owner expansion rejects arbitrary limits, rates, cap or previous identity without changing the ledger', () => {
+  for(const change of [
+    p=>{p.limits.gemini=66;}, p=>{p.limits.gemini=64;}, p=>{p.limits.jev=71;},
+    p=>{p.maxCostMicrousd=28800001;}, p=>{p.maxCostMicrousd=28000000;},
+    p=>{p.ratesMicrousd.gemini=399999;}, p=>{p.id='new-id';},
+  ]) {
+    const database=new DatabaseSync(':memory:');
+    try {
+      const env={NODE_ENV:'production',SAINT_LOOK_API_BUDGET_JSON:JSON.stringify(fullPolicy(8800000))};
+      const budget=createProviderBudget(database,env);budget.reserve('gemini','retained');
+      const before=reservations(database), prior=storedPolicy(database), changed=expandedPolicy();
+      change(changed);env.SAINT_LOOK_API_BUDGET_JSON=JSON.stringify(changed);
+      assert.equal(budget.available(),false);
+      assert.throws(()=>budget.reserve('gemini','rejected'),{code:'provider_budget_not_approved'});
+      assert.deepEqual(reservations(database),before);assert.deepEqual(storedPolicy(database),prior);
+    } finally {database.close();}
+  }
+  const database=new DatabaseSync(':memory:');
+  try {
+    const env={NODE_ENV:'production',SAINT_LOOK_API_BUDGET_JSON:JSON.stringify(fullPolicy())};
+    const budget=createProviderBudget(database,env);budget.reserve('gemini','retained');
+    env.SAINT_LOOK_API_BUDGET_JSON=JSON.stringify(expandedPolicy());
+    assert.equal(budget.available(),false,'Expansion must start from the exact deployed $8.80 identity');
+    assert.equal(storedPolicy(database).maxCostMicrousd,4500000);
+  } finally {database.close();}
+});

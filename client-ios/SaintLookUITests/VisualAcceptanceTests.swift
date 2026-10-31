@@ -15,6 +15,34 @@ final class VisualAcceptanceTests: XCTestCase {
         try await control("online", reset: true)
     }
 
+    @MainActor
+    func testRealGeneratedGarmentsInCatalogAndFitting() async throws {
+        let before = try await illustrationCounts()
+        let app = try launch("fitting-trial-ready")
+        try require(app.images.matching(identifier: "item-photo").firstMatch.waitForExistence(timeout: 5))
+        try capture("real-fit-01-catalog")
+        try selectTab("Луки", in: app)
+        try capture("real-fit-02-outfits")
+        let card = app.buttons["outfit-card-36000004-0000-0000-0000-000000000004"]
+        try require(card.waitForExistence(timeout: 5))
+        try tap(card, in: app)
+        try waitVisible(app.buttons["edit-outfit"], in: app)
+        try reveal(try canvas(in: app), in: app, towardTop: true)
+        try capture("real-fit-03-detail")
+        try nativeTap(app.buttons["edit-outfit"], in: app)
+        try waitVisible(app.buttons["cancel-outfit"], in: app)
+        try reveal(try canvas(in: app), in: app, towardTop: true)
+        try capture("real-fit-04-editor")
+        try nativeTap(app.buttons["cancel-outfit"], in: app)
+        try expectGone(app.buttons["cancel-outfit"], "Editor must dismiss before selecting the long tee")
+        try back(app, to: "Луки")
+        try tap(app.buttons["outfit-card-36000004-0000-0000-0000-000000000005"], in: app)
+        try waitVisible(app.buttons["edit-outfit"], in: app)
+        try reveal(try canvas(in: app), in: app, towardTop: true)
+        try capture("real-fit-05-long-tee-below-hoodie")
+        try requireEqual(try await illustrationCounts(), before, "Viewing saved real outputs must not generate again")
+    }
+
     private enum JourneyFailure: Error { case failed }
 
     private func require(_ condition: Bool, _ message: String = "Required public UI state was not observed",
@@ -126,7 +154,9 @@ final class VisualAcceptanceTests: XCTestCase {
             // Error destinations may intentionally offer no toolbar actions.
             bar.exists && bar.identifier == title && !bar.frame.intersection(app.frame).isEmpty
         }, object: bar)
-        guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
+        // A Simulator accessibility snapshot can itself take several seconds.
+        // Allow a second observation after the transition; keep the same destination checks.
+        guard XCTWaiter.wait(for: [ready], timeout: 30) == .completed else {
             diagnose("unavailable-navigation", app: app, detail: "Expected destination: \(title)")
             try require(false, "Expected navigation title must be visible")
             return
@@ -157,8 +187,12 @@ final class VisualAcceptanceTests: XCTestCase {
     private func openItem(_ index: Int, in app: XCUIApplication) throws {
         let item = card(index, in: app)
         try reveal(item, in: app, towardTop: index == 0)
+        let type = item.staticTexts.matching(identifier: "item-type").firstMatch
+        let title = type.exists ? type.label : "Вещь"
         try nativeTap(item, in: app)
-        try waitVisible(app.buttons["item-actions"], in: app)
+        // Detail readiness is navigation, not the transient AX hit state of a
+        // toolbar wrapper. Actual menu taps still require a hittable control.
+        try waitNavigation(title, in: app)
     }
 
     @MainActor
@@ -443,25 +477,28 @@ final class VisualAcceptanceTests: XCTestCase {
         return counts
     }
 
+    private func illustrationCounts() async throws -> [String: Int] {
+        var request = URLRequest(url: URL(string: "\(baseURL)/__control")!)
+        request.setValue("Bearer saint-look-ui-control-test-token-00000001", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try requireEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        let state = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        return try Dictionary(uniqueKeysWithValues: ["illustrationUploads", "illustrationOperations", "illustrationAcknowledgements"].map {
+            ($0, try XCTUnwrap(state[$0] as? Int))
+        })
+    }
+
+    @MainActor
+    private func canvas(in app: XCUIApplication) throws -> XCUIElement {
+        // A sheet retains the detail canvas in accessibility, and global query order
+        // does not identify the foreground. Use the same content surface as reveal.
+        let surface = try scrollSurface(in: app, bar: navigationBar(app))
+        return try XCTUnwrap(surface.otherElements.matching(identifier: "fitting-canvas").allElementsBoundByIndex.first)
+    }
+
     /// Drawn fixtures verify native compositing and local behavior, not provider quality.
     @MainActor
     func testPreparedFittingLayersAndFallbackStayLocal() async throws {
-        func illustrationCounts() async throws -> [String: Int] {
-            var request = URLRequest(url: URL(string: "\(baseURL)/__control")!)
-            request.setValue("Bearer saint-look-ui-control-test-token-00000001", forHTTPHeaderField: "Authorization")
-            let (data, response) = try await URLSession.shared.data(for: request)
-            try requireEqual((response as? HTTPURLResponse)?.statusCode, 200)
-            let state = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-            return try Dictionary(uniqueKeysWithValues: ["illustrationUploads", "illustrationOperations", "illustrationAcknowledgements"].map {
-                ($0, try XCTUnwrap(state[$0] as? Int))
-            })
-        }
-        func canvas(in app: XCUIApplication) throws -> XCUIElement {
-            // A sheet retains the detail canvas in accessibility, and global query order
-            // does not identify the foreground. Use the same content surface as reveal.
-            let surface = try scrollSurface(in: app, bar: navigationBar(app))
-            return try XCTUnwrap(surface.otherElements.matching(identifier: "fitting-canvas").allElementsBoundByIndex.first)
-        }
         let before = try await activityCounts()
         let illustrationsBefore = try await illustrationCounts()
         let app = try launch("fitting-ready")

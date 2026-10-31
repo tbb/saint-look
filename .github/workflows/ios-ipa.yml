@@ -36,6 +36,8 @@ jobs:
             client-ios/scripts/tests/connection-settings.swift \
             -o "$RUNNER_TEMP/connection-settings-checks"
           "$RUNNER_TEMP/connection-settings-checks"
+      - name: Check garment image presentation
+        run: bash client-ios/scripts/test-image-presentation.sh
       - name: Compile unsigned iPhone Release
         id: build
         run: bash client-ios/scripts/build-device.sh

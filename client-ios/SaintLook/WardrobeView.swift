@@ -289,7 +289,7 @@ private struct ItemDetailView: View {
 
     private func detailImage(_ item: WardrobeItem) -> UIImage? {
         if imageRole == "original" { return store.originalImage(for: item) }
-        if imageRole == "illustration", let url = store.illustrationURL(for: item) { return UIImage(contentsOfFile: url.path) }
+        if imageRole == "illustration", let url = store.illustrationURL(for: item) { return GarmentPreviewCache.image(at: url) }
         return store.displayImage(for: item)
     }
 

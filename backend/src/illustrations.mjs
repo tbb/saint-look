@@ -19,6 +19,7 @@ function compatiblePreparedVersions(serialized) {
   // Switching these renderers does not change the sandbox source cutout.
   return versions && ['fal-ai/nano-banana-pro/edit', illustrationVersions.modelVersion].includes(versions.modelVersion)
     && ((versions.templateVersion === illustrationVersions.templateVersion && versions.geometryVersion === illustrationVersions.geometryVersion)
+      || (versions.modelVersion === 'gemini-3-pro-image' && versions.templateVersion === 'category-front-anchors-v2' && versions.geometryVersion === 'fitting-anchors-1024-v2')
       || (versions.templateVersion === 'front-360x560-proposed-v1' && versions.geometryVersion === 'fitting-square-1024-v1'));
 }
 

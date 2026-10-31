@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import sharp from 'sharp';
 import { createIllustrationProvider } from '../src/illustration-provider.mjs';
 import { illustrationFixture } from './providers/illustration.mjs';
-import { registerGarmentLayout, checkGarmentLayout } from '../src/illustration-layout.mjs';
+import { registerGarmentLayout, checkGarmentLayout, layoutGuide } from '../src/illustration-layout.mjs';
 
 async function rectangle(left, top, width, height) {
   return sharp({ create: { width: 1024, height: 1024, channels: 4, background: '#00000000' } })
@@ -57,4 +57,117 @@ test('wide full-length trousers cannot pass by shrinking their hems above the an
   await assert.rejects(registerGarmentLayout(source, {type:'trousers'}), {code:'illustration_geometry_invalid'});
   const shortened = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M430 483 H590 V746 H530 L520 570 H500 L490 746 H430 Z" fill="#222"/></svg>')).png().toBuffer();
   assert.equal((await checkGarmentLayout(shortened,{type:'trousers'})).valid, false);
+});
+
+const shortTee = '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M480 240 Q512 260 544 240 L582 250 L650 295 L625 335 L585 315 L585 450 H439 V315 L399 335 L374 295 L442 250 Z" fill="#222"/></svg>';
+test('a regular tee cannot pass with a floating hem above the waistband', async () => {
+  const source = await sharp(Buffer.from(shortTee)).png().toBuffer();
+  const features = {type:'t_shirt', traits:{body_length:'regular'}};
+  assert.equal((await checkGarmentLayout(source, features)).valid, false);
+  const registered = await registerGarmentLayout(source, features);
+  assert.equal((await checkGarmentLayout(registered, features)).valid, true);
+  const {data,info} = await sharp(registered).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+  let hem=-1;
+  for(let y=0;y<info.height;y++) for(let x=480;x<=544;x++) if(data[(y*info.width+x)*4+3]>=224) hem=y;
+  assert.ok(hem>=490, `Regular tee must overlap the waist; actual hem ${hem}`);
+});
+
+test('an explicitly cropped tee keeps its intended length', async () => {
+  const source = await sharp(Buffer.from(shortTee)).png().toBuffer();
+  const features = {type:'t_shirt', traits:{body_length:'cropped'}};
+  assert.equal((await checkGarmentLayout(source, features)).valid, true);
+  assert.deepEqual(await registerGarmentLayout(source,features),source);
+});
+
+// Shoulder position must not depend on how deep the designer cut the neckline.
+test('a regular deep-neck top retains correct shoulders and waist without rescaling', async () => {
+  const source = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M430 260 L465 260 Q472 345 512 345 Q552 345 559 260 L594 260 L586 540 L438 540 Z" fill="#222"/></svg>')).png().toBuffer();
+  const features = {type:'top', traits:{body_length:'regular'}};
+  assert.equal((await checkGarmentLayout(source, features)).valid, true);
+  assert.deepEqual(await registerGarmentLayout(source, features), source);
+});
+
+test('real jacket and tee align their shoulders for layering with whole-image translations', async () => {
+  const {readFile} = await import('node:fs/promises');
+  const cases = [
+    ['tee', {type:'t_shirt',traits:{neckline:'round',body_length:'regular'}}],
+    ['jacket', {type:'jacket',traits:{neckline:'collar',body_length:'regular'}}],
+  ];
+  const layers=[];
+  for(const [name,features] of cases){
+    const source=await readFile(new URL(`./fixtures/fitting-shoulder-${name}.png`,import.meta.url));
+    assert.equal((await checkGarmentLayout(source,features)).valid,false,`${name}: containment alone missed shoulder placement`);
+    const registered=await registerGarmentLayout(source,features);
+    assert.equal((await checkGarmentLayout(registered,features)).valid,true);
+    assert.deepEqual(await registerGarmentLayout(registered,features),registered,'Registration must be idempotent');
+    const data=await sharp(registered).ensureAlpha().raw().toBuffer();
+    layers.push(data);
+    const before=await sharp(source).ensureAlpha().raw().toBuffer();
+    const sums=bytes=>{const out=[0,0,0,0];for(let i=0;i<bytes.length;i+=4)for(let c=0;c<4;c++)out[c]+=bytes[i+c];return out};
+    assert.deepEqual(sums(data),sums(before),'A whole-image translation preserves every pixel, including all watermarks');
+  }
+  const first=(data,x)=>{for(let y=0;y<1024;y++)if(data[(y*1024+x)*4+3]>=224)return y;return 1024};
+  for(const [left,right] of [[430,450],[574,594]]) for(let x=left;x<=right;x++) {
+    assert.ok(first(layers[1],x)<=first(layers[0],x),`Outer layer must cover the inner shoulder at x=${x}`);
+  }
+});
+
+test('shoulder alignment also retains regular hems and full-length sleeves', async () => {
+  const {readFile}=await import('node:fs/promises');
+  const polo={type:'polo',traits:{neckline:'collar',body_length:'regular',sleeves:'short'}};
+  const source=await readFile(new URL('./fixtures/fitting-shoulder-polo-raw.png',import.meta.url));
+  const registered=await registerGarmentLayout(source,polo);
+  assert.equal((await checkGarmentLayout(registered,polo)).valid,true);
+  const jacket={type:'jacket',traits:{neckline:'collar',body_length:'regular',sleeves:'long'}};
+  const outer=await registerGarmentLayout(await readFile(new URL('./fixtures/fitting-shoulder-jacket.png',import.meta.url)),jacket);
+  const data=await sharp(outer).ensureAlpha().raw().toBuffer();
+  for(const [left,right] of [[333,420],[604,691]]) {
+    let cuff=-1;
+    for(let y=400;y<650;y++){let count=0;for(let x=left;x<=right;x++)if(data[(y*1024+x)*4+3]>=224)count++;if(count>=5)cuff=y;}
+    assert.ok(cuff>=535,`A declared long sleeve must reach the wrist region; cuff=${cuff}`);
+  }
+});
+
+test('an elongated tee keeps its proportions and remains visible below a regular hoodie', async () => {
+  const {readFile}=await import('node:fs/promises');
+  const longTee=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M480 240 Q512 260 544 240 L594 270 L650 320 L625 360 L585 330 L585 610 H439 V330 L399 360 L374 320 L430 269 Z" fill="#f7f2e0"/></svg>')).png().toBuffer();
+  const features={type:'t_shirt',traits:{body_length:'long',neckline:'round'}};
+  const longGuide=await sharp(await layoutGuide(features)).raw().toBuffer();
+  const regularGuide=await sharp(await layoutGuide({type:'t_shirt',traits:{body_length:'regular'}})).raw().toBuffer();
+  // Generated guide PNGs are RGBA; their lower torso must describe the longer cut.
+  assert.ok(longGuide[(600*1024+512)*4]<240);
+  assert.equal(regularGuide[(600*1024+512)*4],255);
+  assert.equal((await checkGarmentLayout(longTee,features)).valid,true);
+  const registered=await registerGarmentLayout(longTee,features);
+  assert.deepEqual(registered,longTee,'An aligned long design must not be shortened, widened or tucked');
+  const hoodie=await readFile(new URL('../../client-ios/SaintLook/VisualFixtures/fitting-trial-hoodie.png',import.meta.url));
+  const combined=await sharp(registered).composite([{input:hoodie}]).ensureAlpha().raw().toBuffer();
+  assert.deepEqual([...combined.subarray((600*1024+512)*4,(600*1024+512)*4+4)],[247,242,224,255]);
+});
+
+test('a shoe pair must follow the two ankles instead of standing together below the crotch', async () => {
+  const pair=async (left,right,rx)=>sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><ellipse cx="${left}" cy="920" rx="${rx}" ry="30" fill="#222"/><ellipse cx="${right}" cy="920" rx="${rx}" ry="30" fill="#222"/></svg>`)).png().toBuffer();
+  const narrow=await pair(494,529,14);
+  assert.equal((await checkGarmentLayout(narrow,{type:'shoes'})).valid,false);
+  await assert.rejects(registerGarmentLayout(narrow,{type:'shoes'}),{code:'illustration_geometry_invalid'});
+  const standing=await pair(466,558,25);
+  assert.equal((await checkGarmentLayout(standing,{type:'shoes'})).valid,true);
+  assert.deepEqual(await registerGarmentLayout(standing,{type:'shoes'}),standing);
+});
+
+test('footwear generation receives a large pose reference and keeps the placement canvas last', async t => {
+  const fixture=await illustrationFixture(t), provider=createIllustrationProvider(fixture.env);
+  const source=await rectangle(400,200,200,400), features={type:'Туфли',colors:['Чёрный']};
+  const signal=new AbortController().signal;
+  const generated=await provider.generate([{source,prepared:source,role:'front'}],features,signal,()=>{});
+  const images=fixture.calls.generation[0].interaction.input.filter(x=>x.type==='image');
+  assert.equal(images.length,4);
+  assert.equal(images[0].data,source.toString('base64'));
+  assert.equal(images[1].data,source.toString('base64'));
+  assert.equal(images.at(-1).data,(await layoutGuide(features)).toString('base64'));
+  const pose=await sharp(Buffer.from(images[2].data,'base64')).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+  assert.equal(pose.info.width,1024);assert.equal(pose.info.height,1024);
+  assert.ok(pose.data[(484*1024+336)*4]<240,'The pose reference must expose the enlarged foot shape');
+  assert.equal((await checkGarmentLayout(await provider.prepare(generated.png,signal,'finalization',features),features)).valid,true);
+  assert.equal(fixture.calls.generation.length,1);
 });

@@ -9,7 +9,7 @@ import { garmentLayout } from '../../src/illustration-layout.mjs';
 export async function illustrationFixture(t, handlers = {}) {
   const calls = { preparation: [], attributes: [], generation: [], recovery: [], finalization: [], model: [], rank: [] };
   const result = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: '#00000000' } })
-    .composite([{ input: await sharp({ create: { width: 120, height: 160, channels: 4, background: '#dd3322ff' } }).png().toBuffer(), left: 452, top: 260 }]).png().toBuffer();
+    .composite([{ input: await sharp({ create: { width: 120, height: 270, channels: 4, background: '#dd3322ff' } }).png().toBuffer(), left: 452, top: 240 }]).png().toBuffer();
   const generated = await sharp(result).flatten({ background: '#ffffff' }).jpeg().toBuffer();
   const imageKey = async bytes => createHash('sha256').update(await sharp(bytes).ensureAlpha().raw().toBuffer()).digest('hex');
   const cutouts = new Map([[await imageKey(generated), result]]);

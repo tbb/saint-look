@@ -95,8 +95,8 @@ import Foundation
             precondition(result.response.mode == "test" && result.response.status == .ready)
             precondition(result.response.itemId == item.id && result.response.photoVersionId == item.photoVersionID)
             precondition(result.response.sourceSetVersionId == item.sourceSetVersionID)
-            precondition(result.response.geometryVersion == "fitting-anchors-1024-v2")
-            precondition(result.response.templateVersion == "category-front-anchors-v2")
+            precondition(result.response.geometryVersion == IllustrationContract.currentGeometryVersion)
+            precondition(result.response.templateVersion == IllustrationContract.currentTemplateVersion)
             precondition(!item.illustrationIsStale && !item.automaticallyIllustrate)
             precondition(item.illustration?.status == .ready && item.illustration?.submitted == true)
             let data = try Data(contentsOf: root.appendingPathComponent(item.directoryName).appendingPathComponent(result.filename))
@@ -109,6 +109,15 @@ import Foundation
         let restoredFitting = try WardrobeCatalogFile(directory: root).load()
         precondition(restoredFitting.outfits == fitting.outfits)
         print("PASS: isolated full-canvas illustration fixtures and multilayer look survive restart without generation intent")
+        fittingEnvironment["SAINT_LOOK_RESET_DATA"] = "1"
+        fittingEnvironment["SAINT_LOOK_VISUAL_SCENARIO"] = "fitting-trial-ready"
+        _ = try VisualFixtures.prepare(environment: fittingEnvironment, support: support, resources: sources, taxonomy: taxonomy)
+        let trial = try WardrobeCatalogFile(directory: root).load()
+        precondition(trial.items.count == 6 && trial.outfits.count == 5)
+        precondition(trial.items.allSatisfy { $0.hasPreparedVersion && $0.hasFittingGeometry })
+        precondition(trial.outfits.prefix(2).allSatisfy { $0.slots.filter { $0.zone == .body && $0.itemID != nil }.count == 2 })
+        precondition(trial.pendingAcknowledgements == [])
+        print("PASS: real fitting layers and the explicit long-tee design seed complete local publications")
         var broken = environment
         broken["SAINT_LOOK_VISUAL_SCENARIO"] = "unreadable-catalog"
         _ = try VisualFixtures.prepare(environment: broken, support: support, resources: sources, taxonomy: taxonomy)

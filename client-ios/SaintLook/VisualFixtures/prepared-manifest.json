@@ -38,5 +38,35 @@
     "imageSHA256": "df7642e0879b5a13a35cd46ca4da37173e95a6b32520f3c3c5975cebc75bd229",
     "representationSHA256": "debd244f749bb9d7288c66effe4c58fb148f46521c47e39f39d199154d25db77",
     "representationFilename": "public-representation-shoes.json"
+  },
+  "trial-tee": {
+    "imageSHA256": "7cd6b2230e37001099325966b56676ebdae23e1a2551b1f6bd0da8d1742a10c7",
+    "representationSHA256": "2f21c4c73bfefe4bf8f672f6221dea4fcb9f6d262a46d4c252dff125edae355b",
+    "representationFilename": "representation-trial-tee.json"
+  },
+  "trial-jeans": {
+    "imageSHA256": "51dc5b788883ebd38c94c20b984a7ed1907a25ad3ac7a2b12557b4050adfb5c2",
+    "representationSHA256": "68492b7ab85f873ab5ea767e855d90ae4e387a33f59d041377646c29160302c1",
+    "representationFilename": "representation-trial-jeans.json"
+  },
+  "trial-hoodie": {
+    "imageSHA256": "3e50b54bfc00a48188da4e434dacc2c499563bf2b38b1d03476ae157a82e7ac9",
+    "representationSHA256": "5af837e87c39df23eabb05fd0ebb5ae99bc8ef38b6ec206fa16a8eb1afff0daf",
+    "representationFilename": "representation-trial-hoodie.json"
+  },
+  "trial-polo": {
+    "imageSHA256": "3cf54734827cbf3555476f32038c34341abfc65014300a9b0fa3dfc82f12a03e",
+    "representationSHA256": "70c16268079d2af99296ec311d2a62579f47a07a6a6f409bf324f8a0d2023259",
+    "representationFilename": "representation-trial-polo.json"
+  },
+  "trial-jacket": {
+    "imageSHA256": "64a17a80a51cbc7607f6830e4445d5e6a51d33caf56361d1af7d7ba574f6eba5",
+    "representationSHA256": "c146e476179cc635c804787db5f62b3da1b9af4c336811eceac34ad798a71b32",
+    "representationFilename": "representation-trial-jacket.json"
+  },
+  "trial-longtee": {
+    "imageSHA256": "4c3590dd1a9366523012843e478821f686b3666813b487314207cd7184526fab",
+    "representationSHA256": "bc5874b28b9f612650709b533ce3f49a8bd24e1439eb99777a9bdf4fda878c01",
+    "representationFilename": "representation-trial-longtee.json"
   }
 }

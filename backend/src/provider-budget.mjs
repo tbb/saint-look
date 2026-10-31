@@ -2,6 +2,10 @@
 // provider calls: uncertainty must never create another free attempt.
 const providers = ['photoroom', 'jev', 'gemini'];
 const ceilings = { photoroom: 60, jev: 48, gemini: 24 };
+// Owner approved $30 total and up to 50 further generations on 2026-10-31.
+// $1.20 remains reserved outside this ledger; 15 earlier generations count too.
+const expandedCeilings = { photoroom: 135, jev: 70, gemini: 65 };
+const expandedCap = 28800000;
 const prices = { photoroom: 0, jev: 2753, gemini: 400000 };
 export class ProviderBudgetError extends Error {
   constructor(code) { super(code); this.code = code; }
@@ -10,10 +14,12 @@ export function validateApiBudget(input, now = Date.now()) {
   let value;
   try { value = typeof input === 'string' ? JSON.parse(input) : input; } catch {}
   const checked = Date.parse(value?.pricesCheckedAt);
+  const expanded = value?.maxCostMicrousd === expandedCap
+    && providers.every(p => value?.limits?.[p] === expandedCeilings[p]);
   if (!value || value.approved !== true || value.id !== 'epic63-public-v1-5d85dde081e8'
     || !Number.isFinite(checked) || checked > now || now - checked > 86400000
-    || !Number.isSafeInteger(value.maxCostMicrousd) || value.maxCostMicrousd <= 0 || value.maxCostMicrousd > 8800000
-    || providers.some(p => !Number.isSafeInteger(value.limits?.[p]) || value.limits[p] < 0 || value.limits[p] > ceilings[p]
+    || !Number.isSafeInteger(value.maxCostMicrousd) || value.maxCostMicrousd <= 0 || (!expanded && value.maxCostMicrousd > 8800000)
+    || providers.some(p => !Number.isSafeInteger(value.limits?.[p]) || value.limits[p] < 0 || value.limits[p] > (expanded ? expandedCeilings : ceilings)[p]
       || value.ratesMicrousd?.[p] !== prices[p])) {
     throw new ProviderBudgetError('provider_budget_not_approved');
   }
@@ -65,7 +71,11 @@ export function createProviderBudget(database, env) {
       && old.policy === policyIdentity({ ...policy, maxCostMicrousd: previous?.maxCostMicrousd })
       && ((previous?.maxCostMicrousd === 4500000 && policy.maxCostMicrousd === 8800000)
         || (previous?.maxCostMicrousd === 8800000 && policy.maxCostMicrousd === 4500000));
-    if (!isFalPolicy && !isGeminiCapChange) throw new ProviderBudgetError('provider_budget_not_approved');
+    // Exact same-ID expansion only: no new journal, changed prices or forgiven calls.
+    const isOwnerExpansion = policy.maxCostMicrousd === expandedCap
+      && JSON.stringify(policy.limits) === JSON.stringify(expandedCeilings)
+      && old.policy === policyIdentity({ ...policy, limits: ceilings, maxCostMicrousd: 8800000 });
+    if (!isFalPolicy && !isGeminiCapChange && !isOwnerExpansion) throw new ProviderBudgetError('provider_budget_not_approved');
     if (isGeminiCapChange && policy.maxCostMicrousd === 4500000) {
       // Atomic with the cost condition even when available() performs the downgrade.
       // Every historical/unknown provider reservation contributes; nothing is reset.

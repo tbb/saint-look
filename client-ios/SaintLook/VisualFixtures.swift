@@ -6,7 +6,7 @@ import CryptoKit
 
 /// Initial data only. After loading, all edits, selection and persistence use the normal store.
 enum VisualFixtures {
-    enum Scenario: String { case ready = "ready-four", legacy = "legacy-four", legacyLabels = "legacy-labels", fitting = "fitting-ready", empty, mixed = "mixed-offline", unreadable = "unreadable-catalog" }
+    enum Scenario: String { case ready = "ready-four", legacy = "legacy-four", legacyLabels = "legacy-labels", fitting = "fitting-ready", fittingTrial = "fitting-trial-ready", empty, mixed = "mixed-offline", unreadable = "unreadable-catalog" }
     enum FixtureError: Error { case invalidConfiguration, missingTaxonomy }
 
     static func prepare(environment: [String: String], support: URL, resources: URL,
@@ -28,8 +28,8 @@ enum VisualFixtures {
             try Data("invalid catalog fixture".utf8).write(to: root.appendingPathComponent("catalog.json"), options: .atomic)
             return root
         }
-        if scenario == .fitting {
-            try prepareFitting(root: root, resources: resources, taxonomy: taxonomy)
+        if scenario == .fitting || scenario == .fittingTrial {
+            try prepareFitting(root: root, resources: resources, taxonomy: taxonomy, trial: scenario == .fittingTrial)
             return root
         }
         var preparedSeeds: [WardrobeItem] = []
@@ -309,11 +309,14 @@ enum VisualFixtures {
         let representationFilename: String
     }
 
-    private static func prepareFitting(root: URL, resources: URL, taxonomy: WardrobeTaxonomy) throws {
+    private static func prepareFitting(root: URL, resources: URL, taxonomy: WardrobeTaxonomy, trial: Bool = false) throws {
         let fixtures = resources.appendingPathComponent("VisualFixtures")
         let metadata = try JSONDecoder().decode([String: Metadata].self,
             from: Data(contentsOf: fixtures.appendingPathComponent("prepared-manifest.json")))
-        let inputs = [("tee", "t_shirt", "beige"), ("jeans", "jeans", "blue"),
+        let inputs = trial ? [("trial-tee", "t_shirt", "white"), ("trial-jeans", "trousers", "black"),
+                              ("trial-hoodie", "hoodie", "beige"), ("trial-polo", "polo", "white"),
+                              ("trial-jacket", "jacket", "blue"), ("trial-longtee", "t_shirt", "beige")]
+            : [("tee", "t_shirt", "beige"), ("jeans", "jeans", "blue"),
                       ("jacket", "jacket", "burgundy"), ("shoes", "shoes", "black")]
         var items: [WardrobeItem] = []
         for (index, input) in inputs.enumerated() {
@@ -339,8 +342,10 @@ enum VisualFixtures {
             let keys = ["silhouette", "body_length", "sleeves", "pattern", "pattern_location", "pattern_size",
                         "neckline", "fastening", "surface", "hood", "kangaroo_pocket", "patch_pockets",
                         "dropped_shoulders", "contrast_cuffs", "lettering"]
+            var traits = Dictionary(uniqueKeysWithValues: keys.map { ($0, "unknown") })
+            if input.0 == "trial-longtee" { traits["body_length"] = "long" }
             let features = IllustrationFeatures(version: "fitting-observable-v2-photoroom-sandbox", type: type,
-                colors: [color], traits: Dictionary(uniqueKeysWithValues: keys.map { ($0, "unknown") }))
+                colors: [color], traits: traits)
             let response = IllustrationResponse(itemId: item.id, operationId: operation,
                 photoVersionId: item.photoVersionID, sourceSetVersionId: item.sourceSetVersionID,
                 revision: 1, status: .ready, mode: "test", processing: [:], observedFeatures: features,
@@ -382,6 +387,27 @@ enum VisualFixtures {
             try FileManager.default.copyItem(at: fixtures.appendingPathComponent(hashes.representationFilename),
                 to: folder.appendingPathComponent(hashes.representationFilename))
             items.append(item)
+        }
+        if trial {
+            var outfits = [0, 2, 3].enumerated().map { offset, top in
+                var outfit = Outfit(id: UUID(uuidString: String(format: "36000004-0000-0000-0000-%012d", offset + 1))!, name: "Посадка · \(items[top].type!)")
+                outfit.selectItem(items[top].id, for: outfit.slots[1].id)
+                outfit.selectItem(items[1].id, for: outfit.slots[2].id)
+                return outfit
+            }
+            var jacket = Outfit(id: UUID(uuidString: "36000004-0000-0000-0000-000000000004")!, name: "Футболка и куртка")
+            jacket.selectItem(items[0].id, for: jacket.slots[1].id)
+            jacket.selectItem(items[1].id, for: jacket.slots[2].id)
+            let jacketLayer = jacket.addBodyLayer()
+            jacket.selectItem(items[4].id, for: jacketLayer)
+            var longTee = Outfit(id: UUID(uuidString: "36000004-0000-0000-0000-000000000005")!, name: "Длинная футболка под худи")
+            longTee.selectItem(items[5].id, for: longTee.slots[1].id)
+            longTee.selectItem(items[1].id, for: longTee.slots[2].id)
+            let hoodieLayer = longTee.addBodyLayer()
+            longTee.selectItem(items[2].id, for: hoodieLayer)
+            outfits.insert(contentsOf: [jacket, longTee], at: 0)
+            try WardrobeCatalogFile(directory: root).save(WardrobeCatalog(items: items, pendingAcknowledgements: [], outfits: outfits))
+            return
         }
         var outfit = Outfit(id: UUID(uuidString: "36000004-0000-0000-0000-000000000001")!, name: "Тестовые слои · без генерации")
         outfit.selectItem(items[0].id, for: outfit.slots[1].id)
