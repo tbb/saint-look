@@ -231,7 +231,7 @@ final class WardrobeStore: ObservableObject {
         guard let directory else { return nil }
         let filename = item.displayedIllustration?.filename ?? item.uploadFilename
         let path = directory.appendingPathComponent(item.directoryName).appendingPathComponent(filename)
-        return UIImage(contentsOfFile: path.path)
+        return item.displayedIllustration == nil ? UIImage(contentsOfFile: path.path) : GarmentPreviewCache.image(at: path)
     }
 
     private var catalog: WardrobeCatalog {
