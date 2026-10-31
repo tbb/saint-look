@@ -345,8 +345,8 @@ enum VisualFixtures {
                 photoVersionId: item.photoVersionID, sourceSetVersionId: item.sourceSetVersionID,
                 revision: 1, status: .ready, mode: "test", processing: [:], observedFeatures: features,
                 effectiveFeatures: features, manualType: nil, manualColors: nil,
-                modelVersion: IllustrationContract.currentModelVersion, templateVersion: "front-360x560-proposed-v1",
-                geometryVersion: "fitting-square-1024-v1",
+                modelVersion: IllustrationContract.currentModelVersion, templateVersion: IllustrationContract.currentTemplateVersion,
+                geometryVersion: IllustrationContract.currentGeometryVersion,
                 resultPath: "/v1/items/\(item.id.uuidString.lowercased())/illustrations/\(operation.uuidString.lowercased())/result", error: nil)
             item.illustrationResult = IllustrationResult(filename: filename, response: response)
             // This isolated scenario depicts an already committed test publication,

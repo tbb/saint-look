@@ -236,22 +236,30 @@ final class VisualAcceptanceTests: XCTestCase {
         try require(field.isEnabled, "The focused name field must allow native editing")
         // Tapping the insertion point opens the native edit menu without selecting a word.
         try nativeTap(field, in: app)
-        let labels = NSPredicate(format: "label IN %@", ["Select All", "Выбрать всё", "Выбрать все"])
-        let commands = [app.menuItems.matching(labels).firstMatch, app.buttons.matching(labels).firstMatch]
-        let nextPage = app.buttons.matching(NSPredicate(format: "label IN %@", ["Forward", "Вперёд", "Вперед"])).firstMatch
-        // Large Dynamic Type can paginate the native menu. Traverse pages, never retry editing.
+        let selectionLabels = ["Select All", "Выбрать всё", "Выбрать все"]
+        let forwardLabels = ["Forward", "Вперёд", "Вперед"]
+        // Resolve all currently offered commands in one query. Asking separately
+        // for an absent Select All can exhaust XCTest's deadline before Forward
+        // is inspected, even though that arrow is already visible on the page.
+        let offeredCommands = app.descendants(matching: .any).matching(NSPredicate(
+            format: "(elementType == %d OR elementType == %d) AND label IN %@",
+            XCUIElement.ElementType.menuItem.rawValue, XCUIElement.ElementType.button.rawValue,
+            selectionLabels + forwardLabels))
         for page in 0..<3 {
-            let available = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                commands.contains { $0.exists && $0.isHittable } || (nextPage.exists && nextPage.isHittable)
-            }, object: app)
-            guard XCTWaiter.wait(for: [available], timeout: 5) == .completed else { break }
-            if let command = commands.first(where: { $0.exists && $0.isHittable }) {
+            // Only existence belongs inside the waiter. Several remote property
+            // reads in one predicate inherit its deadline and can be cancelled
+            // midway through an already-visible Forward button's hit test.
+            guard offeredCommands.firstMatch.waitForExistence(timeout: 5) else { break }
+            let visible = offeredCommands.allElementsBoundByIndex.filter { $0.isHittable }
+            let selection = visible.first { selectionLabels.contains($0.label) }
+            let forward = visible.first { forwardLabels.contains($0.label) }
+            if let command = selection {
                 try require(command.isEnabled, "Native Select All must be enabled")
-                try nativeTap(command, in: app)
+                try performNativeTap(command)
                 return
             }
-            guard page < 2, nextPage.exists, nextPage.isHittable, nextPage.isEnabled else { break }
-            try nativeTap(nextPage, in: app)
+            guard page < 2, let nextPage = forward, nextPage.isEnabled else { break }
+            try performNativeTap(nextPage)
         }
         diagnose("native-select-all-unavailable", app: app)
         try require(false, "Native edit menu must expose an enabled Select All before replacement")
@@ -560,6 +568,22 @@ final class VisualAcceptanceTests: XCTestCase {
         attachment.name = "\(profile)-fitting-local-only-counters"
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    @MainActor
+    func testReplaceSavedNameThroughNativeMenu() async throws {
+        let app = try launch("fitting-ready")
+        try selectTab("Луки", in: app)
+        let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).firstMatch
+        try tap(saved, in: app)
+        for name in ["Прогулка по осеннему городу после работы", "Черновик", "Вечерний лук"] {
+            try nativeTap(app.buttons["edit-outfit"], in: app)
+            try waitVisible(app.buttons["cancel-outfit"], in: app)
+            try enterName(name, in: app)
+            try nativeTap(app.buttons["save-outfit"], in: app)
+            try expectGone(app.textFields["outfit-name"], "Saved editor field must disappear")
+            try require(app.staticTexts[name].waitForExistence(timeout: 5), "Detail must show the exact replacement name")
+        }
     }
 
     @MainActor

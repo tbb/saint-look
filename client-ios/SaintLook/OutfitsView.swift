@@ -275,7 +275,7 @@ private struct OutfitComposition: View {
         // needs its photo fallback, just like a missing illustration.
         let illustratedSlotIDs = Set(visibleSlots.filter { slot in
             guard let item = store.items.first(where: { $0.id == slot.itemID }),
-                  let url = store.illustrationURL(for: item) else { return false }
+                  let url = store.fittingIllustrationURL(for: item) else { return false }
             return UIImage(contentsOfFile: url.path) != nil
         }.map(\.id))
         let showsCanvas = !compact || !illustratedSlotIDs.isEmpty
@@ -287,7 +287,7 @@ private struct OutfitComposition: View {
             }
             if showsCanvas && photoSlots.contains(where: { slot in
                 guard let item = store.items.first(where: { $0.id == slot.itemID }) else { return false }
-                return compact || store.illustrationURL(for: item) == nil
+                return compact || store.fittingIllustrationURL(for: item) == nil
             }) {
                 Text("Фото вещей без иллюстраций — ниже")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -690,7 +690,7 @@ struct OutfitEditorView: View {
                     .accessibilityIdentifier("fitting-empty-preview")
             } else if draft.slots.contains(where: { slot in
                 guard let item = store.items.first(where: { $0.id == slot.itemID }) else { return false }
-                return store.illustrationURL(for: item) == nil
+                return store.fittingIllustrationURL(for: item) == nil
             }) {
                 Text("Не для всех вещей готова иллюстрация. Их фотографии показаны в составе ниже, а не на манекене.")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -1209,7 +1209,7 @@ struct OutfitSlotContent: View {
                                height: slot.zone == .bottom ? 152 : 124)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(item.displayedType ?? "Вещь").font(.headline)
-                        Text(store.illustrationURL(for: item) == nil ? "Фото · без иллюстрации" : "Иллюстрация на манекене")
+                        Text(store.fittingIllustrationURL(for: item) == nil ? "Фото · без иллюстрации" : "Иллюстрация на манекене")
                             .font(.footnote).foregroundStyle(.secondary)
                         if let status = item.illustrationStatusMessage {
                             Text(status).font(.footnote).foregroundStyle(.secondary)

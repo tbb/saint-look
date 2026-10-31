@@ -5,6 +5,7 @@ import { RequestError, uuid } from './upload.mjs';
 import { requireNotDeleted } from './deletion.mjs';
 import { ProviderError } from './providers.mjs';
 import { createIllustrationProvider, illustrationVersions, illustrationTaxonomy } from './illustration-provider.mjs';
+import { registerGarmentLayout, garmentLayout } from './illustration-layout.mjs';
 
 const stages = ['preparation', 'attributes', 'generation', 'finalization'];
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -17,8 +18,8 @@ function compatiblePreparedVersions(serialized) {
   try { versions = JSON.parse(serialized); } catch { return false; }
   // Switching these renderers does not change the sandbox source cutout.
   return versions && ['fal-ai/nano-banana-pro/edit', illustrationVersions.modelVersion].includes(versions.modelVersion)
-    && versions.templateVersion === illustrationVersions.templateVersion
-    && versions.geometryVersion === illustrationVersions.geometryVersion;
+    && ((versions.templateVersion === illustrationVersions.templateVersion && versions.geometryVersion === illustrationVersions.geometryVersion)
+      || (versions.templateVersion === 'front-360x560-proposed-v1' && versions.geometryVersion === 'fitting-square-1024-v1'));
 }
 
 async function readInput(request, itemId) {
@@ -215,6 +216,7 @@ export function createIllustrations(database, env, retention, budget) {
       stage = 'generation'; row = live(operationId); if (!row) return;
       let generated = row.generated && { png: Buffer.from(row.generated), usableAlpha: Boolean(row.generated_alpha) };
       if (!generated) {
+        garmentLayout(effective); // Reject unsupported placement before reserving a paid generation.
         setStage(operationId, stage, 'in_flight');
         if (!row.provider_receipt) budget.reserve('gemini', `${operationId}:illustration:generation:${row.photo_version_id}`);
         generated = await provider.generate(photos, effective, abort.signal, receipt => {
@@ -226,11 +228,13 @@ export function createIllustrations(database, env, retention, budget) {
       }
       stage = 'finalization';
       let result;
-      if (generated.usableAlpha) { result = generated.png; setStage(operationId, stage, 'skipped'); }
+      if (generated.usableAlpha) {
+        result = await registerGarmentLayout(generated.png, effective); setStage(operationId, stage, 'skipped');
+      }
       else {
         setStage(operationId, stage, 'in_flight');
         budget.reserve('photoroom', `${operationId}:finalization:${row.photo_version_id}`);
-        result = await provider.prepare(generated.png, abort.signal, stage);
+        result = await provider.prepare(generated.png, abort.signal, stage, effective);
         if (!live(operationId)) return;
         setStage(operationId, stage, 'done');
       }

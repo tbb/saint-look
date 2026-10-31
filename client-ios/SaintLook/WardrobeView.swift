@@ -191,9 +191,7 @@ private struct ItemProcessingStatus: View {
                     .accessibilityIdentifier("failed-status")
             }
             if item.status != .ready, item.resultFilename != nil {
-                Text(item.resultMode == .demo
-                     ? "Пока показана предыдущая тестовая вырезка. Новая ещё не готова."
-                     : "Пока показана предыдущая вырезка. Новая ещё не готова.")
+                Text("Новое фото сохранено. Нужно завершить подготовку вещи.")
                     .accessibilityIdentifier("previous-result-notice")
             }
             if let error = item.errorMessage {
@@ -218,7 +216,7 @@ private struct ItemDetailView: View {
     @State private var showingPhotoSource = false
     @State private var importing = false
 
-    @State private var imageRole = "cutout"
+    @State private var imageRole = "illustration"
     @State private var editingSources: WardrobeItem?
 
     private var item: WardrobeItem? { store.items.first { $0.id == itemID } }
@@ -277,6 +275,9 @@ private struct ItemDetailView: View {
                     Text("Вещь исчезнет из гардероба. В сохранённых луках её места останутся пустыми.")
                 }
                 .onChange(of: item.operationID) { _, _ in showingRecovery = false }
+                .onChange(of: item.displayedIllustration?.filename) { previous, current in
+                    if previous == nil, current != nil { imageRole = "illustration" }
+                }
             }
         }
         .sheet(item: $editingItem) { ItemEditView(store: store, item: $0) }
@@ -293,7 +294,7 @@ private struct ItemDetailView: View {
     }
 
     @ViewBuilder private func imageChoices(_ item: WardrobeItem) -> some View {
-        ForEach([("original", "Оригинал"), ("cutout", "Вырезка"), ("illustration", "Иллюстрация")], id: \.0) { role, title in
+        ForEach([("illustration", "Иллюстрация"), ("original", "Оригинал")], id: \.0) { role, title in
             Button { imageRole = role } label: {
                 Text(title).font(.subheadline).frame(minHeight: 44)
             }
@@ -301,14 +302,13 @@ private struct ItemDetailView: View {
             .tint(imageRole == role ? .accentColor : .secondary)
             .accessibilityIdentifier("show-\(role)")
             .accessibilityAddTraits(imageRole == role ? .isSelected : [])
-            .disabled(role == "illustration" && store.illustrationURL(for: item) == nil
-                      || role == "cutout" && item.resultFilename == nil)
+            .disabled(role == "illustration" && store.illustrationURL(for: item) == nil)
         }
     }
 
     private func illustrationControls(_ item: WardrobeItem) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Для примерочной").font(.headline)
+            Text("Подготовка вещи").font(.headline)
             if item.photosLocked {
                 Text("Фотографии готовой вещи не меняются. Для другого снимка добавьте новую вещь.")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -320,7 +320,7 @@ private struct ItemDetailView: View {
                 .accessibilityIdentifier("illustration-sources")
             }
             if store.illustrationAvailable == false && item.publishedVersion?.illustration == nil && item.downloadedIllustration == nil {
-                Text("Создание иллюстраций пока недоступно. Фото и вырезка сохранены.")
+                Text("Создание иллюстраций пока недоступно. Фото сохранено.")
                     .font(.footnote).foregroundStyle(.secondary)
                     .accessibilityIdentifier("illustration-unavailable")
             }
@@ -336,11 +336,11 @@ private struct ItemDetailView: View {
             if item.isPreparing && item.preparation?.status != .failed {
                 ProgressView("Готовим вещь…")
                     .accessibilityIdentifier("illustration-pending")
-            } else if !item.hasPreparedVersion || item.illustrationIsStale || item.preparation != nil
+            } else if !item.hasPreparedVersion || item.illustrationIsStale || item.needsFittingUpdate || item.preparation != nil
                         || (store.preparationConfiguration?.encoder.activeSpaceID != nil
                             && item.publishedVersion?.representation?.response.spaceID != store.preparationConfiguration?.encoder.activeSpaceID) {
-                Button(item.illustrationIsStale ? "Обновить вещь" : item.hasPreparedVersion ? "Обновить подготовку" : "Завершить подготовку") {
-                    if item.illustrationIsStale && item.downloadedIllustration == nil && item.preparation == nil {
+                Button(item.needsFittingUpdate ? "Обновить посадку" : item.illustrationIsStale ? "Обновить вещь" : item.hasPreparedVersion ? "Обновить подготовку" : "Завершить подготовку") {
+                    if (item.illustrationIsStale || item.needsFittingUpdate) && item.downloadedIllustration == nil && item.preparation == nil {
                         store.requestIllustration(itemID)
                     } else { store.finishPreparation(itemID) }
                 }

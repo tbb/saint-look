@@ -2,6 +2,8 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import sharp from 'sharp';
 import { modelFixture } from './model.mjs';
+import { createHash } from 'node:crypto';
+import { garmentLayout } from '../../src/illustration-layout.mjs';
 
 // The fixture implements external HTTP boundaries, never production fallback.
 export async function illustrationFixture(t, handlers = {}) {
@@ -9,6 +11,8 @@ export async function illustrationFixture(t, handlers = {}) {
   const result = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: '#00000000' } })
     .composite([{ input: await sharp({ create: { width: 120, height: 160, channels: 4, background: '#dd3322ff' } }).png().toBuffer(), left: 452, top: 260 }]).png().toBuffer();
   const generated = await sharp(result).flatten({ background: '#ffffff' }).jpeg().toBuffer();
+  const imageKey = async bytes => createHash('sha256').update(await sharp(bytes).ensureAlpha().raw().toBuffer()).digest('hex');
+  const cutouts = new Map([[await imageKey(generated), result]]);
   let url;
   const interaction = { id: 'v1_fixture-1', model: 'gemini-3-pro-image', status: 'completed', steps: [{ type: 'model_output', content: [
     { type: 'image', mime_type: 'image/jpeg', data: generated.toString('base64') },
@@ -43,10 +47,24 @@ export async function illustrationFixture(t, handlers = {}) {
         response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ model: payload.model, answers, usage: { input_tokens: 1000 } }));
       } else if (stage === 'generation') {
         if (handlers.generation) { await handlers.generation(request, response, { body, result, interaction }); return; }
-        calls.generation.at(-1).interaction = JSON.parse(body);
-        response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(interaction));
+        const request = JSON.parse(body);
+        calls.generation.at(-1).interaction = request;
+        const features = JSON.parse(request.input.at(-1).text.split('take precedence): ')[1]);
+        let cutout = result;
+        if (features.type !== 'Футболка') {
+          const layout = garmentLayout(features);
+          cutout = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-100 0 560 560"><path d="${layout.path}" fill="#dd3322"/></svg>`)).png().toBuffer();
+        }
+        const jpeg = await sharp(cutout).flatten({ background: '#ffffff' }).jpeg().toBuffer();
+        cutouts.set(await imageKey(jpeg), cutout);
+        const answer = { ...interaction, steps: [{ type: 'model_output', content: [{ type: 'image', mime_type: 'image/jpeg', data: jpeg.toString('base64') }] }] };
+        response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(answer));
       } else if (stage === 'finalization') {
-        response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(result);
+        const start = body.indexOf(Buffer.from('\x89PNG', 'latin1'));
+        const end = body.indexOf(Buffer.from('\r\n--'), start);
+        const cutout = cutouts.get(await imageKey(body.subarray(start, end)));
+        if (!cutout) throw new Error('Unknown generated fixture');
+        response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(cutout);
       } else {
         const start = body.indexOf(Buffer.from('\x89PNG', 'latin1'));
         const end = body.indexOf(Buffer.from('\r\n--'), start);

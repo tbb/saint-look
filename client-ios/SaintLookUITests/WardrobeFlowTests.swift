@@ -265,7 +265,8 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(restored.staticTexts["illustration-saved"].waitForExistence(timeout: 30),
                       "A successful replay must publish the durable candidate locally")
         XCTAssertTrue(restored.buttons["show-illustration"].isEnabled)
-        try tapVisibleButton("show-illustration", in: restored)
+        XCTAssertTrue(restored.buttons["show-illustration"].isSelected, "The first complete result becomes the main image automatically")
+        XCTAssertFalse(restored.buttons["show-cutout"].exists, "Intermediate background removal is not a user-facing result")
         XCTAssertTrue(restored.images["item-photo"].firstMatch.exists)
         try await control(mode: "offline")
         restored.terminate()
@@ -274,7 +275,7 @@ final class WardrobeFlowTests: XCTestCase {
         try openFirstItem(in: committed)
         XCTAssertTrue(committed.buttons["show-illustration"].isEnabled,
                       "The committed illustration remains available after an offline restart")
-        try tapVisibleButton("show-illustration", in: committed)
+        XCTAssertTrue(committed.buttons["show-illustration"].isSelected, "Reopening a complete item defaults to its illustration")
         XCTAssertTrue(committed.images["item-photo"].firstMatch.exists)
         let finalState = try await transportState()
         XCTAssertEqual(finalState["illustrationOperations"] as? Int, 1)
@@ -448,7 +449,7 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testAdditionalPhotoDraftCancellationAndSaveDoNotGenerate() async throws {
+    func testAdditionalPhotoDraftSavePreservesAutomaticPreparation() async throws {
         let app = launch(reset: true, baseURL: testURL)
         app.buttons["add-demo-photo"].tap()
         await waitForSummary(app, ready: 1, pending: 0)
@@ -474,10 +475,44 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(offline.buttons["remove-detail-photo"].firstMatch.exists)
         let state = try await transportState()
         XCTAssertEqual(state["illustrationUploads"] as? Int ?? 0, 0)
+        offline.terminate()
+        _ = try await providerControl(["illustrationMode": "success"])
+        let restored = launch(reset: false, baseURL: testURL)
+        await waitForSummary(restored, ready: 1, pending: 0)
+        try openFirstItem(in: restored)
+        XCTAssertTrue(restored.staticTexts["illustration-saved"].waitForExistence(timeout: 30),
+                      "Saving another angle must preserve mandatory preparation across restart")
+        let prepared = try await transportState()
+        XCTAssertEqual(prepared["illustrationUploads"] as? Int, 1)
     }
 
     @MainActor
-    func testIllustrationUnavailablePreservesOriginalAndCutout() async throws {
+    func testAdditionalPhotoDuringGenerationWaitsAndPreparesNewSourceSet() async throws {
+        _ = try await providerControl(["illustrationMode": "held"])
+        let app = launch(reset: true, baseURL: testURL)
+        app.buttons["add-demo-photo"].tap()
+        await waitForSummary(app, ready: 1, pending: 0)
+        let accepted = try await waitForTransportCount("illustrationOperations", equalTo: 1, timeout: 30)
+        XCTAssertTrue(accepted)
+        try openFirstItem(in: app)
+        try tapVisibleButton("illustration-sources", in: app)
+        app.buttons["add-demo-detail-photo"].tap()
+        app.buttons["save-illustration-sources"].tap()
+        let replacement = try await waitForTransportCount("illustrationUploads", equalTo: 2, timeout: 15)
+        XCTAssertTrue(replacement, "The new source set encounters the still-running server operation")
+        _ = try await providerControl(["illustrationMode": "success"])
+        XCTAssertTrue(app.staticTexts["illustration-saved"].waitForExistence(timeout: 30),
+                      "The pending replacement must resume after the previous generation finishes")
+        let state = try await transportState()
+        XCTAssertEqual(state["illustrationOperations"] as? Int, 2)
+        XCTAssertEqual(state["illustrationAcknowledgements"] as? Int, 1)
+        let provider = try await providerControl()
+        XCTAssertEqual(provider["illustrationGenerationCalls"] as? Int, 2,
+                       "Only the two distinct source sets may generate, never the transient retries")
+    }
+
+    @MainActor
+    func testIllustrationUnavailableResumesAutomaticallyWhenProviderRecovers() async throws {
         let app = launch(reset: true, baseURL: testURL)
         app.buttons["add-demo-photo"].tap()
         await waitForSummary(app, ready: 1, pending: 0)
@@ -485,10 +520,16 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["show-original"].waitForExistence(timeout: 5))
         app.buttons["show-original"].tap()
         XCTAssertTrue(app.images["item-photo"].firstMatch.exists)
-        app.buttons["show-cutout"].tap()
+        XCTAssertFalse(app.buttons["show-cutout"].exists)
         for _ in 0..<4 where !app.staticTexts["illustration-unavailable"].isHittable { app.swipeUp() }
         XCTAssertTrue(app.staticTexts["illustration-unavailable"].exists)
         XCTAssertFalse(app.buttons["generate-illustration"].isEnabled)
+        _ = try await providerControl(["illustrationMode": "success"])
+        XCTAssertTrue(app.staticTexts["illustration-saved"].waitForExistence(timeout: 30),
+                      "A provider recovery must resume preparation without a manual retry or relaunch")
+        XCTAssertTrue(app.buttons["show-illustration"].isSelected)
+        let prepared = try await transportState()
+        XCTAssertEqual(prepared["illustrationUploads"] as? Int, 1)
         app.terminate()
         let offline = launch(reset: false, baseURL: "http://127.0.0.1:1")
         await waitForSummary(offline, ready: 1, pending: 0)
@@ -1101,7 +1142,7 @@ final class WardrobeFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testOfflineReplacementRetainsPreviousCutoutAndEditsUntilNewResultAfterRelaunch() async throws {
+    func testOfflineReplacementShowsCurrentOriginalAndPreservesEditsAfterRelaunch() async throws {
         let app = launch(reset: true, baseURL: testURL)
         app.buttons["add-demo-photo"].tap()
         await waitForSummary(app, ready: 1, pending: 0)
@@ -1127,8 +1168,10 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["pending-status"].firstMatch.waitForExistence(timeout: 5))
         assertRecoveryDidNotOpenPhotoPicker(in: app)
         XCTAssertTrue(app.staticTexts["previous-result-notice"].exists)
-        XCTAssertTrue(app.images["item-photo"].firstMatch.screenshot().pngRepresentation == previousImage,
-                       "The previous cutout must remain visible instead of the red replacement source")
+        let replacementImage = app.images["item-photo"].firstMatch.screenshot().pngRepresentation
+        XCTAssertNotEqual(replacementImage, previousImage,
+                          "Before the first illustration, the current replacement source is the visible result")
+        XCTAssertFalse(app.buttons["show-cutout"].exists)
         // Replace again before either new photo reaches the server; the persisted revision may skip one.
         try tapVisibleButton("replace-demo-photo", in: app)
         assertRecoveryDidNotOpenPhotoPicker(in: app)
@@ -1138,8 +1181,8 @@ final class WardrobeFlowTests: XCTestCase {
         let restored = launch(reset: false, baseURL: testURL)
         try openFirstItem(in: restored)
         XCTAssertTrue(restored.staticTexts["previous-result-notice"].waitForExistence(timeout: 5))
-        XCTAssertTrue(restored.images["item-photo"].firstMatch.screenshot().pngRepresentation == previousImage,
-                      "The same previous cutout must survive offline relaunch")
+        XCTAssertEqual(restored.images["item-photo"].firstMatch.screenshot().pngRepresentation, replacementImage,
+                       "The current source must survive an offline relaunch")
         XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
         XCTAssertTrue(restored.staticTexts["Белый"].exists)
         _ = try await providerControl(["nextCutout": "red"])
@@ -1148,8 +1191,8 @@ final class WardrobeFlowTests: XCTestCase {
         XCTAssertFalse(restored.staticTexts["previous-result-notice"].exists)
         XCTAssertTrue(restored.staticTexts["Рубашка"].exists)
         XCTAssertTrue(restored.staticTexts["Белый"].exists)
-        XCTAssertFalse(restored.images["item-photo"].firstMatch.screenshot().pngRepresentation == previousImage,
-                          "The new red cutout must replace the previous blue one after becoming ready")
+        XCTAssertEqual(restored.images["item-photo"].firstMatch.screenshot().pngRepresentation, replacementImage,
+                       "A technical cutout must not replace the visible original before illustration is ready")
         let state = try await transportState()
         XCTAssertEqual(state["acceptedOperations"] as? Int, 2)
         XCTAssertEqual(state["forwardedUploads"] as? Int, 2)
@@ -1237,28 +1280,22 @@ final class WardrobeFlowTests: XCTestCase {
 
     @MainActor
     private func presentDeletionConfirmation(in app: XCUIApplication) throws {
-        try openFirstItem(in: app)
-        app.navigationBars.buttons["item-actions"].tap()
-        let command = app.collectionViews.buttons.matching(identifier: "delete-item").firstMatch
-        var previousFrame: CGRect?
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            guard command.exists, command.isHittable else { previousFrame = nil; return false }
-            let frame = command.frame
-            defer { previousFrame = frame }
-            return !frame.isEmpty && previousFrame == frame
-        }, object: nil)
-        guard XCTWaiter.wait(for: [ready], timeout: 5) == .completed else {
-            XCTFail("The native item menu must present a stable, tappable deletion command")
-            throw InteractionError.buttonNotVisible("delete-item")
-        }
-        command.press(forDuration: 0.1)
+        // Use the same stable, visible native menu command as confirmed deletion.
+        // The native press resolves the hit point; no second presenter tap can
+        // conceal an unsuccessful first action.
+        try tapVisibleButton("delete-item", in: app)
         let cancel = app.alerts.buttons.matching(identifier: "cancel-delete-item").firstMatch
-        // CI captured a centered short tap that left this menu open. Repeat only
-        // its confirmation presenter, once, while the same menu is still visible.
-        // An alert (including an unexpected one) prevents any second interaction.
-        if !cancel.waitForExistence(timeout: 1), !app.alerts.firstMatch.exists,
-           command.exists, command.isHittable {
-            command.press(forDuration: 0.1)
+        guard cancel.waitForExistence(timeout: 5) else {
+            let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            screen.name = "delete-confirmation-unavailable"
+            screen.lifetime = .keepAlways
+            add(screen)
+            let state = XCTAttachment(string: app.debugDescription)
+            state.name = "delete-confirmation-accessibility"
+            state.lifetime = .keepAlways
+            add(state)
+            XCTFail("A single native deletion command must present confirmation")
+            throw InteractionError.buttonNotVisible("cancel-delete-item")
         }
     }
 

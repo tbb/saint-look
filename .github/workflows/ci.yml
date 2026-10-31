@@ -21,7 +21,7 @@ on:
         description: Local Simulator suite
         type: choice
         default: all
-        options: [all, wardrobe, outfits, outfits-max-text, outfits-launch-pair, wardrobe-expired-retry, visual, camera, wardrobe-recovery, benchmark]
+        options: [all, wardrobe, outfits, outfits-max-text, outfits-launch-pair, wardrobe-expired-retry, visual, camera, wardrobe-recovery, native-menus, benchmark]
       visual_profiles:
         description: Visual evidence profiles (only used by the visual suite)
         type: choice
@@ -65,7 +65,7 @@ jobs:
           paths = subprocess.check_output(['git', 'diff', '--name-only', base, head], text=True).splitlines() if base and head else []
           common = not base or any(p != '.github/workflows/fitting-experiment.yml' and p.startswith(('shared/', 'docs/api/', '.github/workflows/')) for p in paths)
           selected_suite = os.environ['IOS_SUITE'] or 'all'
-          suites = ['wardrobe', 'outfits', 'visual'] if selected_suite == 'all' else [selected_suite]
+          suites = ['wardrobe', 'outfits', 'visual'] if selected_suite == 'all' else (['native-menu-delete', 'native-menu-text'] if selected_suite == 'native-menus' else [selected_suite])
           selected_profile = os.environ['VISUAL_PROFILES'] or 'all'
           profiles = ['iphone-light', 'iphone-dark', 'iphone-max-text', 'ipad-light'] if selected_profile == 'all' else [selected_profile]
           matrix = [{'suite': suite, 'profile': profile, 'label': f'{suite}-{profile}' if profile else suite}
@@ -106,8 +106,10 @@ jobs:
     runs-on: macos-26
     # Wardrobe now has 33 public scenarios plus cold Simulator startup and manifest smoke.
     # Each visual profile gets its own cold boot/build/evidence budget; no serial four-profile timeout.
-    # Manual diagnostic cases get 20 min; regular wardrobe/outfits/recovery/visual retain 60 and camera 40.
-    timeout-minutes: ${{ (matrix.suite == 'outfits-launch-pair' || matrix.suite == 'wardrobe-expired-retry') && 20 || matrix.suite == 'camera' && 40 || 60 }}
+    # Outfits runs normal and maximum text sequentially. Both passed, but the
+    # combined job exceeded 60 min. Allow 75 min including setup and finalization.
+    # Other regression suites retain 60 min; camera 40 and focused diagnostics 20.
+    timeout-minutes: ${{ (matrix.suite == 'outfits-launch-pair' || matrix.suite == 'wardrobe-expired-retry') && 20 || matrix.suite == 'camera' && 40 || matrix.suite == 'outfits' && 75 || 60 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -198,6 +200,18 @@ jobs:
             bash client-ios/scripts/test-visual-acceptance.sh
             exit $?
           fi
+          if [[ "$TEST_SUITE" == native-menu-* ]]; then
+            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || { echo 'Native menu diagnostics require manual dispatch.' >&2; exit 1; }
+            if [[ "$TEST_SUITE" == native-menu-delete ]]; then
+              export SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/WardrobeFlowTests/testCancelDeletionKeepsPhotoAndDoesNotSendDelete
+            else
+              export SAINT_LOOK_VISUAL_PROFILE=iphone-max-text
+              export SAINT_LOOK_UI_CONTENT_SIZE=accessibility-extra-extra-extra-large
+              export SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/VisualAcceptanceTests/testReplaceSavedNameThroughNativeMenu
+            fi
+            bash client-ios/scripts/test-simulator.sh
+            exit $?
+          fi
           if [[ "$TEST_SUITE" == "outfits-launch-pair" ]]; then
             [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || { echo 'Launch-pair diagnostics require manual dispatch.' >&2; exit 1; }
             SAINT_LOOK_LAUNCH_PAIR=1 \
@@ -236,7 +250,7 @@ jobs:
           fi
           if [[ "$TEST_SUITE" == "wardrobe-recovery" ]]; then
             export SAINT_LOOK_UI_TEST_ONLY="SaintLookUITests/WardrobeFlowTests/testCancelDeletionKeepsPhotoAndDoesNotSendDelete
-          SaintLookUITests/WardrobeFlowTests/testOfflineReplacementRetainsPreviousCutoutAndEditsUntilNewResultAfterRelaunch
+          SaintLookUITests/WardrobeFlowTests/testOfflineReplacementShowsCurrentOriginalAndPreservesEditsAfterRelaunch
           SaintLookUITests/WardrobeFlowTests/testOpeningPhotoKeepsItemContextThroughEditingAndBackToCollection"
           fi
           bash client-ios/scripts/test-simulator.sh

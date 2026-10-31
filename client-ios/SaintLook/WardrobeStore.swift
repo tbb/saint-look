@@ -189,7 +189,7 @@ final class WardrobeStore: ObservableObject {
                 item.sourceSetVersionID = UUID()
                 item.preparation = nil
                 item.downloadedIllustration = nil
-                item.automaticallyIllustrate = false
+                item.automaticallyIllustrate = true
                 if item.illustration?.status == .pending {
                     item.illustration?.status = .failed
                     item.illustration?.error = "source_changed"
@@ -229,7 +229,7 @@ final class WardrobeStore: ObservableObject {
 
     func displayImage(for item: WardrobeItem) -> UIImage? {
         guard let directory else { return nil }
-        let filename = item.displayedCutoutFilename ?? item.uploadFilename
+        let filename = item.displayedIllustration?.filename ?? item.uploadFilename
         let path = directory.appendingPathComponent(item.directoryName).appendingPathComponent(filename)
         return UIImage(contentsOfFile: path.path)
     }
@@ -327,6 +327,11 @@ final class WardrobeStore: ObservableObject {
                     try self?.restartPreparationAfterSpaceChange(config)
                     self?.startNewItemIllustrations()
                     self?.startNextPreparation()
+                    if !config.newItemPreparation.available,
+                       self?.items.contains(where: { $0.automaticallyIllustrate && $0.status == .ready }) == true {
+                        try await Task.sleep(nanoseconds: 5_000_000_000)
+                        continue
+                    }
                     self?.modeTask = nil
                     return
                 } catch {
@@ -580,6 +585,7 @@ final class WardrobeStore: ObservableObject {
                     completed.errorCode = nil
                     try replace(completed, acknowledgement: ResultAcknowledgement(itemID: item.id, operationID: item.operationID))
                     startNewItemIllustrations()
+                    if items.contains(where: { $0.id == id && $0.automaticallyIllustrate }) { discoverMode() }
                     startNextPreparation()
                     return
                 }
@@ -629,6 +635,11 @@ extension WardrobeStore {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
+    func fittingIllustrationURL(for item: WardrobeItem) -> URL? {
+        guard !item.needsFittingUpdate else { return nil }
+        return illustrationURL(for: item)
+    }
+
     func requestIllustration(_ id: UUID) {
         guard storageAvailable, let index = items.firstIndex(where: { $0.id == id }),
               !items[index].isReconcilingLegacyPublication, items[index].pendingPublication == nil,
@@ -666,12 +677,9 @@ extension WardrobeStore {
         for item in items where item.automaticallyIllustrate && item.status == .ready {
             if illustrationAvailable && preparationConfiguration?.newItemPreparation.available == true {
                 requestIllustration(item.id)
-            } else if let index = items.firstIndex(where: { $0.id == item.id }) {
-                var updated = items
-                updated[index].automaticallyIllustrate = false
-                do { try persist(updated); items = updated }
-                catch { notice = "Не удалось сохранить состояние иллюстрации." }
             }
+            // A temporarily unavailable provider must not discard the required
+            // preparation intent. Foreground/config discovery resumes it.
         }
     }
 
@@ -814,6 +822,7 @@ extension WardrobeStore {
                 if let error = error as? ClientError {
                     switch error {
                     case .server(let status): retryable = status >= 500 || status == 408 || status == 429
+                    case .resultUnavailable("processing_in_progress"): retryable = true
                     default: retryable = false
                     }
                 } else { retryable = error is URLError }
@@ -936,7 +945,7 @@ extension WardrobeStore {
         updated[index].sourceSetVersionID = UUID()
         updated[index].preparation = nil
         updated[index].downloadedIllustration = nil
-        updated[index].automaticallyIllustrate = false
+        updated[index].automaticallyIllustrate = true
         if updated[index].illustration?.status == .pending {
             updated[index].illustration?.status = .failed
             updated[index].illustration?.error = "source_changed"
@@ -952,6 +961,10 @@ extension WardrobeStore {
         for photo in previous where !photos.contains(where: { $0.id == photo.id }) {
             try? FileManager.default.removeItem(at: folder.appendingPathComponent(photo.originalFilename))
             try? FileManager.default.removeItem(at: folder.appendingPathComponent(photo.uploadFilename))
+        }
+        if observing {
+            startNewItemIllustrations()
+            discoverMode()
         }
     }
 
