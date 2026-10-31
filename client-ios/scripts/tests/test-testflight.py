@@ -106,6 +106,7 @@ class DeliveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory)
             (app / 'SaintLook').write_bytes(b'fake')
+            (app / 'PrivacyInfo.xcprivacy').write_bytes((delivery.ROOT / 'SaintLook/PrivacyInfo.xcprivacy').read_bytes())
             (app / 'Info.plist').write_bytes(plistlib.dumps(info))
             delivery.verify_app(app, config, SHA)
             (app / 'TrialPhotos').mkdir()
@@ -117,6 +118,13 @@ class DeliveryTests(unittest.TestCase):
                 (app / 'Info.plist').write_bytes(plistlib.dumps({**info, key: value}))
                 with self.subTest(key=key), self.assertRaises(ValueError):
                     delivery.verify_app(app, config, SHA)
+            (app / 'Info.plist').write_bytes(plistlib.dumps({**info, 'UIDeviceFamily': [1, 2]}))
+            with self.assertRaisesRegex(ValueError, 'orientations'):
+                delivery.verify_app(app, config, SHA)
+            (app / 'Info.plist').write_bytes(plistlib.dumps(info))
+            (app / 'PrivacyInfo.xcprivacy').write_bytes(plistlib.dumps({'NSPrivacyAccessedAPITypes': []}))
+            with self.assertRaisesRegex(ValueError, 'Missing required reasons'):
+                delivery.verify_app(app, config, SHA)
 
 
 class CIAdmissionTests(unittest.TestCase):

@@ -96,11 +96,17 @@ Workflow не создаёт группы, не рассылает пригла�
 `check` и PR запускают Python/Node policy tests и настоящий unsigned Release
 archive с фиктивными настройками подключения. Apple API и owner secret недоступны
 этим заданиям. Проверяются provenance, build number, arm64, отсутствие debug-ресурсов
-и поддержка internal-only export установленным Xcode. Это не тест настоящей подписи.
+и поддержка internal-only export установленным Xcode. Проверяется упаковка privacy
+manifest с причинами чтения app-local UserDefaults и timestamps локальных изображений,
+а также четыре ориентации iPad (iPhone остаётся портретным). Отдельная проверка на Mac
+импортирует одноразовый self-signed сертификат из OpenSSL 3 PKCS#12 в временную keychain.
+Это проверка совместимости формата, а не настоящей подписи Apple.
 
 ```sh
 python3 client-ios/scripts/tests/test-testflight.py
 node --test client-ios/scripts/tests/testflight-signing.test.mjs
+# На macOS с Homebrew OpenSSL 3:
+node --test client-ios/scripts/tests/testflight-keychain.test.mjs
 ```
 
 При сбое prepare-signing не нажимать Re-run jobs: повторная попытка заблокирована,
@@ -119,6 +125,10 @@ Checkpoint сохраняет private key до первого запроса и 
 список keychain восстанавливается. Профиль, уже существующий на runner, не заменяется.
 Runner одноразовый. Сертификат/profile проверяются перед каждым выпуском; продление
 истёкших материалов — отдельная операция, автоматического отзыва нет.
+
+PKCS#12 использует совместимые с macOS Security PBE-SHA1-3DES и SHA-1 MAC;
+за конфиденциальность recovery artifact отвечает внешнее шифрование age,
+а пароль PKCS#12 генерируется случайно. [Параметры OpenSSL](https://docs.openssl.org/3.2/man1/openssl-pkcs12/).
 
 Сборка указывает `ITSAppUsesNonExemptEncryption=false`: текущий клиент использует
 системные HTTPS/Keychain и SHA-256 для хеширования, собственной реализации шифрования

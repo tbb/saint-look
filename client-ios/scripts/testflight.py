@@ -115,6 +115,17 @@ def verify_app(app, config, revision):
     require((app / 'SaintLook').is_file(), 'Missing device executable')
     require(not any((app / name).exists() for name in ('TrialPhotos', 'VisualFixtures')),
             'Debug fixtures present in archive')
+    if 2 in info.get('UIDeviceFamily', []):
+        require(set(info.get('UISupportedInterfaceOrientations~ipad', [])) == {
+            'UIInterfaceOrientationPortrait', 'UIInterfaceOrientationPortraitUpsideDown',
+            'UIInterfaceOrientationLandscapeLeft', 'UIInterfaceOrientationLandscapeRight'},
+            'iPad archive must declare all supported orientations')
+    privacy = plistlib.loads((app / 'PrivacyInfo.xcprivacy').read_bytes())
+    reasons = {entry['NSPrivacyAccessedAPIType']: entry['NSPrivacyAccessedAPITypeReasons']
+               for entry in privacy.get('NSPrivacyAccessedAPITypes', [])}
+    require('CA92.1' in reasons.get('NSPrivacyAccessedAPICategoryUserDefaults', [])
+            and 'C617.1' in reasons.get('NSPrivacyAccessedAPICategoryFileTimestamp', []),
+            'Missing required reasons for app-local defaults and image cache timestamps')
 
 
 def run(args, stage, env=None, timeout=1200):

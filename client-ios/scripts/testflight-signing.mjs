@@ -82,6 +82,14 @@ export async function provision(config, api, files, checkpoint) {
   checkpoint();
 }
 
+export function exportIdentity(command, assets, passwordPath) {
+  command('openssl', ['pkcs12', '-export', '-inkey', join(assets, 'private-key.pem'), '-in', join(assets, 'certificate.pem'),
+    '-out', join(assets, 'distribution.p12'), '-passout', `file:${passwordPath}`,
+    // Apple's Security importer needs the compatible PKCS#12 encoding. The
+    // exported transport artifact is protected separately by age encryption.
+    '-keypbe', 'PBE-SHA1-3DES', '-certpbe', 'PBE-SHA1-3DES', '-macalg', 'sha1']);
+}
+
 async function main() {
   process.umask(0o077);
   const config = signingConfiguration(process.env);
@@ -110,8 +118,7 @@ async function main() {
     const passwordPath = join(assets, 'p12-password.txt');
     writeFileSync(passwordPath, randomBytes(32).toString('base64url'), { mode: 0o600 });
     command('openssl', ['x509', '-inform', 'DER', '-in', join(assets, 'certificate.cer'), '-out', join(assets, 'certificate.pem')]);
-    command('openssl', ['pkcs12', '-export', '-inkey', join(assets, 'private-key.pem'), '-in', join(assets, 'certificate.pem'),
-      '-out', join(assets, 'distribution.p12'), '-passout', `file:${passwordPath}`]);
+    exportIdentity(command, assets, passwordPath);
     receipt.state = 'ready-for-github-secrets';
     checkpoint();
     console.log(JSON.stringify(receipt));
