@@ -335,8 +335,8 @@ struct IllustrationResult: Codable {
 
 enum IllustrationContract {
     static let currentModelVersion = "gemini-3-pro-image"
-    static let currentTemplateVersion = "category-front-anchors-v2"
-    static let currentGeometryVersion = "fitting-anchors-1024-v2"
+    static let currentTemplateVersion = "category-front-anchors-v3"
+    static let currentGeometryVersion = "fitting-anchors-1024-v3"
     private static let supportedModels: Set<String> = [currentModelVersion, "fal-ai/nano-banana-pro/edit"]
 
     static func accepts(modelVersion: String, templateVersion: String, geometryVersion: String) -> Bool {
@@ -344,7 +344,9 @@ enum IllustrationContract {
             && geometryVersion == "fitting-square-1024-v1"
         let current = modelVersion == currentModelVersion && templateVersion == currentTemplateVersion
             && geometryVersion == currentGeometryVersion
-        return legacy || current
+        let previousAnchors = modelVersion == currentModelVersion && templateVersion == "category-front-anchors-v2"
+            && geometryVersion == "fitting-anchors-1024-v2"
+        return legacy || previousAnchors || current
     }
 }
 
@@ -398,6 +400,11 @@ extension WardrobeItem {
             && request.manualType == manualType && request.manualColors == manualColors
     }
 
+    var hasFittingGeometry: Bool {
+        guard let result = displayedIllustration else { return false }
+        return ["fitting-anchors-1024-v2", IllustrationContract.currentGeometryVersion].contains(result.response.geometryVersion)
+    }
+
     var needsFittingUpdate: Bool {
         guard let result = displayedIllustration else { return false }
         return result.response.geometryVersion != IllustrationContract.currentGeometryVersion
@@ -439,7 +446,10 @@ extension WardrobeItem {
             let detail = IllustrationFailure.message(for: error)
             return photosLocked ? "Не удалось обновить вещь. Предыдущая версия сохранена. " + detail : detail
         }
-        if needsFittingUpdate { return "Для этой иллюстрации нужно обновить посадку. Она сохранена в карточке; на манекене появится после обновления." }
+        if needsFittingUpdate {
+            return hasFittingGeometry ? "Доступно обновление посадки. Пока используется сохранённая версия."
+                : "Для этой иллюстрации нужно обновить посадку. Она сохранена в карточке; на манекене появится после обновления."
+        }
         if illustrationIsStale { return "Признаки изменились. Обновите иллюстрацию, чтобы использовать их в луках. Пока используется предыдущая версия." }
         return hasPreparedVersion ? nil : "Нужно завершить подготовку. Фото и сохранённые луки доступны на устройстве."
     }

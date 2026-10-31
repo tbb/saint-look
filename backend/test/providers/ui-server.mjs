@@ -20,8 +20,8 @@ let nextCutout = null;
 let illustrationMode = null;
 const heldGenerations = new Set();
 let illustrationPreparationCalls = 0, illustrationAttributesCalls = 0, illustrationGenerationCalls = 0, illustrationFinalizationCalls = 0;
-const illustrationCutout = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: '#00000000' } })
-  .composite([{ input: await sharp(blue).resize(260, 300, { fit: 'contain', background: '#00000000' }).png().toBuffer(), left: 382, top: 250 }]).png().toBuffer();
+// Independent long-enough tee: the old blue demo glyph had a cropped torso.
+const illustrationCutout = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M480 240 Q512 262 544 240 L582 250 L642 310 L615 345 L585 325 V520 H439 V325 L409 345 L382 310 L442 250 Z" fill="#315c93"/></svg>')).png().toBuffer();
 const illustrationImage = await sharp(illustrationCutout).flatten({ background: '#ffffff' }).jpeg().toBuffer();
 let illustrationInteraction = { id: 'v1_ui-fixture', model: 'gemini-3-pro-image', status: 'completed', steps: [{ type: 'model_output', content: [
   { type: 'image', mime_type: 'image/jpeg', data: illustrationImage.toString('base64') },

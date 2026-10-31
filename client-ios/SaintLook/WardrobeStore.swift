@@ -636,7 +636,7 @@ extension WardrobeStore {
     }
 
     func fittingIllustrationURL(for item: WardrobeItem) -> URL? {
-        guard !item.needsFittingUpdate else { return nil }
+        guard item.hasFittingGeometry else { return nil }
         return illustrationURL(for: item)
     }
 

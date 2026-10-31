@@ -58,3 +58,23 @@ test('wide full-length trousers cannot pass by shrinking their hems above the an
   const shortened = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M430 483 H590 V746 H530 L520 570 H500 L490 746 H430 Z" fill="#222"/></svg>')).png().toBuffer();
   assert.equal((await checkGarmentLayout(shortened,{type:'trousers'})).valid, false);
 });
+
+const shortTee = '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M480 240 Q512 260 544 240 L582 250 L650 295 L625 335 L585 315 L585 450 H439 V315 L399 335 L374 295 L442 250 Z" fill="#222"/></svg>';
+test('a regular tee cannot pass with a floating hem above the waistband', async () => {
+  const source = await sharp(Buffer.from(shortTee)).png().toBuffer();
+  const features = {type:'t_shirt', traits:{body_length:'regular'}};
+  assert.equal((await checkGarmentLayout(source, features)).valid, false);
+  const registered = await registerGarmentLayout(source, features);
+  assert.equal((await checkGarmentLayout(registered, features)).valid, true);
+  const {data,info} = await sharp(registered).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+  let hem=-1;
+  for(let y=0;y<info.height;y++) for(let x=480;x<=544;x++) if(data[(y*info.width+x)*4+3]>=224) hem=y;
+  assert.ok(hem>=490, `Regular tee must overlap the waist; actual hem ${hem}`);
+});
+
+test('an explicitly cropped tee keeps its intended length', async () => {
+  const source = await sharp(Buffer.from(shortTee)).png().toBuffer();
+  const features = {type:'t_shirt', traits:{body_length:'cropped'}};
+  assert.equal((await checkGarmentLayout(source, features)).valid, true);
+  assert.deepEqual(await registerGarmentLayout(source,features),source);
+});

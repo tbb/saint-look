@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import { ProviderError } from './providers.mjs';
 
 const taxonomy = JSON.parse(readFileSync(new URL('../../shared/wardrobe-taxonomy.json', import.meta.url)));
-export const layoutVersion = 'fitting-anchors-1024-v2';
-export const templateVersion = 'category-front-anchors-v2';
+export const layoutVersion = 'fitting-anchors-1024-v3';
+export const templateVersion = 'category-front-anchors-v3';
 // Coordinates are in the existing 360×560 mannequin frame, letterboxed into
 // a 560×560 square. The client draws this same frame without independently
 // cropping/scaling a garment. Bounds include ease; they are validation envelopes,
@@ -26,9 +26,12 @@ const layouts = {
   socks: { bounds: [130, 380, 100, 140], path: 'M146 402 L165 402 L166 506 L136 510 L145 490 Z M195 402 L215 402 L215 490 L225 510 L196 506 Z', anchors: { leftAnkle: [155, 494], rightAnkle: [205, 494] } },
   bag: { bounds: [210, 160, 110, 200], path: 'M245 215 L245 190 Q263 163 282 190 L282 215 M230 214 L300 214 L304 320 L226 320 Z', anchors: { handle: [263, 180], bagCentre: [265, 270] } },
 };
+layouts.hooded = { ...layouts.upper, bounds: [82, 90, 196, 240],
+  path: 'M157 132 Q146 106 163 96 Q180 88 197 96 Q214 106 203 132 L225 148 L245 181 L264 300 L247 307 L216 206 L220 297 L139 297 L143 206 L113 307 L94 300 L116 181 L135 147 Z',
+  anchors: { ...layouts.upper.anchors, hoodTop: [180, 94] } };
 const groups = {
   t_shirt: 'shortUpper', polo: 'shortUpper', shirt: 'upper', blouse: 'upper', top: 'sleeveless', sweater: 'upper',
-  cardigan: 'upper', sweatshirt: 'upper', hoodie: 'upper', vest: 'sleeveless', blazer: 'upper', jacket: 'upper',
+  cardigan: 'upper', sweatshirt: 'upper', hoodie: 'hooded', vest: 'sleeveless', blazer: 'upper', jacket: 'upper',
   coat: 'full', raincoat: 'full', jeans: 'trousers', trousers: 'trousers', shorts: 'shorts', skirt: 'skirt',
   dress: 'full', jumpsuit: 'full', sneakers: 'shoes', shoes: 'shoes', boots: 'shoes', sandals: 'shoes', slippers: 'shoes',
   bag: 'bag', headwear: 'head', scarf: 'scarf', belt: 'belt', gloves: 'gloves', socks: 'socks', underwear: 'shorts', swimwear: 'full',
@@ -40,6 +43,7 @@ export function garmentLayout(features) {
   if (group === 'shortUpper' && features?.traits?.sleeves === 'long') group = 'upper';
   if (['shirt', 'blouse'].includes(type) && features?.traits?.sleeves === 'short') group = 'shortUpper';
   if (!group) throw new ProviderError('illustration_type_unsupported');
+  if (group === 'upper' && features?.traits?.hood === 'yes') group = 'hooded';
   return { type, group, ...layouts[group] };
 }
 
@@ -61,6 +65,25 @@ function inkBounds(data, width, height) {
     left=Math.min(left,x); top=Math.min(top,y); right=Math.max(right,x); bottom=Math.max(bottom,y);
   }
   return right < left ? null : { left, top, width:right-left+1, height:bottom-top+1 };
+}
+
+function upperBody(data, width, height, bounds, layout, features) {
+  if (!['shortUpper', 'sleeveless'].includes(layout.group) || features?.traits?.body_length === 'cropped' || !bounds) return null;
+  // A central strip measures the body independently of extended sleeves.
+  const left = Math.round(bounds.left + bounds.width * 0.35), right = Math.round(bounds.left + bounds.width * 0.65);
+  let top=height, bottom=-1;
+  for(let y=0;y<height;y++) {
+    let count=0; for(let x=left;x<=right;x++) if(data[(y*width+x)*4+3]>=224) count++;
+    if(count >= (right-left+1)*0.5) { top=Math.min(top,y); bottom=y; }
+  }
+  return bottom>top ? { top, bottom } : null;
+}
+
+function upperBodyValid(body, layout, features) {
+  if (!['shortUpper', 'sleeveless'].includes(layout.group) || features?.traits?.body_length === 'cropped') return true;
+  // Regular tops overlap the waist; explicit cropped garments may expose it.
+  return body && body.top <= point([180,155])[1] && body.top >= point([180,120])[1]
+    && body.bottom >= point([180,270])[1]-3;
 }
 
 function separatedLegs(data, width, bounds) {
@@ -89,13 +112,16 @@ export async function registerGarmentLayout(bytes, features) {
   if((await checkGarmentLayout(bytes,features)).valid) return bytes;
   const guide=await sharp(Buffer.from(guideSVG(features,false))).ensureAlpha().raw().toBuffer({resolveWithObject:true});
   const target=inkBounds(guide.data,guide.info.width,guide.info.height);
-  const scale=layout.legs ? target.height/source.height : Math.min(target.width/source.width,target.height/source.height);
+  const body=upperBody(data,info.width,info.height,source,layout,features);
+  const neckY=point([180,132])[1], hemY=point([180,270])[1];
+  const minimumBodyScale=body ? (hemY-neckY)/(body.bottom-body.top) : 0;
+  const scale=layout.legs ? target.height/source.height : Math.max(minimumBodyScale,Math.min(target.width/source.width,target.height/source.height));
   // One global similarity transform, never independent x/y stretch or per-leg warp.
   const size=Math.round(1024*scale);
   if(size<64 || size>2048) throw new ProviderError('illustration_geometry_invalid');
   const actualScale=size/1024;
   const offsetX=Math.round(target.left+target.width/2-(source.left+source.width/2)*actualScale);
-  const offsetY=Math.round(target.top-source.top*actualScale);
+  const offsetY=Math.round(body ? neckY-body.top*actualScale : target.top-source.top*actualScale);
   const left=Math.max(0,offsetX), top=Math.max(0,offsetY);
   const sourceLeft=Math.max(0,-offsetX), sourceTop=Math.max(0,-offsetY);
   const width=Math.min(size-sourceLeft,1024-left), height=Math.min(size-sourceTop,1024-top);
@@ -119,7 +145,9 @@ export function layoutInstructions(features) {
   const layout = garmentLayout(features);
   const anchors = Object.fromEntries(Object.entries(layout.anchors).map(([name, value]) => [name, point(value)]));
   const [x,y,w,h] = layout.bounds, [left,top] = point([x,y]), [right,bottom] = point([x+w,y+h]);
-  return `Edit the LAST image: it is the placement template for a ${layout.type}, on an EXACT 1024 by 1024 canvas. Replace ONLY its grey garment placeholder with a faithful editorial illustration of the referenced garment. Keep the template's small size, position and front-facing pose inside the full canvas. Most of the canvas MUST remain plain white. DO NOT zoom, crop, enlarge to fill the square, copy the photo's pose, or draw any human/mannequin body. Coordinates in output pixels, origin top-left: anchors ${JSON.stringify(anchors)}; garment must remain within [left=${left}, top=${top}, right=${right}, bottom=${bottom}]. The anchors describe the same invisible mannequin for every item. Preserve the real garment's silhouette, construction, colours, sleeve/hem length and prints while arranging it in this pose; the grey template is a placement guide, not a replacement garment design. White outside the item, inside necklines/openings and between separated limbs; no body, head, skin, stand, extra clothing, labels, guide lines or cast shadow.${layout.legs ? ' TROUSERS: front waistband horizontal at the two waist anchors, crotch centred at the crotch anchor, two distinct uncrossed untwisted leg tubes towards the left and right ankle anchors. Straighten the pose even if the source is twisted or folded. Preserve front pockets and seams on their correct sides. Do not draw the torso above the waistband, shoes below the hems, or join/cross the two legs.' : ''}`;
+  const torsoRule = ['shortUpper', 'sleeveless', 'upper', 'hooded'].includes(layout.group)
+    ? ` Fit the torso to the SAME wearer: the neckline is near (512,241), shoulders near (430,269) and (594,269), waist y=483. ${features?.traits?.body_length === 'cropped' ? 'This is deliberately cropped: preserve its short hem.' : 'The torso hem must overlap the waist, normally y=510 to 545; do not make a regular top look cropped.'} Sleeves follow the template arm directions, not a flat-lay T pose. ${layout.group === 'hooded' ? 'The hood is behind the neckline; its crown may extend up to y=172, while the shoulder seams remain at y=269. Do not align the hood crown to the neckline or add a head inside it.' : ''}` : '';
+  return `Edit the LAST image: it is the placement template for a ${layout.type}, on an EXACT 1024 by 1024 canvas. Replace ONLY its grey garment placeholder with a faithful editorial illustration of the referenced garment. Keep the template's small size, position and front-facing pose inside the full canvas. Most of the canvas MUST remain plain white. DO NOT zoom, crop, enlarge to fill the square, copy the photo's pose, or draw any human/mannequin body. Coordinates in output pixels, origin top-left: anchors ${JSON.stringify(anchors)}; garment must remain within [left=${left}, top=${top}, right=${right}, bottom=${bottom}]. The anchors describe the same invisible mannequin for every item.${torsoRule} Preserve the garment DESIGN: construction, colours, actual sleeve and body length, and print placement. Reconstruct its unfolded front as if worn by this invisible mannequin. Incidental wrinkles, crumpling, folded sleeve openings, tilted collars, uneven hems and camera perspective in the source are NOT design features: straighten them. Shoulders must be level and symmetrical, neckline centred, torso vertical, and both sleeves unfolded along the template arms. Use restrained flat editorial shading; do not trace or emphasize the source photo's random folds. The grey template defines the wearer pose, not a replacement garment design. White outside the item, inside necklines/openings and between separated limbs; no body, head, skin, stand, extra clothing, labels, guide lines or cast shadow.${layout.legs ? ' TROUSERS: front waistband horizontal at the two waist anchors, crotch centred at the crotch anchor, two distinct uncrossed untwisted leg tubes towards the left and right ankle anchors. Straighten the pose even if the source is twisted or folded. Preserve front pockets and seams on their correct sides. Do not draw the torso above the waistband, shoes below the hems, or join/cross the two legs.' : ''}`;
 }
 
 export async function checkGarmentLayout(bytes, features) {
@@ -141,8 +169,9 @@ export async function checkGarmentLayout(bytes, features) {
   const legsValid = !layout.legs || separatedLegs(data,info.width,ink);
   // Full-length trousers must reach both waist and ankles. Containment alone
   // would silently turn a wide silhouette into cropped trousers.
-  const anchorsValid = !layout.legs || (ink && Math.abs(ink.top-point(layout.anchors.leftWaist)[1])<=24
-    && Math.abs(ink.top+ink.height-1-point(layout.anchors.leftAnkle)[1])<=28);
+  const body=upperBody(data,info.width,info.height,ink,layout,features);
+  const anchorsValid = upperBodyValid(body,layout,features) && (!layout.legs || (ink && Math.abs(ink.top-point(layout.anchors.leftWaist)[1])<=24
+    && Math.abs(ink.top+ink.height-1-point(layout.anchors.leftAnkle)[1])<=28));
   return { valid: solid > 256 && outsideFraction <= 0.04 && coverage >= 0.08 && legsValid && anchorsValid,
     outsideFraction, coverage, legsValid, anchorsValid, bounds: { left,top,right,bottom } };
 }

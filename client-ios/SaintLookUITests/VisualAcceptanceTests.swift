@@ -15,6 +15,25 @@ final class VisualAcceptanceTests: XCTestCase {
         try await control("online", reset: true)
     }
 
+    @MainActor
+    func testRealGeneratedGarmentsInCatalogAndFitting() async throws {
+        let before = try await illustrationCounts()
+        let app = try launch("fitting-trial-ready")
+        try require(app.images.matching(identifier: "item-photo").firstMatch.waitForExistence(timeout: 5))
+        try capture("real-fit-01-catalog")
+        try selectTab("Луки", in: app)
+        try capture("real-fit-02-outfits")
+        let card = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-'")).firstMatch
+        try require(card.waitForExistence(timeout: 5))
+        try tap(card, in: app)
+        try waitVisible(app.buttons["edit-outfit"], in: app)
+        try capture("real-fit-03-detail")
+        try nativeTap(app.buttons["edit-outfit"], in: app)
+        try waitVisible(app.buttons["cancel-outfit"], in: app)
+        try capture("real-fit-04-editor")
+        try requireEqual(try await illustrationCounts(), before, "Viewing saved real outputs must not generate again")
+    }
+
     private enum JourneyFailure: Error { case failed }
 
     private func require(_ condition: Bool, _ message: String = "Required public UI state was not observed",
