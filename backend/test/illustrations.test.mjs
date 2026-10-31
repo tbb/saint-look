@@ -374,7 +374,10 @@ test('editing angles before first publication supersedes generated output; commi
 });
 
 
-test('old fal prepared cutouts are reused after Gemini migration with exact source binding', async t => {
+for (const versions of [
+  { modelVersion: 'fal-ai/nano-banana-pro/edit', templateVersion: 'front-360x560-proposed-v1', geometryVersion: 'fitting-square-1024-v1' },
+  { modelVersion: 'gemini-3-pro-image', templateVersion: 'category-front-anchors-v2', geometryVersion: 'fitting-anchors-1024-v2' },
+]) test(`prepared ${versions.geometryVersion} cutouts are reused with exact source binding`, async t => {
   const fixture = await illustrationFixture(t), env = await environment(t);
   let server = await env.launch(fixture.env);
   const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
@@ -384,7 +387,6 @@ test('old fal prepared cutouts are reused after Gemini migration with exact sour
   assert.equal((await commitIllustration(server, photo, input)).response.status, 204);
   await server.stop();
   const db = new DatabaseSync(join(env.directory, 'wardrobe.sqlite'));
-  const versions = { modelVersion: 'fal-ai/nano-banana-pro/edit', templateVersion: 'front-360x560-proposed-v1', geometryVersion: 'fitting-square-1024-v1' };
   db.prepare('UPDATE illustration_sources SET prepared_versions=? WHERE item_id=? AND photo_id=?')
     .run(JSON.stringify(versions), photo.itemId, photo.photoVersionId);
   db.close();

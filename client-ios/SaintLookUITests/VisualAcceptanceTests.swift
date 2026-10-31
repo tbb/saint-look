@@ -462,19 +462,20 @@ final class VisualAcceptanceTests: XCTestCase {
         return counts
     }
 
+    private func illustrationCounts() async throws -> [String: Int] {
+        var request = URLRequest(url: URL(string: "\(baseURL)/__control")!)
+        request.setValue("Bearer saint-look-ui-control-test-token-00000001", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try requireEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        let state = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        return try Dictionary(uniqueKeysWithValues: ["illustrationUploads", "illustrationOperations", "illustrationAcknowledgements"].map {
+            ($0, try XCTUnwrap(state[$0] as? Int))
+        })
+    }
+
     /// Drawn fixtures verify native compositing and local behavior, not provider quality.
     @MainActor
     func testPreparedFittingLayersAndFallbackStayLocal() async throws {
-        func illustrationCounts() async throws -> [String: Int] {
-            var request = URLRequest(url: URL(string: "\(baseURL)/__control")!)
-            request.setValue("Bearer saint-look-ui-control-test-token-00000001", forHTTPHeaderField: "Authorization")
-            let (data, response) = try await URLSession.shared.data(for: request)
-            try requireEqual((response as? HTTPURLResponse)?.statusCode, 200)
-            let state = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-            return try Dictionary(uniqueKeysWithValues: ["illustrationUploads", "illustrationOperations", "illustrationAcknowledgements"].map {
-                ($0, try XCTUnwrap(state[$0] as? Int))
-            })
-        }
         func canvas(in app: XCUIApplication) throws -> XCUIElement {
             // A sheet retains the detail canvas in accessibility, and global query order
             // does not identify the foreground. Use the same content surface as reveal.

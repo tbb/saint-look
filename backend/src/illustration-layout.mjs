@@ -69,12 +69,13 @@ function inkBounds(data, width, height) {
 
 function upperBody(data, width, height, bounds, layout, features) {
   if (!['shortUpper', 'sleeveless'].includes(layout.group) || features?.traits?.body_length === 'cropped' || !bounds) return null;
-  // A central strip measures the body independently of extended sleeves.
+  // The central strip measures the hem independently of sleeves. The upper
+  // edge comes from the whole silhouette: a deep neckline is not a low shoulder.
   const left = Math.round(bounds.left + bounds.width * 0.35), right = Math.round(bounds.left + bounds.width * 0.65);
-  let top=height, bottom=-1;
+  const top=bounds.top; let bottom=-1;
   for(let y=0;y<height;y++) {
     let count=0; for(let x=left;x<=right;x++) if(data[(y*width+x)*4+3]>=224) count++;
-    if(count >= (right-left+1)*0.5) { top=Math.min(top,y); bottom=y; }
+    if(count >= (right-left+1)*0.5) { bottom=y; }
   }
   return bottom>top ? { top, bottom } : null;
 }

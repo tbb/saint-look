@@ -78,3 +78,11 @@ test('an explicitly cropped tee keeps its intended length', async () => {
   assert.equal((await checkGarmentLayout(source, features)).valid, true);
   assert.deepEqual(await registerGarmentLayout(source,features),source);
 });
+
+// Shoulder position must not depend on how deep the designer cut the neckline.
+test('a regular deep-neck top retains correct shoulders and waist without rescaling', async () => {
+  const source = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M430 260 L465 260 Q472 345 512 345 Q552 345 559 260 L594 260 L586 540 L438 540 Z" fill="#222"/></svg>')).png().toBuffer();
+  const features = {type:'top', traits:{body_length:'regular'}};
+  assert.equal((await checkGarmentLayout(source, features)).valid, true);
+  assert.deepEqual(await registerGarmentLayout(source, features), source);
+});
