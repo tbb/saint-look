@@ -4,7 +4,7 @@ import { jevRequest, jevModel } from './jev.mjs';
 const yesNo = { yes: 'Visible on this item', no: 'Visibly absent', unknown: 'Not visible or uncertain' };
 export const observableChoices = {
   silhouette: { fitted: 'Narrow or fitted shape', straight: 'Straight shape', relaxed: 'Wide body or dropped shoulders; not wearer sizing', unknown: 'Unclear', not_applicable: 'Not applicable' },
-  body_length: { cropped: 'Cropped', regular: 'Regular length', long: 'Long', unknown: 'Unclear', not_applicable: 'Not applicable' },
+  body_length: { cropped: 'Visibly shortened torso, with hem above the usual waist/hip region', regular: 'Standard torso proportions, usual waist-to-hip hem; not elongated', long: 'Visibly elongated torso relative to shoulder/chest width and sleeves, including longline and drop-tail hems; this describes body length, NOT sleeve length', unknown: 'Body length is hidden, folded or cannot be distinguished confidently', not_applicable: 'Not applicable' },
   sleeves: { sleeveless: 'No sleeves', short: 'Short sleeves', long: 'Long sleeves', unknown: 'Unclear', not_applicable: 'Not applicable' },
   pattern: { plain: 'No pattern', stripes: 'Stripes', checks: 'Checks', graphic: 'Graphic or lettering', mixed: 'Mixed patterns', unknown: 'Unclear' },
   pattern_location: { center: 'Center front', left_chest: 'Left chest of wearer', right_chest: 'Right chest of wearer', sleeves: 'Sleeves', all_over: 'All over', none: 'No pattern', unknown: 'Unclear' },
