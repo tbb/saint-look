@@ -32,6 +32,15 @@ def environment():
 
 
 class DeliveryTests(unittest.TestCase):
+    def test_zero_exit_without_positive_apple_receipt_is_not_success(self):
+        for response in [b'', b'{"errors":[{"message":"rejected"}]}',
+                         b'ERROR: upload failed', b'uploaded 100% bytes',
+                         b'No errors uploading\nERROR: rejected']:
+            with self.subTest(response=response), self.assertRaises(ValueError):
+                delivery.verify_upload_response(response)
+        delivery.verify_upload_response(b'{"success-message":"No errors uploading archive"}')
+        delivery.verify_upload_response(b'UPLOAD SUCCEEDED with no errors')
+
     def test_unsigned_check_ignores_owner_secrets(self):
         env = environment()
         env.update(GITHUB_EVENT_NAME='pull_request', IOS_TESTFLIGHT_BUNDLE_ID='')

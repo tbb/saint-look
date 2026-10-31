@@ -139,6 +139,15 @@ def binary_secret(env, name):
     return value
 
 
+def verify_upload_response(output):
+    # Some altool versions have returned zero for failed uploads. Require a
+    # positive receipt as well, without publishing the potentially private body.
+    response = output.decode(errors='replace')
+    require(not re.search(r'\bERROR\s*:|"(?:errors|product-errors)"\s*:\s*\[\s*\{', response, re.I)
+            and re.search(r'No errors uploading|UPLOAD SUCCEEDED', response, re.I),
+            'Apple upload was not confirmed; inspect App Store Connect before retrying')
+
+
 def deliver(upload=False):
     env = dict(os.environ)
     config = configuration(env, upload)
@@ -211,10 +220,11 @@ def deliver(upload=False):
             write_private(private_keys / f'AuthKey_{env["ASC_KEY_ID"]}.p8', env['ASC_PRIVATE_KEY'].encode())
             # One submission. An uncertain upload is inspected in App Store Connect
             # before another run; no hidden retry or automatic tester invitations.
-            run(['xcrun', 'altool', '--upload-app', '--file', str(ipas[0]), '--type', 'ios',
+            response = run(['xcrun', 'altool', '--upload-app', '--file', str(ipas[0]), '--type', 'ios',
                  '--apiKey', env['ASC_KEY_ID'], '--apiIssuer', env['ASC_ISSUER_ID'], '--output-format', 'json'],
                 'Apple upload (check App Store Connect before retrying)',
                 env={**env, 'API_PRIVATE_KEYS_DIR': str(private_keys)})
+            verify_upload_response(response)
             print(json.dumps({'revision': revision, 'build': config['build'], 'uploaded': True,
                               'internalOnly': True, 'appleProcessingStillRequired': True}))
         finally:
