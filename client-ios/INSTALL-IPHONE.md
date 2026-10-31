@@ -1,5 +1,9 @@
 # Установка Saint Look на iPhone с Mac
 
+Для установки без Mac подготовлен отдельный путь через
+[внутренний TestFlight](TESTFLIGHT.md), требующий активной Apple Developer Program.
+Ниже остаётся инструкция для бесплатной подписи через Sideloadly.
+
 Платная подписка Apple Developer и локальная сборка проекта не нужны.
 GitHub собирает Release для iOS 17+, Sideloadly подписывает его бесплатным
 Apple Account на вашем Mac и устанавливает по USB.
