@@ -171,3 +171,20 @@ test('footwear generation receives a large pose reference and keeps the placemen
   assert.equal((await checkGarmentLayout(await provider.prepare(generated.png,signal,'finalization',features),features)).valid,true);
   assert.equal(fixture.calls.generation.length,1);
 });
+
+test('uncertain body length does not shrink an already aligned long hem to a regular guide', async () => {
+  const features={type:'t_shirt',traits:{body_length:'unknown',sleeves:'short',neckline:'round'}};
+  const long=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M480 240 Q512 260 544 240 L594 270 L650 320 L625 360 L585 330 L585 630 H439 V330 L399 360 L374 320 L430 269 Z" fill="#f7f2e0"/></svg>')).png().toBuffer();
+  const result=await registerGarmentLayout(long,features);
+  const {data,info}=await sharp(result).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+  let hem=0;for(let y=0;y<info.height;y++) if(data[(y*info.width+512)*4+3]>=224) hem=y;
+  assert.ok(hem>=600,`The observed long hem must remain below a normal hoodie; got ${hem}`);
+});
+
+test('uncertain length also preserves an observed cropped torso instead of inventing regular length', async () => {
+  const source=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M480 240 Q512 260 544 240 L594 270 L650 320 L625 360 L585 330 L585 449 H439 V330 L399 360 L374 320 L430 269 Z" fill="#222"/></svg>')).png().toBuffer();
+  for(const body_length of ['unknown',undefined]) {
+    const features={type:'t_shirt',traits:{body_length,neckline:'round'}};
+    assert.deepEqual(await registerGarmentLayout(source,features),source,'Unknown must not enlarge a short torso to cover the waist');
+  }
+});
