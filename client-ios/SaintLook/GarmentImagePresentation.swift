@@ -3,7 +3,33 @@ import CoreGraphics
 
 /// Presentation copies only. The published square remains the fitting coordinate system.
 enum GarmentImagePresentation {
-    static func preview(_ image: CGImage) -> CGImage { image }
+    static func preview(_ image: CGImage) -> CGImage {
+        // Zero-alpha margins carry placement, not visible content. Keep every
+        // nonzero-alpha pixel, including antialiasing and sandbox watermarks.
+        guard let pixels = rgba(image) else { return image }
+        var left = image.width, top = image.height, right = -1, bottom = -1
+        for y in 0..<image.height {
+            for x in 0..<image.width where pixels[(y * image.width + x) * 4 + 3] != 0 {
+                left = min(left, x); right = max(right, x)
+                top = min(top, y); bottom = max(bottom, y)
+            }
+        }
+        guard right >= left, bottom >= top else { return image }
+        let bounds = CGRect(x: left, y: top, width: right - left + 1, height: bottom - top + 1)
+        return image.cropping(to: bounds) ?? image
+    }
+
+    static func rgba(_ image: CGImage) -> [UInt8]? {
+        var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let success = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: image.width, height: image.height,
+                bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            return true
+        }
+        return success ? pixels : nil
+    }
 }
 
 #if canImport(UIKit)
