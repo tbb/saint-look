@@ -116,7 +116,7 @@ import Foundation
         precondition(trial.items.count == 6 && trial.outfits.count == 5)
         precondition(trial.items.allSatisfy { $0.hasPreparedVersion && $0.hasFittingGeometry })
         precondition(trial.outfits.prefix(2).allSatisfy { $0.slots.filter { $0.zone == .body && $0.itemID != nil }.count == 2 })
-        precondition(trial.pendingAcknowledgements.isEmpty)
+        precondition(trial.pendingAcknowledgements == [])
         print("PASS: real fitting layers and the explicit long-tee design seed complete local publications")
         var broken = environment
         broken["SAINT_LOOK_VISUAL_SCENARIO"] = "unreadable-catalog"
