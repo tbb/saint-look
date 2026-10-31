@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import sharp from 'sharp';
 import { createIllustrationProvider } from '../src/illustration-provider.mjs';
 import { illustrationFixture } from './providers/illustration.mjs';
-import { registerGarmentLayout, checkGarmentLayout } from '../src/illustration-layout.mjs';
+import { registerGarmentLayout, checkGarmentLayout, layoutGuide } from '../src/illustration-layout.mjs';
 
 async function rectangle(left, top, width, height) {
   return sharp({ create: { width: 1024, height: 1024, channels: 4, background: '#00000000' } })
@@ -85,4 +85,62 @@ test('a regular deep-neck top retains correct shoulders and waist without rescal
   const features = {type:'top', traits:{body_length:'regular'}};
   assert.equal((await checkGarmentLayout(source, features)).valid, true);
   assert.deepEqual(await registerGarmentLayout(source, features), source);
+});
+
+test('real jacket and tee align their shoulders for layering with whole-image translations', async () => {
+  const {readFile} = await import('node:fs/promises');
+  const cases = [
+    ['tee', {type:'t_shirt',traits:{neckline:'round',body_length:'regular'}}],
+    ['jacket', {type:'jacket',traits:{neckline:'collar',body_length:'regular'}}],
+  ];
+  const layers=[];
+  for(const [name,features] of cases){
+    const source=await readFile(new URL(`./fixtures/fitting-shoulder-${name}.png`,import.meta.url));
+    assert.equal((await checkGarmentLayout(source,features)).valid,false,`${name}: containment alone missed shoulder placement`);
+    const registered=await registerGarmentLayout(source,features);
+    assert.equal((await checkGarmentLayout(registered,features)).valid,true);
+    assert.deepEqual(await registerGarmentLayout(registered,features),registered,'Registration must be idempotent');
+    const data=await sharp(registered).ensureAlpha().raw().toBuffer();
+    layers.push(data);
+    const before=await sharp(source).ensureAlpha().raw().toBuffer();
+    const sums=bytes=>{const out=[0,0,0,0];for(let i=0;i<bytes.length;i+=4)for(let c=0;c<4;c++)out[c]+=bytes[i+c];return out};
+    assert.deepEqual(sums(data),sums(before),'A whole-image translation preserves every pixel, including all watermarks');
+  }
+  const first=(data,x)=>{for(let y=0;y<1024;y++)if(data[(y*1024+x)*4+3]>=224)return y;return 1024};
+  for(const [left,right] of [[430,450],[574,594]]) for(let x=left;x<=right;x++) {
+    assert.ok(first(layers[1],x)<=first(layers[0],x),`Outer layer must cover the inner shoulder at x=${x}`);
+  }
+});
+
+test('shoulder alignment also retains regular hems and full-length sleeves', async () => {
+  const {readFile}=await import('node:fs/promises');
+  const polo={type:'polo',traits:{neckline:'collar',body_length:'regular',sleeves:'short'}};
+  const source=await readFile(new URL('./fixtures/fitting-shoulder-polo-raw.png',import.meta.url));
+  const registered=await registerGarmentLayout(source,polo);
+  assert.equal((await checkGarmentLayout(registered,polo)).valid,true);
+  const jacket={type:'jacket',traits:{neckline:'collar',body_length:'regular',sleeves:'long'}};
+  const outer=await registerGarmentLayout(await readFile(new URL('./fixtures/fitting-shoulder-jacket.png',import.meta.url)),jacket);
+  const data=await sharp(outer).ensureAlpha().raw().toBuffer();
+  for(const [left,right] of [[333,420],[604,691]]) {
+    let cuff=-1;
+    for(let y=400;y<650;y++){let count=0;for(let x=left;x<=right;x++)if(data[(y*1024+x)*4+3]>=224)count++;if(count>=5)cuff=y;}
+    assert.ok(cuff>=535,`A declared long sleeve must reach the wrist region; cuff=${cuff}`);
+  }
+});
+
+test('an elongated tee keeps its proportions and remains visible below a regular hoodie', async () => {
+  const {readFile}=await import('node:fs/promises');
+  const longTee=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M480 240 Q512 260 544 240 L594 270 L650 320 L625 360 L585 330 L585 610 H439 V330 L399 360 L374 320 L430 269 Z" fill="#f7f2e0"/></svg>')).png().toBuffer();
+  const features={type:'t_shirt',traits:{body_length:'long',neckline:'round'}};
+  const longGuide=await sharp(await layoutGuide(features)).raw().toBuffer();
+  const regularGuide=await sharp(await layoutGuide({type:'t_shirt',traits:{body_length:'regular'}})).raw().toBuffer();
+  // Generated guide PNGs are RGBA; their lower torso must describe the longer cut.
+  assert.ok(longGuide[(600*1024+512)*4]<240);
+  assert.equal(regularGuide[(600*1024+512)*4],255);
+  assert.equal((await checkGarmentLayout(longTee,features)).valid,true);
+  const registered=await registerGarmentLayout(longTee,features);
+  assert.deepEqual(registered,longTee,'An aligned long design must not be shortened, widened or tucked');
+  const hoodie=await readFile(new URL('../../client-ios/SaintLook/VisualFixtures/fitting-trial-hoodie.png',import.meta.url));
+  const combined=await sharp(registered).composite([{input:hoodie}]).ensureAlpha().raw().toBuffer();
+  assert.deepEqual([...combined.subarray((600*1024+512)*4,(600*1024+512)*4+4)],[247,242,224,255]);
 });

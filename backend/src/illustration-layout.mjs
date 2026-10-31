@@ -44,7 +44,14 @@ export function garmentLayout(features) {
   if (['shirt', 'blouse'].includes(type) && features?.traits?.sleeves === 'short') group = 'shortUpper';
   if (!group) throw new ProviderError('illustration_type_unsupported');
   if (group === 'upper' && features?.traits?.hood === 'yes') group = 'hooded';
-  return { type, group, ...layouts[group] };
+  const layout={ type, group, ...layouts[group] };
+  if(features?.traits?.body_length==='long' && ['shortUpper','sleeveless','upper','hooded'].includes(group)) {
+    // Length is part of the garment design. Extend only the guide's torso;
+    // shoulder/sleeve coordinates still belong to the same wearer.
+    layout.path=layout.path.replace('L220 297 L139 297','L220 340 L139 340');
+    layout.bounds=[...layout.bounds]; layout.bounds[3]=365-layout.bounds[1];
+  }
+  return layout;
 }
 
 const point = ([x, y]) => [Math.round((x + 100) * 1024 / 560), Math.round(y * 1024 / 560)];
@@ -80,12 +87,51 @@ function upperBody(data, width, height, bounds, layout, features) {
   return bottom>top ? { top, bottom } : null;
 }
 
+const minimumHemY=features=>point([180,features?.traits?.body_length==='long' ? 320 : 270])[1];
+
 function upperBodyValid(body, layout, features) {
   if (!['shortUpper', 'sleeveless'].includes(layout.group) || features?.traits?.body_length === 'cropped') return true;
   // Regular tops overlap the waist; explicit cropped garments may expose it.
   return body && body.top <= point([180,155])[1] && body.top >= point([180,120])[1]
-    && body.bottom >= point([180,270])[1]-3;
+    && body.bottom >= minimumHemY(features)-3;
 }
+
+// Compare the two shoulder bands, away from the neckline. All supported
+// templates share these shoulder edges; collar depth is deliberately excluded.
+// Underlayers stay inside that edge; outer layers cover it. This is one vertical
+// translation of the whole image, not a mask or a deformation of the shoulder.
+function shoulderOffset(data, width, layout, features) {
+  const traits=features?.traits;
+  if (!['shortUpper','upper'].includes(layout.group) || !['round','collar'].includes(traits?.neckline)
+    || traits?.body_length==='cropped' || traits?.dropped_shoulders==='yes') return null;
+  const corrections=[];
+  for(const [left,right] of [[430,450],[574,594]]) for(let x=left;x<=right;x++) {
+    let observed=-1;
+    for(let y=0;y<400;y++) {
+      let count=0;
+      for(let dx=-1;dx<=1;dx++) if(data[(y*width+x+dx)*4+3]>=224) count++;
+      if(count>=2) {observed=y;break;}
+    }
+    if(observed<0) return NaN;
+    const localX=x*560/1024-100;
+    const localY=x<512 ? 147-(localX-135)*17/29 : 130+(localX-196)*18/29;
+    corrections.push(Math.floor(localY*1024/560)-observed);
+  }
+  return ['jacket','blazer','cardigan'].includes(layout.type) ? Math.min(...corrections) : Math.max(...corrections);
+}
+
+function cuffExtents(data, width, layout, features) {
+  if(!['upper','hooded'].includes(layout.group) || features?.traits?.sleeves!=='long') return [];
+  return [[333,420],[604,691]].map(([left,right])=>{
+    let bottom=-1;
+    for(let y=400;y<650;y++) {
+      let count=0; for(let x=left;x<=right;x++) if(data[(y*width+x)*4+3]>=224) count++;
+      if(count>=5) bottom=y;
+    }
+    return bottom;
+  });
+}
+const minimumCuffY=point([180,306])[1]-25;
 
 function separatedLegs(data, width, bounds) {
   if (!bounds) return false;
@@ -102,6 +148,29 @@ function separatedLegs(data, width, bounds) {
   });
 }
 
+async function transformCanvas(bytes,size,offsetX,offsetY) {
+  const left=Math.max(0,offsetX), top=Math.max(0,offsetY);
+  const sourceLeft=Math.max(0,-offsetX), sourceTop=Math.max(0,-offsetY);
+  const width=Math.min(size-sourceLeft,1024-left), height=Math.min(size-sourceTop,1024-top);
+  if(width<=0 || height<=0) throw new ProviderError('illustration_geometry_invalid');
+  const resized=size===1024 ? bytes : await sharp(bytes).resize(size,size).png().toBuffer();
+  const pixels=await sharp(resized).ensureAlpha().raw().toBuffer();
+  if (sourceLeft || sourceTop || width<size || height<size) {
+    for(let y=0;y<size;y++) for(let x=0;x<size;x++) {
+      if((x<sourceLeft || x>=sourceLeft+width || y<sourceTop || y>=sourceTop+height)
+        && pixels[(y*size+x)*4+3]!==0) throw new ProviderError('illustration_geometry_invalid');
+    }
+  }
+  // Copy RGBA rows directly. Compositing a translucent pixel onto transparent
+  // black can round its RGB values; a pure translation must preserve them.
+  const canvas=Buffer.alloc(1024*1024*4);
+  for(let y=0;y<height;y++) {
+    const begin=((sourceTop+y)*size+sourceLeft)*4;
+    pixels.copy(canvas,((top+y)*1024+left)*4,begin,begin+width*4);
+  }
+  return sharp(canvas,{raw:{width:1024,height:1024,channels:4}}).png().toBuffer();
+}
+
 export async function registerGarmentLayout(bytes, features) {
   const layout=garmentLayout(features);
   const {data,info}=await sharp(bytes).ensureAlpha().raw().toBuffer({resolveWithObject:true});
@@ -110,36 +179,55 @@ export async function registerGarmentLayout(bytes, features) {
   if(!source || source.width<8 || source.height<8 || (layout.legs && !separatedLegs(data,info.width,source))) {
     throw new ProviderError('illustration_geometry_invalid');
   }
-  if((await checkGarmentLayout(bytes,features)).valid) return bytes;
+  const existing=await checkGarmentLayout(bytes,features);
+  if(existing.valid) return bytes;
+  const shift=shoulderOffset(data,info.width,layout,features);
+  if(existing.baseValid && Number.isFinite(shift) && Math.abs(shift)<=24) {
+    const translated=await transformCanvas(bytes,1024,0,shift);
+    if((await checkGarmentLayout(translated,features)).valid) return translated;
+  }
   const guide=await sharp(Buffer.from(guideSVG(features,false))).ensureAlpha().raw().toBuffer({resolveWithObject:true});
   const target=inkBounds(guide.data,guide.info.width,guide.info.height);
   const body=upperBody(data,info.width,info.height,source,layout,features);
-  const neckY=point([180,132])[1], hemY=point([180,270])[1];
+  const neckY=point([180,132])[1], hemY=minimumHemY(features);
   const minimumBodyScale=body ? (hemY-neckY)/(body.bottom-body.top) : 0;
   const scale=layout.legs ? target.height/source.height : Math.max(minimumBodyScale,Math.min(target.width/source.width,target.height/source.height));
   // One global similarity transform, never independent x/y stretch or per-leg warp.
-  const size=Math.round(1024*scale);
+  let size=Math.round(1024*scale);
   if(size<64 || size>2048) throw new ProviderError('illustration_geometry_invalid');
   const actualScale=size/1024;
-  const offsetX=Math.round(target.left+target.width/2-(source.left+source.width/2)*actualScale);
-  const offsetY=Math.round(body ? neckY-body.top*actualScale : target.top-source.top*actualScale);
-  const left=Math.max(0,offsetX), top=Math.max(0,offsetY);
-  const sourceLeft=Math.max(0,-offsetX), sourceTop=Math.max(0,-offsetY);
-  const width=Math.min(size-sourceLeft,1024-left), height=Math.min(size-sourceTop,1024-top);
-  if(width<=0 || height<=0) throw new ProviderError('illustration_geometry_invalid');
-  const resized=await sharp(bytes).resize(size,size).png().toBuffer();
-  if (sourceLeft || sourceTop || width<size || height<size) {
-    const pixels=await sharp(resized).ensureAlpha().raw().toBuffer();
-    for(let y=0;y<size;y++) for(let x=0;x<size;x++) {
-      if((x<sourceLeft || x>=sourceLeft+width || y<sourceTop || y>=sourceTop+height)
-        && pixels[(y*size+x)*4+3]!==0) throw new ProviderError('illustration_geometry_invalid');
+  let offsetX=Math.round(target.left+target.width/2-(source.left+source.width/2)*actualScale);
+  let offsetY=Math.round(body ? neckY-body.top*actualScale : target.top-source.top*actualScale);
+  // Shoulder alignment can expose a previously hidden short hem/cuff. Resolve
+  // those coupled extents with bounded uniform fits, always resampling the original.
+  // These are local image operations, never additional provider requests.
+  const pivotY=point([180,147])[1];
+  for(let attempt=0;attempt<4;attempt++) {
+    if(size<64 || size>2048) break;
+    let result=await transformCanvas(bytes,size,offsetX,offsetY);
+    let pixels=await sharp(result).ensureAlpha().raw().toBuffer();
+    const adjustment=shoulderOffset(pixels,1024,layout,features);
+    if(adjustment!==null) {
+      if(!Number.isFinite(adjustment) || Math.abs(adjustment)>24) break;
+      if(Math.abs(adjustment)>1) {
+        offsetY+=adjustment;
+        result=await transformCanvas(result,1024,0,adjustment);
+        pixels=await sharp(result).ensureAlpha().raw().toBuffer();
+      }
     }
+    if((await checkGarmentLayout(result,features)).valid) return result;
+    const measuredBody=upperBody(pixels,1024,1024,inkBounds(pixels,1024,1024),layout,features);
+    const extents=[...cuffExtents(pixels,1024,layout,features).map(observed=>[observed,minimumCuffY]),
+      ...(measuredBody ? [[measuredBody.bottom,hemY]] : [])];
+    if(extents.some(([observed])=>observed<=pivotY)) break;
+    const required=Math.max(1,...extents.map(([observed,wanted])=>(wanted-pivotY)/(observed-pivotY)));
+    if(required<=1 || required>1.35) break;
+    const nextSize=Math.ceil(size*(required+0.005)), factor=nextSize/size;
+    offsetX=Math.round(512-(512-offsetX)*factor);
+    offsetY=Math.round(pivotY-(pivotY-offsetY)*factor);
+    size=nextSize;
   }
-  const transformed=await sharp(resized).extract({left:sourceLeft,top:sourceTop,width,height}).png().toBuffer();
-  const result=await sharp({create:{width:1024,height:1024,channels:4,background:'#00000000'}})
-    .composite([{input:transformed,left,top}]).png().toBuffer();
-  if(!(await checkGarmentLayout(result,features)).valid) throw new ProviderError('illustration_geometry_invalid');
-  return result;
+  throw new ProviderError('illustration_geometry_invalid');
 }
 
 export function layoutInstructions(features) {
@@ -147,8 +235,8 @@ export function layoutInstructions(features) {
   const anchors = Object.fromEntries(Object.entries(layout.anchors).map(([name, value]) => [name, point(value)]));
   const [x,y,w,h] = layout.bounds, [left,top] = point([x,y]), [right,bottom] = point([x+w,y+h]);
   const torsoRule = ['shortUpper', 'sleeveless', 'upper', 'hooded'].includes(layout.group)
-    ? ` Fit the torso to the SAME wearer: the neckline is near (512,241), shoulders near (430,269) and (594,269), waist y=483. ${features?.traits?.body_length === 'cropped' ? 'This is deliberately cropped: preserve its short hem.' : 'The torso hem must overlap the waist, normally y=510 to 545; do not make a regular top look cropped.'} Sleeves follow the template arm directions, not a flat-lay T pose. ${layout.group === 'hooded' ? 'The hood is behind the neckline; its crown may extend up to y=172, while the shoulder seams remain at y=269. Do not align the hood crown to the neckline or add a head inside it.' : ''}` : '';
-  return `Edit the LAST image: it is the placement template for a ${layout.type}, on an EXACT 1024 by 1024 canvas. Replace ONLY its grey garment placeholder with a faithful editorial illustration of the referenced garment. Keep the template's small size, position and front-facing pose inside the full canvas. Most of the canvas MUST remain plain white. DO NOT zoom, crop, enlarge to fill the square, copy the photo's pose, or draw any human/mannequin body. Coordinates in output pixels, origin top-left: anchors ${JSON.stringify(anchors)}; garment must remain within [left=${left}, top=${top}, right=${right}, bottom=${bottom}]. The anchors describe the same invisible mannequin for every item.${torsoRule} Preserve the garment DESIGN: construction, colours, actual sleeve and body length, and print placement. Reconstruct its unfolded front as if worn by this invisible mannequin. Incidental wrinkles, crumpling, folded sleeve openings, tilted collars, uneven hems and camera perspective in the source are NOT design features: straighten them. Shoulders must be level and symmetrical, neckline centred, torso vertical, and both sleeves unfolded along the template arms. Use restrained flat editorial shading; do not trace or emphasize the source photo's random folds. The grey template defines the wearer pose, not a replacement garment design. White outside the item, inside necklines/openings and between separated limbs; no body, head, skin, stand, extra clothing, labels, guide lines or cast shadow.${layout.legs ? ' TROUSERS: front waistband horizontal at the two waist anchors, crotch centred at the crotch anchor, two distinct uncrossed untwisted leg tubes towards the left and right ankle anchors. Straighten the pose even if the source is twisted or folded. Preserve front pockets and seams on their correct sides. Do not draw the torso above the waistband, shoes below the hems, or join/cross the two legs.' : ''}`;
+    ? ` Fit the torso to the SAME wearer: the neckline is near (512,241), shoulders near (430,269) and (594,269), waist y=483. ${features?.traits?.body_length === 'cropped' ? 'This is deliberately cropped: preserve its short hem.' : features?.traits?.body_length === 'long' ? 'This is an elongated torso: preserve its extra length and torso-to-sleeve proportions, with the hem around y=585 to 625. It may extend below an ordinary hoodie or jacket; do not shorten or tuck it to match another layer.' : ['jacket','blazer','cardigan'].includes(layout.type) ? 'Preserve its torso-to-sleeve proportions and jacket length; a hip-length hem may reach y=540 to 590.' : 'The torso hem must overlap the waist, normally y=510 to 545; do not make a regular top look cropped.'} Sleeves follow the template arm directions, not a flat-lay T pose. ${features?.traits?.sleeves === 'long' ? 'Long sleeves reach the wrist anchors near y=560; unfold the source arm pose instead of turning them into short or three-quarter sleeves.' : ''} ${layout.group === 'hooded' ? 'The hood is behind the neckline; its crown may extend up to y=172, while the shoulder seams remain at y=269. Do not align the hood crown to the neckline or add a head inside it.' : ''}` : '';
+  return `Edit the LAST image: it is the placement template for a ${layout.type}, on an EXACT 1024 by 1024 canvas. Replace ONLY its grey garment placeholder with a faithful editorial illustration of the referenced garment. Keep the template's small size, position and front-facing pose inside the full canvas. Most of the canvas MUST remain plain white. DO NOT zoom, crop, enlarge to fill the square, copy the photo's pose, or draw any human/mannequin body. Coordinates in output pixels, origin top-left: anchors ${JSON.stringify(anchors)}; garment must remain within [left=${left}, top=${top}, right=${right}, bottom=${bottom}]. The anchors describe the same invisible mannequin for every item.${torsoRule} Preserve the garment DESIGN: construction, colours, actual sleeve and body length, and print placement. Reconstruct its unfolded front as if worn by this invisible mannequin. Incidental wrinkles, crumpling, folded sleeve openings, tilted collars, camera perspective and hems made uneven only by folds are NOT design features: straighten them. Preserve intentional asymmetric construction and designed hem shapes. Shoulders must be level and symmetrical, neckline centred, torso vertical, and both sleeves unfolded along the template arms. Use restrained flat editorial shading; do not trace or emphasize the source photo's random folds. The grey template defines the wearer pose, not a replacement garment design. White outside the item, inside necklines/openings and between separated limbs; no body, head, skin, stand, extra clothing, labels, guide lines or cast shadow.${layout.legs ? ' TROUSERS: front waistband horizontal at the two waist anchors, crotch centred at the crotch anchor, two distinct uncrossed untwisted leg tubes towards the left and right ankle anchors. Straighten the pose even if the source is twisted or folded. Preserve front pockets and seams on their correct sides. Do not draw the torso above the waistband, shoes below the hems, or join/cross the two legs.' : ''}`;
 }
 
 export async function checkGarmentLayout(bytes, features) {
@@ -173,6 +261,10 @@ export async function checkGarmentLayout(bytes, features) {
   const body=upperBody(data,info.width,info.height,ink,layout,features);
   const anchorsValid = upperBodyValid(body,layout,features) && (!layout.legs || (ink && Math.abs(ink.top-point(layout.anchors.leftWaist)[1])<=24
     && Math.abs(ink.top+ink.height-1-point(layout.anchors.leftAnkle)[1])<=28));
-  return { valid: solid > 256 && outsideFraction <= 0.04 && coverage >= 0.08 && legsValid && anchorsValid,
+  const baseValid=solid > 256 && outsideFraction <= 0.04 && coverage >= 0.08 && legsValid && anchorsValid;
+  const shift=shoulderOffset(data,info.width,layout,features);
+  const shouldersValid=shift===null || (Number.isFinite(shift) && Math.abs(shift)<=1);
+  const cuffsValid=cuffExtents(data,info.width,layout,features).every(y=>y>=minimumCuffY);
+  return { valid: baseValid && shouldersValid && cuffsValid, baseValid, shouldersValid, cuffsValid,
     outsideFraction, coverage, legsValid, anchorsValid, bounds: { left,top,right,bottom } };
 }

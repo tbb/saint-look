@@ -22,7 +22,7 @@ Only the explicit DEBUG `fitting-ready` scenario seeds these four items and the 
 
 ## Real generation regression examples (#99)
 
-`fitting-trial-{tee,jeans,hoodie,polo}.png` are real Gemini image outputs, segmented with Photoroom sandbox and placed on the shared mannequin canvas. Watermarks remain intact. Generated 31 October 2026: tee uses the second prompt revision; other items use the first. These are UI render fixtures, with explicitly controlled representations (`visual-fixture-only`), not proof of learned recommendation quality. No provider is called when the DEBUG-only `fitting-trial-ready` scenario loads. They are excluded from Release.
+`fitting-trial-{tee,jeans,hoodie,polo,jacket}.png` are real Gemini image outputs, segmented with Photoroom sandbox and placed on the shared mannequin canvas. Watermarks remain intact. Generated 31 October 2026: tee uses the second prompt revision; other items use the first. These are UI render fixtures, with explicitly controlled representations (`visual-fixture-only`), not proof of learned recommendation quality. No provider is called when the DEBUG-only `fitting-trial-ready` scenario loads. They are excluded from Release.
 
 Sources and derivative licenses:
 
@@ -32,3 +32,7 @@ Sources and derivative licenses:
 - Hoodie: [Celine Hoodie](https://commons.wikimedia.org/wiki/File:Celine_Hoodie.jpg), 킥스타일, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). Source normalized to PNG, then illustrated and aligned; not an endorsement by the photographer or brand.
 
 All transformations preserve the garment's identifying details as far as the observed generated result permits; semantic fidelity is assessed visually, not asserted by the geometry test.
+
+- Jacket: [Worn Tender Co. denim jacket](https://commons.wikimedia.org/wiki/File:Worn_Tender_Co._denim_jacket.jpg), Dma132, [CC0](https://creativecommons.org/publicdomain/zero/1.0/). Same original as `scripts/fitting/fixtures/open-denim-jacket.jpg`; generated 31 October 2026, then aligned with the shared shoulders and wrist region.
+
+`fitting-trial-longtee.{svg,png}` is an original deterministic drawing of an elongated tee, not a generated public photograph. Its hem deliberately extends below the real hoodie in the layered UI scenario. It verifies that rendering preserves the design's proportions and exposed hem; it is not evidence of provider classification quality.

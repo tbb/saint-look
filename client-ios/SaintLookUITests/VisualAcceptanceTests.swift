@@ -23,14 +23,23 @@ final class VisualAcceptanceTests: XCTestCase {
         try capture("real-fit-01-catalog")
         try selectTab("Луки", in: app)
         try capture("real-fit-02-outfits")
-        let card = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-'")).firstMatch
+        let card = app.buttons["outfit-card-36000004-0000-0000-0000-000000000004"]
         try require(card.waitForExistence(timeout: 5))
         try tap(card, in: app)
         try waitVisible(app.buttons["edit-outfit"], in: app)
+        try reveal(try canvas(in: app), in: app, towardTop: true)
         try capture("real-fit-03-detail")
         try nativeTap(app.buttons["edit-outfit"], in: app)
         try waitVisible(app.buttons["cancel-outfit"], in: app)
+        try reveal(try canvas(in: app), in: app, towardTop: true)
         try capture("real-fit-04-editor")
+        try nativeTap(app.buttons["cancel-outfit"], in: app)
+        try expectGone(app.buttons["cancel-outfit"], "Editor must dismiss before selecting the long tee")
+        try back(app, to: "Луки")
+        try tap(app.buttons["outfit-card-36000004-0000-0000-0000-000000000005"], in: app)
+        try waitVisible(app.buttons["edit-outfit"], in: app)
+        try reveal(try canvas(in: app), in: app, towardTop: true)
+        try capture("real-fit-05-long-tee-below-hoodie")
         try requireEqual(try await illustrationCounts(), before, "Viewing saved real outputs must not generate again")
     }
 
@@ -176,8 +185,12 @@ final class VisualAcceptanceTests: XCTestCase {
     private func openItem(_ index: Int, in app: XCUIApplication) throws {
         let item = card(index, in: app)
         try reveal(item, in: app, towardTop: index == 0)
+        let type = item.staticTexts.matching(identifier: "item-type").firstMatch
+        let title = type.exists ? type.label : "Вещь"
         try nativeTap(item, in: app)
-        try waitVisible(app.buttons["item-actions"], in: app)
+        // Detail readiness is navigation, not the transient AX hit state of a
+        // toolbar wrapper. Actual menu taps still require a hittable control.
+        try waitNavigation(title, in: app)
     }
 
     @MainActor
@@ -473,15 +486,17 @@ final class VisualAcceptanceTests: XCTestCase {
         })
     }
 
+    @MainActor
+    private func canvas(in app: XCUIApplication) throws -> XCUIElement {
+        // A sheet retains the detail canvas in accessibility, and global query order
+        // does not identify the foreground. Use the same content surface as reveal.
+        let surface = try scrollSurface(in: app, bar: navigationBar(app))
+        return try XCTUnwrap(surface.otherElements.matching(identifier: "fitting-canvas").allElementsBoundByIndex.first)
+    }
+
     /// Drawn fixtures verify native compositing and local behavior, not provider quality.
     @MainActor
     func testPreparedFittingLayersAndFallbackStayLocal() async throws {
-        func canvas(in app: XCUIApplication) throws -> XCUIElement {
-            // A sheet retains the detail canvas in accessibility, and global query order
-            // does not identify the foreground. Use the same content surface as reveal.
-            let surface = try scrollSurface(in: app, bar: navigationBar(app))
-            return try XCTUnwrap(surface.otherElements.matching(identifier: "fitting-canvas").allElementsBoundByIndex.first)
-        }
         let before = try await activityCounts()
         let illustrationsBefore = try await illustrationCounts()
         let app = try launch("fitting-ready")

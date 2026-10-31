@@ -40,23 +40,33 @@
     "representationFilename": "public-representation-shoes.json"
   },
   "trial-tee": {
-    "imageSHA256": "6ac14d7e6690609355a9912bfa0862d7b74a1d8d753e8e64e6e87f16f8c449f5",
-    "representationSHA256": "2cc331e16261992318bfc70e3dd725d70eaf25921268991946ac055c85781cf5",
+    "imageSHA256": "7cd6b2230e37001099325966b56676ebdae23e1a2551b1f6bd0da8d1742a10c7",
+    "representationSHA256": "2f21c4c73bfefe4bf8f672f6221dea4fcb9f6d262a46d4c252dff125edae355b",
     "representationFilename": "representation-trial-tee.json"
   },
   "trial-jeans": {
-    "imageSHA256": "b06f3461f598a1425dafc5dffb2a83b5a0ef01fba74b6aaf25ed2a038c3e9c2b",
-    "representationSHA256": "f376ca3d8c7d2478d124667abb5c540c0227567a8068e43c526191c569c2bd20",
+    "imageSHA256": "51dc5b788883ebd38c94c20b984a7ed1907a25ad3ac7a2b12557b4050adfb5c2",
+    "representationSHA256": "68492b7ab85f873ab5ea767e855d90ae4e387a33f59d041377646c29160302c1",
     "representationFilename": "representation-trial-jeans.json"
   },
   "trial-hoodie": {
-    "imageSHA256": "7d57d95eb38e99029e18ecedc31c461fa7c2c138cb85c444e2d322c54411417c",
-    "representationSHA256": "d63b667e3faefde159b837d6db81ef1b310af7640cf8aa9c17e78c9b02f8e683",
+    "imageSHA256": "3e50b54bfc00a48188da4e434dacc2c499563bf2b38b1d03476ae157a82e7ac9",
+    "representationSHA256": "5af837e87c39df23eabb05fd0ebb5ae99bc8ef38b6ec206fa16a8eb1afff0daf",
     "representationFilename": "representation-trial-hoodie.json"
   },
   "trial-polo": {
-    "imageSHA256": "f597c085d5315599f633c0bd23141d3cb5d57b6cc171b956a586320320c86805",
-    "representationSHA256": "43b4f23fe97b218222da2f2e10c9fcb2c89449f2702a8f4e8af314b3f5ec743d",
+    "imageSHA256": "3cf54734827cbf3555476f32038c34341abfc65014300a9b0fa3dfc82f12a03e",
+    "representationSHA256": "70c16268079d2af99296ec311d2a62579f47a07a6a6f409bf324f8a0d2023259",
     "representationFilename": "representation-trial-polo.json"
+  },
+  "trial-jacket": {
+    "imageSHA256": "64a17a80a51cbc7607f6830e4445d5e6a51d33caf56361d1af7d7ba574f6eba5",
+    "representationSHA256": "c146e476179cc635c804787db5f62b3da1b9af4c336811eceac34ad798a71b32",
+    "representationFilename": "representation-trial-jacket.json"
+  },
+  "trial-longtee": {
+    "imageSHA256": "4c3590dd1a9366523012843e478821f686b3666813b487314207cd7184526fab",
+    "representationSHA256": "bc5874b28b9f612650709b533ce3f49a8bd24e1439eb99777a9bdf4fda878c01",
+    "representationFilename": "representation-trial-longtee.json"
   }
 }

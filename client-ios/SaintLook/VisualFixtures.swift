@@ -314,7 +314,8 @@ enum VisualFixtures {
         let metadata = try JSONDecoder().decode([String: Metadata].self,
             from: Data(contentsOf: fixtures.appendingPathComponent("prepared-manifest.json")))
         let inputs = trial ? [("trial-tee", "t_shirt", "white"), ("trial-jeans", "trousers", "black"),
-                              ("trial-hoodie", "hoodie", "beige"), ("trial-polo", "polo", "white")]
+                              ("trial-hoodie", "hoodie", "beige"), ("trial-polo", "polo", "white"),
+                              ("trial-jacket", "jacket", "blue"), ("trial-longtee", "t_shirt", "beige")]
             : [("tee", "t_shirt", "beige"), ("jeans", "jeans", "blue"),
                       ("jacket", "jacket", "burgundy"), ("shoes", "shoes", "black")]
         var items: [WardrobeItem] = []
@@ -341,8 +342,10 @@ enum VisualFixtures {
             let keys = ["silhouette", "body_length", "sleeves", "pattern", "pattern_location", "pattern_size",
                         "neckline", "fastening", "surface", "hood", "kangaroo_pocket", "patch_pockets",
                         "dropped_shoulders", "contrast_cuffs", "lettering"]
+            var traits = Dictionary(uniqueKeysWithValues: keys.map { ($0, "unknown") })
+            if input.0 == "trial-longtee" { traits["body_length"] = "long" }
             let features = IllustrationFeatures(version: "fitting-observable-v2-photoroom-sandbox", type: type,
-                colors: [color], traits: Dictionary(uniqueKeysWithValues: keys.map { ($0, "unknown") }))
+                colors: [color], traits: traits)
             let response = IllustrationResponse(itemId: item.id, operationId: operation,
                 photoVersionId: item.photoVersionID, sourceSetVersionId: item.sourceSetVersionID,
                 revision: 1, status: .ready, mode: "test", processing: [:], observedFeatures: features,
@@ -386,12 +389,23 @@ enum VisualFixtures {
             items.append(item)
         }
         if trial {
-            let outfits = [0, 2, 3].enumerated().map { offset, top in
+            var outfits = [0, 2, 3].enumerated().map { offset, top in
                 var outfit = Outfit(id: UUID(uuidString: String(format: "36000004-0000-0000-0000-%012d", offset + 1))!, name: "Посадка · \(items[top].type!)")
                 outfit.selectItem(items[top].id, for: outfit.slots[1].id)
                 outfit.selectItem(items[1].id, for: outfit.slots[2].id)
                 return outfit
             }
+            var jacket = Outfit(id: UUID(uuidString: "36000004-0000-0000-0000-000000000004")!, name: "Футболка и куртка")
+            jacket.selectItem(items[0].id, for: jacket.slots[1].id)
+            jacket.selectItem(items[1].id, for: jacket.slots[2].id)
+            let jacketLayer = jacket.addBodyLayer()
+            jacket.selectItem(items[4].id, for: jacketLayer)
+            var longTee = Outfit(id: UUID(uuidString: "36000004-0000-0000-0000-000000000005")!, name: "Длинная футболка под худи")
+            longTee.selectItem(items[5].id, for: longTee.slots[1].id)
+            longTee.selectItem(items[1].id, for: longTee.slots[2].id)
+            let hoodieLayer = longTee.addBodyLayer()
+            longTee.selectItem(items[2].id, for: hoodieLayer)
+            outfits.insert(contentsOf: [jacket, longTee], at: 0)
             try WardrobeCatalogFile(directory: root).save(WardrobeCatalog(items: items, pendingAcknowledgements: [], outfits: outfits))
             return
         }
