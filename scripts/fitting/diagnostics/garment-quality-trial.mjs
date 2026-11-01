@@ -47,16 +47,17 @@ try{
  const features=input.features||await call('attributes',()=>provider.attributes(photos,new AbortController().signal));
  const proportions=await measureTopProportions(prepared,features);state.proportions=proportions;
  state.features=features;save();console.log(JSON.stringify({stage:'features',type:features.type,traits:features.traits}));
- for(const variant of ['source-edit']){
+ for(const variant of (process.env.TRIAL_ITEM==='hoodie'?['sleeve-guide','pose-last']:['source-edit'])){
   let generated;
   if(variant==='baseline')generated=(await call(variant+'-generation',()=>baseline.generate(photos,features,new AbortController().signal,id=>{state.baselineReceipt=id;save();}))).png;
   else{
    const edit=garmentEditInstructions(features,proportions);
    const payload={model:'gemini-3-pro-image',store:true,generation_config:{max_output_tokens:2048},
-    input:[{type:'image',mime_type:'image/png',data:(await generationPoseGuide(features)).toString('base64')},
+    input:[...(variant!=='pose-last'?[{type:'image',mime_type:'image/png',data:(await generationPoseGuide(features)).toString('base64')}]:[]),
       {type:'image',mime_type:'image/png',data:png.toString('base64')},
       {type:'image',mime_type:'image/png',data:prepared.toString('base64')},
-      {type:'text',text:edit}],
+      ...(variant==='pose-last'?[{type:'image',mime_type:'image/png',data:(await generationPoseGuide(features)).toString('base64')}]:[]),
+      {type:'text',text:variant==='pose-last'?edit.replace('Edit the LAST image','Edit the supplied garment photograph').replace('The first guide','The LAST guide')+' The last guide gives ONLY the new sleeve pose; keep the photographed body and all its graphics faithful.':edit}],
     response_format:{type:'image',mime_type:'image/jpeg',aspect_ratio:'1:1',image_size:'1K'}};
    const result=await call(variant+'-generation',async()=>JSON.parse(await exchange('https://generativelanguage.googleapis.com/v1beta/interactions',
     {method:'POST',headers:{'x-goog-api-key':process.env.GEMINI_API_KEY,'Content-Type':'application/json'},body:JSON.stringify(payload)},new AbortController().signal,120000,14*1024*1024)));

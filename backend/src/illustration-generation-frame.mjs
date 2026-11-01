@@ -24,8 +24,14 @@ export async function generationPoseGuide(features) {
     : [['leftWaist','rightWaist'],['crotch','leftAnkle'],['crotch','rightAnkle']];
   const lines=edges.filter(([a,b])=>anchors[a]&&anchors[b]).map(([a,b])=>
     '<line x1="'+anchors[a][0]+'" y1="'+anchors[a][1]+'" x2="'+anchors[b][0]+'" y2="'+anchors[b][1]+'" stroke="#88abc4" stroke-width="4"/>').join('');
+  const frame=generationFrame(features);
+  const map=([x,y])=>[((x+100)*1024/560-frame.left)*1024/frame.side,(y*1024/560-frame.top)*1024/frame.side];
+  const armPaths=['upper','hooded','full'].includes(group) ? [
+    [[135,147],[116,181],[94,300],[113,307],[143,206]],
+    [[225,148],[245,181],[264,300],[247,307],[216,206]],
+  ].map(points=>'<polygon points="'+points.map(p=>map(p).join(',')).join(' ')+'" fill="#d5d5d5" stroke="#527f9e" stroke-width="3"/>').join('') : '';
   const dots=Object.values(anchors).map(([x,y])=>'<circle cx="'+x+'" cy="'+y+'" r="7" fill="#527f9e"/>').join('');
-  return sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="1024" height="1024" fill="white"/>'+lines+dots+'</svg>')).png().toBuffer();
+  return sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="1024" height="1024" fill="white"/>'+armPaths+lines+dots+'</svg>')).png().toBuffer();
 }
 export function generationInstructions(features) {
   const {type,group}=garmentLayout(features);
