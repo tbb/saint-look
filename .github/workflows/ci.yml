@@ -21,7 +21,7 @@ on:
         description: Local Simulator suite
         type: choice
         default: all
-        options: [all, wardrobe, outfits, outfits-max-text, outfits-launch-pair, wardrobe-expired-retry, visual, camera, wardrobe-recovery, native-menus, benchmark]
+        options: [all, wardrobe, outfits, outfits-max-text, outfits-launch-pair, wardrobe-expired-retry, visual, camera, wardrobe-recovery, native-menus, benchmark, photoroom-account]
       visual_profiles:
         description: Visual evidence profiles (only used by the visual suite)
         type: choice
@@ -72,10 +72,31 @@ jobs:
                     for suite in suites for profile in (profiles if suite == 'visual' else [''])]
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               for name, prefix in [('backend', 'backend/'), ('ios', 'client-ios/')]:
-                  needed = common or any(p.startswith(prefix) for p in paths)
+                  needed = selected_suite != 'photoroom-account' and (common or any(p.startswith(prefix) for p in paths))
                   output.write(f'{name}={str(needed).lower()}\n')
               output.write(f'ios_matrix={json.dumps({"include": matrix})}\n')
           PY
+
+  photoroom-account:
+    if: >-
+      (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') &&
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/photoroom-account-check' &&
+      inputs.ios_suite == 'photoroom-account'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Read production account quota without processing photos
+        env:
+          SAINT_LOOK_PHOTOROOM_MODE: production
+          PHOTOROOM_PRODUCTION_APPROVED: 'true'
+          PHOTOROOM_API_KEY: ${{ secrets.PHOTOROOM_API_KEY }}
+        run: node scripts/deploy/photoroom-account.mjs
 
   backend:
     if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.backend == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.ios_suite == 'benchmark')
