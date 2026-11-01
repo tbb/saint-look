@@ -9,7 +9,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: garment-quality-diagnostic
+  group: garment-quality-${{ inputs.item || 'tee' }}
   cancel-in-progress: false
 jobs:
   compare:
