@@ -172,13 +172,25 @@ final class WardrobeFlowTests: XCTestCase {
             XCTAssertTrue(region.exists, "The source chooser must offer native cancellation")
             let popover = app.popovers.firstMatch
             XCTAssertTrue(popover.exists)
-            let frame = region.frame
+            let appFrame = app.frame
+            let frame = region.frame.intersection(appFrame)
+            let popoverFrame = popover.frame
+            // PopoverDismissRegion spans the window, including native chrome
+            // that can pass touches through instead of dismissing the popover.
+            let chrome = app.navigationBars.allElementsBoundByIndex
+                + app.tabBars.allElementsBoundByIndex + app.keyboards.allElementsBoundByIndex
+            let excludedFrames = chrome.filter { $0.exists }.map { $0.frame.insetBy(dx: -8, dy: -8) }
             let candidates = [CGPoint(x: frame.midX, y: frame.maxY - 80),
                               CGPoint(x: frame.minX + 20, y: frame.midY),
                               CGPoint(x: frame.maxX - 20, y: frame.midY),
                               CGPoint(x: frame.midX, y: frame.minY + 80)]
-            let point = try XCTUnwrap(candidates.first { !popover.frame.contains($0) },
-                                     "A dismiss point must lie outside the actual popover")
+            let point = try XCTUnwrap(candidates.first { point in
+                frame.contains(point) && !popoverFrame.insetBy(dx: -8, dy: -8).contains(point)
+                    && !excludedFrames.contains(where: { $0.contains(point) })
+            }, "A dismiss point must lie inside the native region, outside the popover and native chrome")
+            let geometry = XCTAttachment(string: "region=\(frame), popover=\(popoverFrame), excluded=\(excludedFrames), point=\(point)")
+            geometry.name = "photo-source-dismiss-geometry"
+            add(geometry)
             region.coordinate(withNormalizedOffset: .zero)
                 .withOffset(CGVector(dx: point.x - frame.minX, dy: point.y - frame.minY)).tap()
         }
