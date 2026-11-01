@@ -1,0 +1,94 @@
+name: Backend checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'shared/**'
+      - 'docs/api/**'
+      - 'scripts/deploy/**'
+      - 'scripts/ci/**'
+      - 'client-ios/scripts/tests/test-ui-watchdog.py'
+      - 'client-ios/scripts/ui-watchdog.py'
+      - '.github/workflows/backend-ci.yml'
+      - '.github/workflows/deploy.yml'
+      - '.github/workflows/live-trial.yml'
+      - 'docs/deployment.md'
+      - 'fly.toml'
+      - '.dockerignore'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'shared/**'
+      - 'docs/api/**'
+      - 'scripts/deploy/**'
+      - 'scripts/ci/**'
+      - 'client-ios/scripts/tests/test-ui-watchdog.py'
+      - 'client-ios/scripts/ui-watchdog.py'
+      - '.github/workflows/backend-ci.yml'
+      - '.github/workflows/deploy.yml'
+      - '.github/workflows/live-trial.yml'
+      - 'docs/deployment.md'
+      - 'fly.toml'
+      - '.dockerignore'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm --prefix backend ci --ignore-scripts
+      - run: npm --prefix backend run check
+      - run: npm --prefix backend test
+      - run: PYTHONPATH=backend/ml python3 -m unittest backend/ml/test_contract.py
+
+  deploy-policy:
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test scripts/deploy/*.test.mjs
+      - run: python3 scripts/ci/test-ios-matrix.py
+      - run: python3 client-ios/scripts/tests/test-ui-watchdog.py
+
+  container:
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build the checked source and verify persistent storage
+        run: |
+          revision="$(git rev-parse HEAD)"
+          printf '%s\n' "$revision" > backend/REVISION
+          docker build -f backend/Dockerfile -t saint-look-ci .
+          node backend/test/container-smoke.mjs saint-look-ci "$revision"

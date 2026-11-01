@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       revision:
-        description: 'Full 40-character SHA with successful main CI'
+        description: 'Full 40-character main SHA with successful backend CI'
         required: true
         type: string
       operation:
@@ -54,7 +54,7 @@ jobs:
           const u = new URL(e.DEV_URL);
           if (u.protocol !== 'https:' || u.username || u.password || u.pathname !== '/' || u.search || u.hash) throw new Error('Configure an HTTPS dev origin.');
           JS
-      - name: Verify exact main CI and prepare source
+      - name: Verify exact backend CI and prepare source
         id: release
         env:
           GH_TOKEN: ${{ github.token }}

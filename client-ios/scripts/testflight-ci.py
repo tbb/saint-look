@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Require the same complete main CI used for the live backend release."""
+"""Require complete native acceptance for the exact main revision."""
 import json
 import os
 import re
 import subprocess
 import sys
 
-REQUIRED = {'changes', 'backend', 'container', 'deploy-policy', 'ios', 'ios-outfits',
+REQUIRED = {'changes', 'ios-acceptance', 'ios-wardrobe-1', 'ios-wardrobe-2',
+            'ios-outfits-1', 'ios-outfits-2', 'ios-outfits-max-text',
             'ios-visual-iphone-light', 'ios-visual-iphone-dark',
             'ios-visual-iphone-max-text', 'ios-visual-ipad-light'}
 
@@ -14,7 +15,7 @@ REQUIRED = {'changes', 'backend', 'container', 'deploy-policy', 'ios', 'ios-outf
 def checked_run(runs, sha, repository):
     for run in runs:
         if (run.get('head_sha') == sha and run.get('head_branch') == 'main'
-                and run.get('event') == 'push' and run.get('status') == 'completed'
+                and run.get('event') in ('push', 'workflow_dispatch') and run.get('status') == 'completed'
                 and run.get('conclusion') == 'success' and run.get('path') == '.github/workflows/ci.yml'
                 and run.get('head_repository', {}).get('full_name') == repository
                 and type(run.get('id')) is int):

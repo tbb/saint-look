@@ -307,7 +307,13 @@ if [[ "${SAINT_LOOK_RECORD_VIDEO:-0}" == '1' ]]; then
 fi
 
 test_options=("${build_options[@]}")
-if [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" == '1' || "${SAINT_LOOK_LIVE_TRIAL:-0}" == '1' || -n "${SAINT_LOOK_VISUAL_PROFILE:-}" || "${SAINT_LOOK_BENCHMARK:-0}" == '1' ]]; then
+# Local regression runs have bounded stalls and timing evidence. Remote/live
+# trials and the real benchmark retain their separate, explicit execution path.
+ui_test_command=(xcodebuild)
+if [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" != 1 && "${SAINT_LOOK_LIVE_TRIAL:-0}" != 1 && "${SAINT_LOOK_BENCHMARK:-0}" != 1 ]]; then
+  ui_test_command=(python3 scripts/ui-watchdog.py --summary "${result_path%.xcresult}-timings.json" -- xcodebuild)
+fi
+if [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" == '1' || "${SAINT_LOOK_LIVE_TRIAL:-0}" == '1' || -n "${SAINT_LOOK_VISUAL_PROFILE:-}" || "${SAINT_LOOK_BENCHMARK:-0}" == '1' || "${SAINT_LOOK_LAUNCH_PAIR:-0}" != 1 ]]; then
   # Shell variables are not a portable way to configure a Simulator test host.
   # Give XCTest an explicit manifest; never print or upload this secret-bearing file.
   remote_manifest="$(pwd)/build/DerivedData/Build/Products/RemoteSmoke.xctestrun"
@@ -326,6 +332,8 @@ else:
     targets = [value for key, value in manifest.items() if not key.startswith('__') and isinstance(value, dict)]
 keys = ('SAINT_LOOK_REMOTE_SMOKE', 'SAINT_LOOK_REMOTE_URL', 'SAINT_LOOK_REMOTE_TOKEN',
         'SAINT_LOOK_REMOTE_REVISION', 'SAINT_LOOK_REMOTE_DEPLOYMENT_ID')
+if os.environ.get('SAINT_LOOK_REMOTE_SMOKE') != '1' and os.environ.get('SAINT_LOOK_LIVE_TRIAL') != '1':
+    keys = ()
 if os.environ.get('SAINT_LOOK_REMOTE_DATA_VERSION'):
     keys += ('SAINT_LOOK_REMOTE_DATA_VERSION',)
 if os.environ.get('SAINT_LOOK_LIVE_TRIAL') == '1':
@@ -366,7 +374,7 @@ if [[ "${SAINT_LOOK_BENCHMARK:-0}" == 1 ]]; then
   : > "$benchmark_log"
   chmod 600 "$benchmark_log"
   benchmark_status=0
-  xcodebuild "${test_options[@]}" -resultBundlePath "$result_path" test-without-building \
+  "${ui_test_command[@]}" "${test_options[@]}" -resultBundlePath "$result_path" test-without-building \
     | tee "$benchmark_log" || benchmark_status=$?
   mkdir -p build/benchmark
   python3 - "$benchmark_log" "$benchmark_status" <<'PYTHON' || benchmark_status=1
@@ -398,7 +406,7 @@ elif [[ "${SAINT_LOOK_LAUNCH_PAIR:-0}" == 1 ]]; then
   # The ordinary project/scheme invocation is retained; no xctestrun rewrite.
   python3 scripts/observe-visual-stalls.py --udid "$simulator_id" \
     --profile outfits-launch-pair --output "$(pwd)/build/launch-pair-diagnostics" \
-    -- xcodebuild "${test_options[@]}" -resultBundlePath "$result_path" test-without-building
+    -- "${ui_test_command[@]}" "${test_options[@]}" -resultBundlePath "$result_path" test-without-building
 elif [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" ]]; then
   # Capture selected-device state and whitelisted platform fields after build,
   # immediately before the existing test launch. The helper is best-effort only.
@@ -408,14 +416,14 @@ elif [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" ]]; then
     # Observe the existing 60-second XCTest warning; do not retry or change its verdict.
     python3 scripts/observe-visual-stalls.py --udid "$simulator_id" \
       --profile "$SAINT_LOOK_VISUAL_PROFILE" --output "$(pwd)/build/visual-stall-diagnostics" \
-      -- xcodebuild "${test_options[@]}" -resultBundlePath "$result_path" test-without-building || visual_test_status=$?
+      -- "${ui_test_command[@]}" "${test_options[@]}" -resultBundlePath "$result_path" test-without-building || visual_test_status=$?
   else
-    xcodebuild "${test_options[@]}" -resultBundlePath "$result_path" test-without-building || visual_test_status=$?
+    "${ui_test_command[@]}" "${test_options[@]}" -resultBundlePath "$result_path" test-without-building || visual_test_status=$?
   fi
   if [[ "$visual_test_status" -ne 0 ]]; then
     capture_visual_destination test-failure --test-exit-code "$visual_test_status"
   fi
   exit "$visual_test_status"
 else
-  xcodebuild "${test_options[@]}" -resultBundlePath "$result_path" test-without-building
+  "${ui_test_command[@]}" "${test_options[@]}" -resultBundlePath "$result_path" test-without-building
 fi

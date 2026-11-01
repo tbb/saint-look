@@ -135,6 +135,7 @@ class CIAdmissionTests(unittest.TestCase):
 
     def test_requires_successful_same_repository_main_revision(self):
         self.assertEqual(ci.checked_run([self.run_record()], SHA, 'tbb/saint-look'), 123)
+        self.assertEqual(ci.checked_run([{**self.run_record(), 'event': 'workflow_dispatch'}], SHA, 'tbb/saint-look'), 123)
         for key, value in [('head_sha', 'b' * 40), ('event', 'pull_request'), ('head_branch', 'topic'),
                            ('conclusion', 'failure'), ('status', 'in_progress'),
                            ('path', '.github/workflows/other.yml'), ('head_repository', {'full_name': 'fork/repo'})]:

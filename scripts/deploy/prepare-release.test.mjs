@@ -14,6 +14,8 @@ async function fixture(t, checked = false, prepare = async () => {}) {
   const git = (...args) => execFileSync('git', args, { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   git('init', '-b', 'main'); git('config', 'user.name', 'Release Test'); git('config', 'user.email', 'test@example.invalid');
   await mkdir(join(directory, 'backend'));
+  await mkdir(join(directory, '.github/workflows'), { recursive: true });
+  await writeFile(join(directory, '.github/workflows/backend-ci.yml'), 'name: Backend checks\n');
   await writeFile(join(directory, 'fly.toml'), '# checked Fly release\n');
   await writeFile(join(directory, 'backend/release.json'), JSON.stringify({ format: 1, dataVersion: 1, minDataVersion: 1, maxDataVersion: 1, profile: 'controlled-http' }));
   await writeFile(join(directory, 'backend/source.txt'), 'checked source\n');
@@ -21,14 +23,14 @@ async function fixture(t, checked = false, prepare = async () => {}) {
   git('add', '.'); git('commit', '-m', 'fixture');
   const sha = git('rev-parse', 'HEAD');
   git('update-ref', 'refs/remotes/origin/main', sha);
-  const state = { checked, event: 'push', jobs: jobs.map(name => ({ name, status: 'completed', conclusion: 'success' })) };
+  const state = { workflow: 'backend-ci.yml', checked, event: 'push', jobs: jobs.map(name => ({ name, status: 'completed', conclusion: 'success' })) };
   const api = createServer((request, response) => {
     assert.equal(request.headers.authorization, 'Bearer fixture-token');
     response.setHeader('Content-Type', 'application/json');
     const url = new URL(request.url, 'http://localhost');
-    if (url.pathname.endsWith('/ci.yml/runs')) {
+    if (url.pathname.endsWith('/' + state.workflow + '/runs')) {
       assert.equal(url.searchParams.get('head_sha'), sha);
-      response.end(JSON.stringify({ workflow_runs: state.checked ? [{ id: 42, head_sha: sha, head_branch: 'main', event: state.event, path: '.github/workflows/ci.yml', status: 'completed', conclusion: 'success', head_repository: { full_name: 'fixture/project' } }] : [] }));
+      response.end(JSON.stringify({ workflow_runs: state.checked ? [{ id: 42, head_sha: sha, head_branch: 'main', event: state.event, path: '.github/workflows/' + state.workflow, status: 'completed', conclusion: 'success', head_repository: { full_name: 'fixture/project' } }] : [] }));
     } else if (url.pathname.endsWith('/model-image.yml/runs')) {
       response.end(JSON.stringify({ workflow_runs: state.modelChecked ? [{ id: 43, head_sha: sha, head_branch: 'main', event: 'push', path: '.github/workflows/model-image.yml', status: 'completed', conclusion: 'success', head_repository: { full_name: 'fixture/project' } }] : [] }));
     } else if (url.pathname.endsWith('/43/jobs')) response.end(JSON.stringify({ jobs: [{ name: 'checkpoint-image', status: 'completed', conclusion: state.modelJob || 'success' }] }));
@@ -99,7 +101,7 @@ test('unknown or inconsistent data formats cannot produce a deployment archive',
   }
 });
 
-for (const job of ['backend', 'ios', 'container', 'deploy-policy']) {
+for (const job of ['backend', 'container', 'deploy-policy']) {
   test(`a skipped ${job} job cannot authorize deployment`, async t => {
     const f = await fixture(t, true);
     f.state.jobs.find(value => value.name === job).conclusion = 'skipped';
@@ -129,8 +131,9 @@ test('a commit outside main is rejected even when it exists locally', async t =>
 });
 
 
-test('manual CI cannot substitute for the complete main push checks', async t => {
-  const f = await fixture(t, true); f.state.event = 'workflow_dispatch';
+test('historical manual CI cannot substitute for the complete main push checks', async t => {
+  const f = await fixture(t, true, directory => rm(join(directory, '.github/workflows/backend-ci.yml')));
+  f.state.workflow = 'ci.yml'; f.state.event = 'workflow_dispatch';
   const result = await f.run();
   assert.equal(result.code, 1); assert.match(result.stderr, /No successful main CI/);
   await assert.rejects(access(f.output));
@@ -209,14 +212,34 @@ test('real model release requires an actual checkpoint image check on the exact 
   assert.equal((await f.run(f.sha, config)).code, 0);
 });
 
-test('v4 release rejects missing full native acceptance jobs even if the workflow reports success', async t => {
+test('backend v4 release does not wait for native acceptance', async t => {
   const f = await fixture(t, true, async directory => {
     const path = join(directory, 'backend/release.json');
     const manifest = JSON.parse(await readFile(path));
     Object.assign(manifest, { dataVersion: 4, minDataVersion: 4, maxDataVersion: 4, modelRuntime: 'outfit-transformer-labse-v1' });
     await writeFile(path, JSON.stringify(manifest));
   });
-  f.state.jobs = f.state.jobs.filter(job => job.name !== 'ios-outfits');
+  f.state.jobs = f.state.jobs.filter(job => !job.name.startsWith('ios'));
   const result = await f.run();
-  assert.equal(result.code, 1); assert.match(result.stderr, /ios-outfits/);
+  assert.equal(result.code, 0, result.stderr);
+});
+
+test('historical rollback still requires its original full CI', async t => {
+  const f = await fixture(t, true, directory => rm(join(directory, '.github/workflows/backend-ci.yml')));
+  f.state.workflow = 'ci.yml';
+  f.state.jobs.find(job => job.name === 'ios').conclusion = 'skipped';
+  assert.equal((await f.run()).code, 1);
+  f.state.jobs.find(job => job.name === 'ios').conclusion = 'success';
+  assert.equal((await f.run()).code, 0);
+});
+
+test('complete manually dispatched backend CI on the exact main revision is accepted', async t => {
+  const f = await fixture(t, true); f.state.event = 'workflow_dispatch';
+  assert.equal((await f.run()).code, 0);
+});
+
+test('pull request checks cannot authorize a backend deployment', async t => {
+  const f = await fixture(t, true); f.state.event = 'pull_request';
+  assert.equal((await f.run()).code, 1);
+  await assert.rejects(access(f.output));
 });
