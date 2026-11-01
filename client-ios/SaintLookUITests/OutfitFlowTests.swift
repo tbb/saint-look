@@ -387,6 +387,7 @@ final class OutfitFlowTests: XCTestCase {
 
     @MainActor
     private func expectGone(_ element: XCUIElement, _ message: String, timeout: TimeInterval = 5) {
+        if !element.exists { return }
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
         let result = XCTWaiter.wait(for: [gone], timeout: timeout)
         if result != .completed {

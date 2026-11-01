@@ -99,11 +99,14 @@ final class VisualAcceptanceTests: XCTestCase {
         // Each AX property read is a remote snapshot. Re-reading frames consumed
         // the full wait deadline on iPad even when the control was already hittable.
         let viewport = app.frame
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        let predicate = NSPredicate { _, _ in
             guard element.exists else { return false }
             let frame = element.frame
             return element.isHittable && !frame.isEmpty && viewport.intersects(frame)
-        }, object: element)
+        }
+        // Avoid a polling interval when the full readiness condition already holds.
+        if predicate.evaluate(with: element) { return }
+        let ready = XCTNSPredicateExpectation(predicate: predicate, object: element)
         guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
             diagnose("unavailable-native-control", app: app, detail: element.debugDescription)
             try require(false, "The intended native control is not visible and hittable")
@@ -152,10 +155,12 @@ final class VisualAcceptanceTests: XCTestCase {
     @MainActor
     private func waitNavigation(_ title: String, in app: XCUIApplication) throws {
         let bar = app.navigationBars[title]
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        let predicate = NSPredicate { _, _ in
             // Error destinations may intentionally offer no toolbar actions.
             bar.exists && bar.identifier == title && !bar.frame.intersection(app.frame).isEmpty
-        }, object: bar)
+        }
+        if predicate.evaluate(with: bar) { return }
+        let ready = XCTNSPredicateExpectation(predicate: predicate, object: bar)
         // A Simulator accessibility snapshot can itself take several seconds.
         // Allow a second observation after the transition; keep the same destination checks.
         guard XCTWaiter.wait(for: [ready], timeout: 30) == .completed else {
@@ -478,6 +483,7 @@ final class VisualAcceptanceTests: XCTestCase {
 
     @MainActor
     private func expectGone(_ element: XCUIElement, _ message: String, timeout: TimeInterval = 5) throws {
+        if !element.exists { return }
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
         let result = XCTWaiter.wait(for: [gone], timeout: timeout)
         if result != .completed { try capture("dismissal-timeout") }
