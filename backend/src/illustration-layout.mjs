@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import { ProviderError } from './providers.mjs';
 
 const taxonomy = JSON.parse(readFileSync(new URL('../../shared/wardrobe-taxonomy.json', import.meta.url)));
-export const layoutVersion = 'fitting-anchors-1024-v3';
-export const templateVersion = 'category-front-anchors-v3';
+export const layoutVersion = 'fitting-anchors-1024-v4';
+export const templateVersion = 'category-front-anchors-v4';
 // Coordinates are in the existing 360×560 mannequin frame, letterboxed into
 // a 560×560 square. The client draws this same frame without independently
 // cropping/scaling a garment. Bounds include ease; they are validation envelopes,
@@ -26,9 +26,9 @@ const layouts = {
   socks: { bounds: [130, 380, 100, 140], path: 'M146 402 L165 402 L166 506 L136 510 L145 490 Z M195 402 L215 402 L215 490 L225 510 L196 506 Z', anchors: { leftAnkle: [155, 494], rightAnkle: [205, 494] } },
   bag: { bounds: [210, 160, 110, 200], path: 'M245 215 L245 190 Q263 163 282 190 L282 215 M230 214 L300 214 L304 320 L226 320 Z', anchors: { handle: [263, 180], bagCentre: [265, 270] } },
 };
-layouts.hooded = { ...layouts.upper, bounds: [82, 90, 196, 240],
-  path: 'M157 132 Q146 106 163 96 Q180 88 197 96 Q214 106 203 132 L225 148 L245 181 L264 300 L247 307 L216 206 L220 297 L139 297 L143 206 L113 307 L94 300 L116 181 L135 147 Z',
-  anchors: { ...layouts.upper.anchors, hoodTop: [180, 94] } };
+layouts.hooded = { ...layouts.upper, bounds: [82, 28, 196, 302],
+  path: 'M157 132 Q140 116 142 76 Q143 32 180 32 Q217 32 218 76 Q220 116 203 132 L225 148 L245 181 L264 300 L247 307 L216 206 L220 297 L139 297 L143 206 L113 307 L94 300 L116 181 L135 147 Z',
+  anchors: { ...layouts.upper.anchors, hoodTop: [180, 32] } };
 const groups = {
   t_shirt: 'shortUpper', polo: 'shortUpper', shirt: 'upper', blouse: 'upper', top: 'sleeveless', sweater: 'upper',
   cardigan: 'upper', sweatshirt: 'upper', hoodie: 'hooded', vest: 'sleeveless', blazer: 'upper', jacket: 'upper',
@@ -45,11 +45,20 @@ export function garmentLayout(features) {
   if (!group) throw new ProviderError('illustration_type_unsupported');
   if (group === 'upper' && features?.traits?.hood === 'yes') group = 'hooded';
   const layout={ type, group, ...layouts[group] };
+  // Ease belongs to the garment, not the wearer's waist. The old template
+  // silently gave a relaxed tee exactly the same narrow torso as a fitted top.
+  // Move torso side seams only; keep neck, arm direction and hem independent.
+  if (['shortUpper','sleeveless','upper','hooded'].includes(group)
+    && features?.traits?.silhouette === 'relaxed') {
+    layout.path = layout.path.replaceAll('L216 206', 'L232 206')
+      .replaceAll('L220 297 L139 297', 'L236 297 L123 297')
+      .replaceAll('L143 206', 'L127 206');
+  }
   if(['shortUpper','sleeveless','upper','hooded'].includes(group)
     && !['regular','cropped'].includes(features?.traits?.body_length)) {
     // Length is part of the garment design. Extend only the guide's torso;
     // shoulder/sleeve coordinates still belong to the same wearer.
-    if(features?.traits?.body_length==='long') layout.path=layout.path.replace('L220 297 L139 297','L220 340 L139 340');
+    if(features?.traits?.body_length==='long') layout.path=layout.path.replace('L220 297 L139 297','L220 340 L139 340').replace('L236 297 L123 297','L236 340 L123 340');
     // Unknown is not regular: leave room for an observed long hem without
     // inventing a long design in the guide or shrinking it during registration.
     layout.bounds=[...layout.bounds]; layout.bounds[3]=365-layout.bounds[1];
@@ -137,8 +146,14 @@ function shoulderOffset(data, width, layout, features) {
   return ['jacket','blazer','cardigan'].includes(layout.type) ? Math.min(...corrections) : Math.max(...corrections);
 }
 
+function requiresWristPose(layout, features) {
+  const sleeves = features?.traits?.sleeves;
+  return sleeves === 'long' || (layout.type === 'hoodie'
+    && !['short', 'sleeveless', 'not_applicable'].includes(sleeves));
+}
+
 function cuffExtents(data, width, layout, features) {
-  if(!['upper','hooded'].includes(layout.group) || features?.traits?.sleeves!=='long') return [];
+  if(!['upper','hooded'].includes(layout.group) || !requiresWristPose(layout, features)) return [];
   return [[333,420],[604,691]].map(([left,right])=>{
     let bottom=-1;
     for(let y=400;y<650;y++) {
@@ -266,8 +281,8 @@ export function layoutInstructions(features) {
   const [x,y,w,h] = layout.bounds, [left,top] = point([x,y]), [right,bottom] = point([x+w,y+h]);
   const footwearRule=layout.group==='shoes' ? ' FOOTWEAR: use the enlarged grey footwear pose guide for the front projection and relative spacing, and the LAST full-canvas guide for placement. Show TWO separate shoes in the standing pose of the template, with their ankle openings aligned to (466,903) and (558,903). Their centres must remain about 92 pixels apart, with a visible white gap; each shoe is roughly 50 to 65 pixels wide. Use an orthographic FRONT elevation at ankle height, not overhead, top-down or flat-lay product photography. The front toe walls and soles are visible; do not expose long insoles or an elongated top view. Both face forward with a slight outward angle. Do not keep the close, overlapping arrangement of the source photo, and do not place the pair together under the body centre. No feet, legs, socks or trousers inside the shoes.' : '';
   const torsoRule = ['shortUpper', 'sleeveless', 'upper', 'hooded'].includes(layout.group)
-    ? ` Fit the torso to the SAME wearer: the neckline is near (512,241), shoulders near (430,269) and (594,269), waist y=483. ${features?.traits?.body_length === 'cropped' ? 'This is deliberately cropped: preserve its short hem.' : features?.traits?.body_length === 'long' ? 'This is an elongated torso: preserve its extra length and torso-to-sleeve proportions, with the hem around y=585 to 625. It may extend below an ordinary hoodie or jacket; do not shorten or tuck it to match another layer.' : !['regular','cropped','long'].includes(features?.traits?.body_length) ? 'Body length is uncertain, NOT regular. Infer the torso-to-shoulder and torso-to-sleeve proportions from the original photo and preserve them. The grey torso hem is only a pose example: an observed long or curved hem may reach y=585 to 650 and extend below another layer. Do not shorten it to the grey hem or waist.' : ['jacket','blazer','cardigan'].includes(layout.type) ? 'Preserve its torso-to-sleeve proportions and jacket length; a hip-length hem may reach y=540 to 590.' : 'The torso hem must overlap the waist, normally y=510 to 545; do not make a regular top look cropped.'} Sleeves follow the template arm directions, not a flat-lay T pose. ${features?.traits?.sleeves === 'long' ? 'Long sleeves reach the wrist anchors near y=560; unfold the source arm pose instead of turning them into short or three-quarter sleeves.' : ''} ${layout.group === 'hooded' ? 'The hood is behind the neckline; its crown may extend up to y=172, while the shoulder seams remain at y=269. Do not align the hood crown to the neckline or add a head inside it.' : ''}` : '';
-  return `Edit the LAST image: it is the placement template for a ${layout.type}, on an EXACT 1024 by 1024 canvas. Replace ONLY its grey garment placeholder with a faithful editorial illustration of the referenced garment. Keep the template's small size, position and front-facing pose inside the full canvas. Most of the canvas MUST remain plain white. DO NOT zoom, crop, enlarge to fill the square, copy the photo's pose, or draw any human/mannequin body. Coordinates in output pixels, origin top-left: anchors ${JSON.stringify(anchors)}; garment must remain within [left=${left}, top=${top}, right=${right}, bottom=${bottom}]. The anchors describe the same invisible mannequin for every item.${torsoRule}${footwearRule} Preserve the garment DESIGN: construction, colours, actual sleeve and body length, and print placement. Reconstruct its unfolded front as if worn by this invisible mannequin. Incidental wrinkles, crumpling, folded sleeve openings, tilted collars, camera perspective and hems made uneven only by folds are NOT design features: straighten them. Preserve intentional asymmetric construction and designed hem shapes. ${['shortUpper','sleeveless','upper','hooded','full'].includes(layout.group) ? 'Shoulders must be level and symmetrical, neckline centred, torso vertical, and both sleeves unfolded along the template arms.' : ''} Use restrained flat editorial shading; do not trace or emphasize the source photo's random folds. The grey template defines the wearer pose, not a replacement garment design. White outside the item, inside necklines/openings and between separated limbs; no body, head, skin, stand, extra clothing, labels, guide lines or cast shadow.${layout.legs ? ' TROUSERS: front waistband horizontal at the two waist anchors, crotch centred at the crotch anchor, two distinct uncrossed untwisted leg tubes towards the left and right ankle anchors. Straighten the pose even if the source is twisted or folded. Preserve front pockets and seams on their correct sides. Do not draw the torso above the waistband, shoes below the hems, or join/cross the two legs.' : ''}`;
+    ? ` Fit the torso to the SAME wearer: the neckline is near (512,241), shoulders near (430,269) and (594,269), waist y=483. ${features?.traits?.body_length === 'cropped' ? 'This is deliberately cropped: preserve its short hem.' : features?.traits?.body_length === 'long' ? 'This is an elongated torso: preserve its extra length and torso-to-sleeve proportions, with the hem around y=585 to 625. It may extend below an ordinary hoodie or jacket; do not shorten or tuck it to match another layer.' : !['regular','cropped','long'].includes(features?.traits?.body_length) ? 'Body length is uncertain, NOT regular. Infer the torso-to-shoulder and torso-to-sleeve proportions from the original photo and preserve them. The grey torso hem is only a pose example: an observed long or curved hem may reach y=585 to 650 and extend below another layer. Do not shorten it to the grey hem or waist.' : ['jacket','blazer','cardigan'].includes(layout.type) ? 'Preserve its torso-to-sleeve proportions and jacket length; a hip-length hem may reach y=540 to 590.' : 'The torso hem must overlap the waist, normally y=510 to 545; do not make a regular top look cropped.'} Sleeves follow the template arm directions, not a flat-lay T pose. ${requiresWristPose(layout, features) ? 'Long sleeves reach the wrist anchors near y=560; unfold the source arm pose instead of turning them into short or three-quarter sleeves.' : ''} ${layout.group === 'hooded' ? 'Show the hood RAISED in its worn shape: its crown is near y=59 and outer sides surround the head region x=455..570, y=80..225. Keep an empty front face opening, with plain white visible through it. The neckline stays near y=241 and shoulder seams near y=269. Do not copy the small collapsed flat-lay hood, move the shoulders up, or draw a head inside the hood.' : ''}` : '';
+  return `Edit the LAST image: it is the placement template for a ${layout.type}, on an EXACT 1024 by 1024 canvas. Replace ONLY its grey garment placeholder with a faithful editorial illustration of the referenced garment. Keep the template's small size, position and front-facing pose inside the full canvas. Most of the canvas MUST remain plain white. DO NOT zoom, crop, enlarge to fill the square, copy the photo's pose, or draw any human/mannequin body. Coordinates in output pixels, origin top-left: anchors ${JSON.stringify(anchors)}; garment must remain within [left=${left}, top=${top}, right=${right}, bottom=${bottom}]. The anchors describe the same invisible mannequin for every item.${torsoRule}${footwearRule} Preserve the garment DESIGN: construction, colours, actual sleeve and body length, and print placement. Preserve the original chest-width to torso-length ratio and hem width: a wide or boxy T-shirt must remain wide, never tailored into a slim waist. The guide gives pose, NOT mandatory side seams or a universal garment width. Preserve the source fabric texture, irregular stripe spacing and stripe thickness; do not replace woven stripes with a few clean schematic lines. Reconstruct its unfolded front as if worn by this invisible mannequin. Incidental wrinkles, crumpling, folded sleeve openings, tilted collars, camera perspective and hems made uneven only by folds are NOT design features: straighten them. Preserve intentional asymmetric construction and designed hem shapes. ${['shortUpper','sleeveless','upper','hooded','full'].includes(layout.group) ? 'Shoulders must be level and symmetrical, neckline centred, torso vertical, and both sleeves unfolded along the template arms.' : ''} Use restrained editorial shading with visible textile detail; do not trace or emphasize the source photo's random folds. The grey template defines the wearer pose, not a replacement garment design. White outside the item, inside necklines/openings and between separated limbs; no body, head, skin, stand, extra clothing, labels, guide lines or cast shadow.${layout.legs ? ' TROUSERS: front waistband horizontal at the two waist anchors, crotch centred at the crotch anchor, two distinct uncrossed untwisted leg tubes towards the left and right ankle anchors. Straighten the pose even if the source is twisted or folded. Preserve front pockets and seams on their correct sides. Do not draw the torso above the waistband, shoes below the hems, or join/cross the two legs.' : ''}`;
 }
 
 export async function checkGarmentLayout(bytes, features) {
