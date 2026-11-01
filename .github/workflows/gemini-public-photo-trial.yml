@@ -5,7 +5,7 @@ on:
       item:
         type: choice
         default: hoodie
-        options: [hoodie, trousers, tee]
+        options: [hoodie, trousers, tee, checks-only]
 permissions:
   contents: read
 concurrency:
@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   compare:
-    if: github.ref == 'refs/heads/codex/garment-fit-quality' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    if: inputs.item != 'checks-only' && github.ref == 'refs/heads/codex/garment-fit-quality' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -50,3 +50,13 @@ jobs:
           path: garment-quality-output/
           retention-days: 2
           if-no-files-found: ignore
+
+  image-presentation:
+    if: inputs.item == 'checks-only' && github.ref == 'refs/heads/codex/garment-fit-quality' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: bash client-ios/scripts/test-image-presentation.sh
