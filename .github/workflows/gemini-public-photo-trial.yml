@@ -64,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           ulimit -c 0
-          git fetch --no-tags origin bce0e6c
+          git fetch --no-tags origin bce0e6c0072902b1ec9dc31b52a1edbb301799ab
           git show FETCH_HEAD:client-ios/SaintLook/GarmentImagePresentation.swift > "$RUNNER_TEMP/Before.swift"
           swiftc "$RUNNER_TEMP/Before.swift" client-ios/scripts/tests/image-presentation.swift -o "$RUNNER_TEMP/before-crop"
           if "$RUNNER_TEMP/before-crop" "$PWD/client-ios/SaintLook/VisualFixtures" > "$RUNNER_TEMP/before-crop.log" 2>&1; then
