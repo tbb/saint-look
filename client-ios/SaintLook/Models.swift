@@ -335,8 +335,8 @@ struct IllustrationResult: Codable {
 
 enum IllustrationContract {
     static let currentModelVersion = "gemini-3-pro-image"
-    static let currentTemplateVersion = "category-front-anchors-v3"
-    static let currentGeometryVersion = "fitting-anchors-1024-v3"
+    static let currentTemplateVersion = "category-front-anchors-v4"
+    static let currentGeometryVersion = "fitting-anchors-1024-v4"
     private static let supportedModels: Set<String> = [currentModelVersion, "fal-ai/nano-banana-pro/edit"]
 
     static func accepts(modelVersion: String, templateVersion: String, geometryVersion: String) -> Bool {
@@ -346,7 +346,9 @@ enum IllustrationContract {
             && geometryVersion == currentGeometryVersion
         let previousAnchors = modelVersion == currentModelVersion && templateVersion == "category-front-anchors-v2"
             && geometryVersion == "fitting-anchors-1024-v2"
-        return legacy || previousAnchors || current
+        let previousV3 = modelVersion == currentModelVersion && templateVersion == "category-front-anchors-v3"
+            && geometryVersion == "fitting-anchors-1024-v3"
+        return legacy || previousAnchors || previousV3 || current
     }
 }
 
@@ -458,6 +460,7 @@ extension WardrobeItem {
 enum IllustrationFailure {
     static func message(for code: String) -> String {
         switch code {
+        case "illustration_proportions_changed": return "Не удалось сохранить пропорции вещи. Исходное фото сохранено. Можно повторить подготовку."
         case "illustration_geometry_invalid": return "Иллюстрация не совпала с посадкой на манекене. Исходное фото сохранено. Можно повторить подготовку."
         case "illustration_type_unsupported": return "Для посадки нужно уточнить тип вещи. Выберите его в карточке и повторите подготовку."
         case "illustration_unavailable": return "Создание иллюстраций пока недоступно. Фото сохранено."

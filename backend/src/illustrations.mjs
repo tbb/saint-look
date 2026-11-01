@@ -5,6 +5,7 @@ import { RequestError, uuid } from './upload.mjs';
 import { requireNotDeleted } from './deletion.mjs';
 import { ProviderError } from './providers.mjs';
 import { createIllustrationProvider, illustrationVersions, illustrationTaxonomy } from './illustration-provider.mjs';
+import {compareTopProportions} from './illustration-proportions.mjs';
 import { registerGarmentLayout, garmentLayout } from './illustration-layout.mjs';
 
 const stages = ['preparation', 'attributes', 'generation', 'finalization'];
@@ -255,6 +256,9 @@ export function createIllustrations(database, env, retention, budget) {
         if (!live(operationId)) return;
         setStage(operationId, stage, 'done');
       }
+      const front=photos.find(photo=>photo.role==='front')||photos[0];
+      const proportions=await compareTopProportions(front.prepared,result,effective);
+      if(proportions.measurable && !proportions.valid) throw new ProviderError('illustration_proportions_changed');
       if (live(operationId)) database.prepare("UPDATE illustrations SET result=?,result_digest=?,status='ready',error=NULL WHERE operation_id=?").run(result, digest(result), operationId);
     } catch (error) {
       if (!live(operationId)) return;

@@ -47,7 +47,7 @@ try{
  const features=input.features||await call('attributes',()=>provider.attributes(photos,new AbortController().signal));
  const proportions=await measureTopProportions(prepared,features);state.proportions=proportions;
  state.features=features;save();console.log(JSON.stringify({stage:'features',type:features.type,traits:features.traits}));
- for(const variant of (process.env.TRIAL_ITEM==='hoodie'?['unfold','ghost']:['source-edit'])){
+ for(const variant of (process.env.TRIAL_ITEM==='hoodie'?['ghost-roomy','raised-roomy']:['source-edit'])){
   let generated;
   if(variant==='baseline')generated=(await call(variant+'-generation',()=>baseline.generate(photos,features,new AbortController().signal,id=>{state.baselineReceipt=id;save();}))).png;
   else{
@@ -58,7 +58,7 @@ try{
       {type:'image',mime_type:'image/png',data:png.toString('base64')},
       {type:'image',mime_type:'image/png',data:prepared.toString('base64')},
       ...(variant==='pose-last'?[{type:'image',mime_type:'image/png',data:(await generationPoseGuide(features)).toString('base64')}]:[]),
-      {type:'text',text:process.env.TRIAL_ITEM==='hoodie'?simple:edit}],
+      {type:'text',text:process.env.TRIAL_ITEM==='hoodie'?simple+' IMPORTANT: measured torso width / neck-to-hem length is '+proportions.bodyWidthToLength+'. Keep this roomy ratio. At 600 pixels from neckline to body hem, torso width must be about '+Math.round(600*proportions.bodyWidthToLength)+' pixels, excluding sleeves. Do not narrow the waist or body to the invisible person. Preserve the loose shoulder drop.'+(variant==='raised-roomy'?' Raise the hood so its crown is about 60 percent of the torso length above the neckline, enclosing a full head-sized volume. Keep its original construction.':''):edit}],
     response_format:{type:'image',mime_type:'image/jpeg',aspect_ratio:'1:1',image_size:'1K'}};
    const result=await call(variant+'-generation',async()=>JSON.parse(await exchange('https://generativelanguage.googleapis.com/v1beta/interactions',
     {method:'POST',headers:{'x-goog-api-key':process.env.GEMINI_API_KEY,'Content-Type':'application/json'},body:JSON.stringify(payload)},new AbortController().signal,120000,14*1024*1024)));

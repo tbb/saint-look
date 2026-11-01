@@ -53,10 +53,21 @@ jobs:
 
   image-presentation:
     if: inputs.item == 'checks-only' && github.ref == 'refs/heads/codex/garment-fit-quality' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - run: bash client-ios/scripts/test-image-presentation.sh
+      - name: Confirm the same noise fixture fails on the previous crop implementation
+        run: |
+          set -euo pipefail
+          ulimit -c 0
+          git fetch --no-tags origin bce0e6c
+          git show FETCH_HEAD:client-ios/SaintLook/GarmentImagePresentation.swift > "$RUNNER_TEMP/Before.swift"
+          swiftc "$RUNNER_TEMP/Before.swift" client-ios/scripts/tests/image-presentation.swift -o "$RUNNER_TEMP/before-crop"
+          if "$RUNNER_TEMP/before-crop" "$PWD/client-ios/SaintLook/VisualFixtures" > "$RUNNER_TEMP/before-crop.log" 2>&1; then
+            echo 'Expected old crop to fail on matte noise'; exit 1
+          fi
+          rg 'Near-transparent remote matte noise must not shrink' "$RUNNER_TEMP/before-crop.log"

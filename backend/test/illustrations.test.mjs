@@ -28,10 +28,11 @@ async function until(check) {
   throw new Error('Expected external request did not arrive');
 }
 async function waitForIllustration(server, itemId, operationId, status = 'ready') {
+  const expected=Array.isArray(status)?status:[status];
   for (let i = 0; i < 150; i++) {
     const response = await server.request(`/v1/items/${itemId}/illustrations/${operationId}`);
     const value = await response.json();
-    if (value.status === status) return value;
+    if (expected.includes(value.status)) return value;
     if (value.status === 'failed') throw new Error(JSON.stringify(value));
     await new Promise(resolve => setTimeout(resolve, 25));
   }
@@ -456,4 +457,20 @@ for (const versions of [
   server = await env.launch(fixture.env);
   assert.equal((await requestIllustration(server, photo.itemId, { ...refresh, operationId: randomUUID(), revision: 3 })).status, 409);
   assert.equal(fixture.calls.preparation.length, 1);
+});
+
+
+test('a geometrically valid slim redraw cannot be published for a wide source with unknown silhouette', async t => {
+  const fixture=await illustrationFixture(t,{traits:{sleeves:'short'}});
+  const env=await environment(t),server=await env.launch(fixture.env);
+  const photo=await photoRequest();
+  photo.imageBase64=(await sharp({create:{width:668,height:858,channels:3,background:'#222'}}).png().toBuffer()).toString('base64');
+  await upload(server,photo);await waitForItem(server,photo.itemId);
+  const input=illustration(photo);await requestIllustration(server,photo.itemId,input);
+  const result=await waitForIllustration(server,photo.itemId,input.operationId,['ready','failed']);
+  assert.equal(result.status,'failed');
+  assert.equal(result.error,'illustration_proportions_changed');
+  assert.equal(result.resultPath,null);
+  assert.equal(fixture.calls.generation.length,1,'Quality rejection must not silently submit another paid generation');
+  assert.equal(fixture.calls.finalization.length,1);
 });
