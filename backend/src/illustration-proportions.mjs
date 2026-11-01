@@ -26,3 +26,11 @@ export async function measureTopProportions(bytes, features) {
   if((high-low)/median>.15)return null;
   return {bodyWidthToLength:Number((median/height).toFixed(3)),bodyWidth:median,visibleLength:height};
 }
+
+export async function compareTopProportions(reference, result, features) {
+  const source=await measureTopProportions(reference,features), actual=await measureTopProportions(result,features);
+  if(!source || !actual)return {measurable:false,reason:'ambiguous-body-outline'};
+  const relativeError=Math.abs(actual.bodyWidthToLength/source.bodyWidthToLength-1);
+  return {measurable:true,valid:relativeError<=0.12,sourceRatio:source.bodyWidthToLength,
+    resultRatio:actual.bodyWidthToLength,relativeError};
+}

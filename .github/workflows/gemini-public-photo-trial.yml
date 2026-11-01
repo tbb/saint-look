@@ -1,6 +1,11 @@
 name: Encrypted garment quality diagnostic
 on:
   workflow_dispatch:
+    inputs:
+      item:
+        type: choice
+        default: hoodie
+        options: [hoodie, trousers, tee]
 permissions:
   contents: read
 concurrency:
@@ -26,8 +31,9 @@ jobs:
         run: |
           git show 68e4da3904235196af2d681e3b9a075530b68f41:backend/src/illustration-layout.mjs > backend/src/trial-baseline-layout.mjs
           git show 68e4da3904235196af2d681e3b9a075530b68f41:backend/src/illustration-provider.mjs | sed 's@./illustration-layout.mjs@./trial-baseline-layout.mjs@' > backend/src/trial-baseline-provider.mjs
-      - name: Compare two generations of the authorized source
+      - name: Validate one source-preserving generation
         env:
+          TRIAL_ITEM: ${{ inputs.item }}
           SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true'
           SAINT_LOOK_ILLUSTRATION_TIMEOUT_MS: '120000'
           SAINT_LOOK_PHOTOROOM_MODE: production
