@@ -38,6 +38,7 @@ jobs:
           node-version: '24'
       - run: python3 client-ios/scripts/tests/test-testflight.py
       - run: node --test client-ios/scripts/tests/testflight-signing.test.mjs
+      - run: node --test client-ios/scripts/tests/apple-token-check.test.mjs
 
   archive-check:
     if: github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true'
