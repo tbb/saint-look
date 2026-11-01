@@ -275,15 +275,19 @@ final class OutfitFlowTests: XCTestCase {
         var lastViewport = CGRect.zero
         // Seven scroll gestures, with a visibility check after the final gesture too.
         for attempt in 0...7 {
+            // AX geometry reads cross the Simulator boundary. Reuse each value
+            // within this observation; refresh everything after a scroll gesture.
+            let appFrame = app.frame
             let bars = app.navigationBars.allElementsBoundByIndex
             let foregroundBar = bars.reversed().first { $0.isHittable } ?? bars.last
-            let top = foregroundBar?.frame.maxY ?? app.frame.minY
-            var bottom = app.frame.maxY - 24
+            let foregroundFrame = foregroundBar?.frame
+            let top = foregroundFrame?.maxY ?? appFrame.minY
+            var bottom = appFrame.maxY - 24
             if let tabTop = app.tabBars.allElementsBoundByIndex.filter({ $0.isHittable }).map({ $0.frame.minY }).min() {
                 bottom = min(bottom, tabTop)
             }
             if app.keyboards.firstMatch.exists { bottom = min(bottom, app.keyboards.firstMatch.frame.minY) }
-            let viewport = CGRect(x: app.frame.minX + 16, y: top, width: app.frame.width - 32,
+            let viewport = CGRect(x: appFrame.minX + 16, y: top, width: appFrame.width - 32,
                                   height: max(0, bottom - top))
             let present = element.exists
             let frame = present ? element.frame : .zero
@@ -299,8 +303,8 @@ final class OutfitFlowTests: XCTestCase {
             let movement: CGFloat
             let start: XCUICoordinate
             if let bar = foregroundBar, ["Собрать лук", "Изменить лук"].contains(bar.identifier) {
-                let navigationFrame = bar.frame
-                let visibleNavigation = navigationFrame.intersection(app.frame)
+                let navigationFrame = foregroundFrame ?? bar.frame
+                let visibleNavigation = navigationFrame.intersection(appFrame)
                 let reachableNavigation = bar.exists && !visibleNavigation.isEmpty && bar.buttons.allElementsBoundByIndex.contains {
                     $0.exists && $0.isHittable && !$0.frame.intersection(visibleNavigation).isEmpty
                 }
@@ -335,7 +339,7 @@ final class OutfitFlowTests: XCTestCase {
                 let origin = CGPoint(x: bounds.minX + 8, y: y)
                 let destination = CGPoint(x: origin.x, y: origin.y + movement)
                 guard bounds.contains(origin), bounds.contains(destination),
-                      app.frame.contains(origin), app.frame.contains(destination) else {
+                      appFrame.contains(origin), appFrame.contains(destination) else {
                     capture("invalid-constructor-scroll-path")
                     XCTFail("Both constructor scroll endpoints must remain inside its visible ScrollView")
                     return false
