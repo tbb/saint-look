@@ -9,5 +9,7 @@
     "controlled-http",
     "live"
   ],
-  "modelRuntime": "outfit-transformer-labse-v1"
+  "modelRuntime": "outfit-transformer-labse-v1",
+  "photoroomModes": ["sandbox", "production"],
+  "apiBudgetModes": ["trial", "provider-quota"]
 }

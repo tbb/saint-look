@@ -121,12 +121,12 @@ test('deploying the same source again produces a different attempt marker', t =>
 test('live upload stages provider secrets only on stdin and ordinary deploy explicitly resets controlled mode', t => {
   const f = fixture(t);
   writeFileSync(join(f.release, 'backend/release.json'), JSON.stringify({ profiles: ['controlled-http', 'live'], providerConfig: 'photoroom-jev-1.14.0-taxonomy-1' }));
-  const result = f.run({ SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', AI_TRIAL_PREFLIGHT_VERIFIED: 'true', TYPESAFE_API_KEY: 'typesafe-fixture-secret', PHOTOROOM_API_KEY: 'photoroom-fixture-secret' });
+  const result = f.run({ SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', AI_TRIAL_PREFLIGHT_VERIFIED: 'true', TYPESAFE_API_KEY: 'typesafe-fixture-secret', PHOTOROOM_API_KEY: 'sandbox_photoroom-fixture-secret' });
   assert.equal(result.status, 0, result.stderr);
   const secret = f.calls().find(call => call.args[0] === 'secrets');
   assert.ok(secret);
   assert.match(secret.secretInput, /TYPESAFE_API_KEY=typesafe-fixture-secret/);
-  assert.match(secret.secretInput, /PHOTOROOM_API_KEY=photoroom-fixture-secret/);
+  assert.match(secret.secretInput, /PHOTOROOM_API_KEY=sandbox_photoroom-fixture-secret/);
   assert.ok(!JSON.stringify(secret.args).includes('fixture-secret'));
   assert.ok(f.calls().every(call => !call.providerKeyPresent));
   assert.ok(f.calls().find(call => call.args[0] === 'deploy').args.includes('SAINT_LOOK_DEPLOYMENT_PROFILE=live'));
@@ -142,6 +142,40 @@ test('live upload refuses absent account attestation or keys before invoking Fly
   const r = f.run({ SAINT_LOOK_DEPLOYMENT_PROFILE: 'live' });
   assert.equal(r.status, 1);
   assert.equal(f.calls().length, 0);
+});
+
+test('production deployment selects production secrets and quota accounting only for a compatible release', t => {
+  const f = fixture(t);
+  const manifest = { profiles: ['live'], providerConfig: 'photoroom-jev-1.14.0-taxonomy-1',
+    photoroomModes: ['sandbox', 'production'], apiBudgetModes: ['trial', 'provider-quota'] };
+  writeFileSync(join(f.release, 'backend/release.json'), JSON.stringify(manifest));
+  const env = { SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', AI_TRIAL_PREFLIGHT_VERIFIED: 'true',
+    TYPESAFE_API_KEY: 'typesafe-fixture-secret', GEMINI_API_KEY: 'gemini-fixture-secret',
+    PHOTOROOM_API_KEY: 'production-fixture-secret', PHOTOROOM_SANDBOX_API_KEY: 'sandbox_fixture_secret',
+    SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true', SAINT_LOOK_PHOTOROOM_MODE: 'production',
+    PHOTOROOM_PRODUCTION_APPROVED: 'true', SAINT_LOOK_API_BUDGET_MODE: 'provider-quota' };
+  const result = f.run(env);
+  assert.equal(result.status, 0, result.stderr);
+  const staged = f.calls().find(call => call.args[0] === 'secrets');
+  assert.match(staged.secretInput, /PHOTOROOM_API_KEY=production-fixture-secret/);
+  assert.doesNotMatch(staged.secretInput, /sandbox|PHOTOROOM_SANDBOX/);
+  assert.ok(f.calls().every(call => !call.providerKeyPresent));
+  const deploy = f.calls().find(call => call.args[0] === 'deploy').args;
+  assert.ok(deploy.includes('SAINT_LOOK_PHOTOROOM_MODE=production'));
+  assert.ok(deploy.includes('SAINT_LOOK_API_BUDGET_MODE=provider-quota'));
+  assert.doesNotMatch(result.stdout + result.stderr, /fixture-secret/);
+  for (const changes of [{ PHOTOROOM_PRODUCTION_APPROVED: 'false' }, { PHOTOROOM_API_KEY: '' },
+    { PHOTOROOM_API_KEY: 'sandbox_fixture_secret' }, { SAINT_LOOK_PHOTOROOM_MODE: 'typo' }]) {
+    const count = f.calls().length;
+    assert.equal(f.run({ ...env, ...changes }).status, 1);
+    assert.equal(f.calls().length, count);
+  }
+  for (const changes of [{ photoroomModes: undefined }, { apiBudgetModes: undefined }]) {
+    writeFileSync(join(f.release, 'backend/release.json'), JSON.stringify({ ...manifest, ...changes }));
+    const count = f.calls().length;
+    assert.equal(f.run(env).status, 1);
+    assert.equal(f.calls().length, count, 'An older release must be rejected before staging production secrets');
+  }
 });
 
 test('real model deployment refuses unapproved memory before touching Fly', t => {
@@ -184,7 +218,7 @@ test('approved model release upgrades only the existing machine memory and selec
 test('live upload refuses the previous provider configuration before any Fly call', t => {
   const f = fixture(t);
   writeFileSync(join(f.release, 'backend/release.json'), JSON.stringify({ profiles: ['controlled-http', 'live'] }));
-  const result = f.run({ SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', AI_TRIAL_PREFLIGHT_VERIFIED: 'true', TYPESAFE_API_KEY: 'typesafe-fixture-secret', PHOTOROOM_API_KEY: 'photoroom-fixture-secret' });
+  const result = f.run({ SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', AI_TRIAL_PREFLIGHT_VERIFIED: 'true', TYPESAFE_API_KEY: 'typesafe-fixture-secret', PHOTOROOM_API_KEY: 'sandbox_photoroom-fixture-secret' });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /provider configuration/);
   assert.equal(f.calls().length, 0);

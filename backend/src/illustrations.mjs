@@ -16,7 +16,7 @@ const cleared = "source=NULL,prepared=NULL";
 function compatiblePreparedVersions(serialized) {
   let versions;
   try { versions = JSON.parse(serialized); } catch { return false; }
-  // Switching these renderers does not change the sandbox source cutout.
+  // Switching renderers preserves segmentation; its billing mode is checked separately.
   return versions && ['fal-ai/nano-banana-pro/edit', illustrationVersions.modelVersion].includes(versions.modelVersion)
     && ((versions.templateVersion === illustrationVersions.templateVersion && versions.geometryVersion === illustrationVersions.geometryVersion)
       || (versions.modelVersion === 'gemini-3-pro-image' && versions.templateVersion === 'category-front-anchors-v2' && versions.geometryVersion === 'fitting-anchors-1024-v2')
@@ -91,6 +91,7 @@ export function createIllustrations(database, env, retention, budget) {
       expires_at INTEGER NOT NULL, PRIMARY KEY(item_id,photo_id));
     CREATE INDEX IF NOT EXISTS illustration_expiry ON illustrations(retention_state,expires_at);`);
   const illustrationColumns = new Set(database.prepare('PRAGMA table_info(illustrations)').all().map(column => column.name));
+  if (!illustrationColumns.has('photoroom_mode')) database.exec("ALTER TABLE illustrations ADD COLUMN photoroom_mode TEXT NOT NULL DEFAULT 'sandbox'");
   for (const column of ['result_digest', 'observed_digest', 'effective_digest']) if (!illustrationColumns.has(column)) database.exec(`ALTER TABLE illustrations ADD COLUMN ${column} TEXT`);
   // Existing undelivered v3 output has real bytes: bind them before any cleanup.
   for (const row of database.prepare('SELECT * FROM illustrations WHERE result IS NOT NULL OR observed IS NOT NULL OR effective IS NOT NULL').all()) {
@@ -117,6 +118,16 @@ export function createIllustrations(database, env, retention, budget) {
   }
   const sourceColumns = new Set(database.prepare('PRAGMA table_info(illustration_sources)').all().map(column => column.name));
   for (const column of ['prepared_digest', 'prepared_versions']) if (!sourceColumns.has(column)) database.exec(`ALTER TABLE illustration_sources ADD COLUMN ${column} TEXT`);
+  if (!sourceColumns.has('prepared_mode')) database.exec("ALTER TABLE illustration_sources ADD COLUMN prepared_mode TEXT NOT NULL DEFAULT 'sandbox'");
+  // Keep hash-only receipts so an older client cache can still be authenticated
+  // after a production preparation succeeds but a later generation fails.
+  database.exec(`CREATE TABLE IF NOT EXISTS prepared_source_receipts (
+    item_id TEXT NOT NULL, photo_id TEXT NOT NULL, digest TEXT NOT NULL,
+    versions TEXT NOT NULL, photoroom_mode TEXT NOT NULL,
+    PRIMARY KEY(item_id,photo_id,digest));
+    INSERT OR IGNORE INTO prepared_source_receipts
+      SELECT item_id,photo_id,prepared_digest,prepared_versions,prepared_mode FROM illustration_sources
+      WHERE prepared_digest IS NOT NULL AND prepared_versions IS NOT NULL;`);
   const provider = createIllustrationProvider(env), timers = new Map(), abort = new AbortController();
   let closing = false;
   const get = id => database.prepare('SELECT * FROM illustrations WHERE operation_id=?').get(id);
@@ -182,7 +193,8 @@ export function createIllustrations(database, env, retention, budget) {
     let row = live(operationId); if (!row) return;
     let stage = 'preparation';
     try {
-      if (row.mode !== provider.mode || row.versions !== json(illustrationVersions)) throw new ProviderError('provider_configuration_changed');
+      if (row.mode !== provider.mode || row.photoroom_mode !== provider.photoroomMode
+        || row.versions !== json(illustrationVersions)) throw new ProviderError('provider_configuration_changed');
       if (!await provider.available()) throw new ProviderError('illustration_unavailable');
       const inputs = parse(row.photos);
       const photos = [];
@@ -196,8 +208,11 @@ export function createIllustrations(database, env, retention, budget) {
           budget.reserve('photoroom', `${operationId}:preparation:${input.id}`);
           const prepared = await provider.prepare(Buffer.from(source.source), abort.signal);
           if (!live(operationId)) return;
-          database.prepare("UPDATE illustration_sources SET prepared=?,prepared_digest=?,prepared_versions=?,state='done' WHERE item_id=? AND photo_id=?")
-            .run(prepared, digest(prepared), json(illustrationVersions), row.item_id, input.id);
+          database.prepare("UPDATE illustration_sources SET prepared=?,prepared_digest=?,prepared_versions=?,prepared_mode=?,state='done' WHERE item_id=? AND photo_id=?")
+            .run(prepared, digest(prepared), json(illustrationVersions), provider.photoroomMode, row.item_id, input.id);
+          database.prepare(`INSERT INTO prepared_source_receipts VALUES (?,?,?,?,?)
+            ON CONFLICT(item_id,photo_id,digest) DO UPDATE SET versions=excluded.versions,photoroom_mode=excluded.photoroom_mode`)
+            .run(row.item_id, input.id, digest(prepared), json(illustrationVersions), provider.photoroomMode);
           source = { ...source, prepared };
         }
         photos.push({ ...input, source: Buffer.from(source.source), prepared: Buffer.from(source.prepared) });
@@ -306,10 +321,10 @@ export function createIllustrations(database, env, retention, budget) {
       database.exec('BEGIN IMMEDIATE');
       try {
         database.prepare(`INSERT INTO illustrations(operation_id,item_id,photo_version_id,source_set_version_id,revision,fingerprint,
-          photos,manual_type,manual_colors,mode,processing,expires_at,versions) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+          photos,manual_type,manual_colors,mode,processing,expires_at,versions,photoroom_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
           .run(input.operationId, input.itemId, input.photoVersionId, input.sourceSetVersionId, input.revision, input.fingerprint,
             json(input.photos.map(({ id, role, digest }) => ({ id, role, digest }))), input.manualType, json(input.manualColors), provider.mode,
-            json(Object.fromEntries(stages.map(stage => [stage, 'pending']))), deadline, json(illustrationVersions));
+            json(Object.fromEntries(stages.map(stage => [stage, 'pending']))), deadline, json(illustrationVersions), provider.photoroomMode);
         if (reusedObserved) {
           const effective = { ...reusedObserved, type: input.manualType ?? reusedObserved.type, colors: input.manualColors ?? reusedObserved.colors };
           database.prepare('UPDATE illustrations SET observed=?,effective=?,observed_digest=?,effective_digest=?,processing=? WHERE operation_id=?')
@@ -319,13 +334,24 @@ export function createIllustrations(database, env, retention, budget) {
         for (const photo of input.photos) {
           const known = database.prepare('SELECT * FROM illustration_sources WHERE item_id=? AND photo_id=?').get(input.itemId, photo.id);
           if (known && known.digest !== photo.digest) throw new RequestError(409, 'identity_conflict');
-          if (photo.prepared && (!known || known.prepared_digest !== digest(photo.prepared)
-            || !compatiblePreparedVersions(known.prepared_versions))) throw new RequestError(409, 'prepared_source_conflict');
+          const receipt = photo.prepared && database.prepare('SELECT * FROM prepared_source_receipts WHERE item_id=? AND photo_id=? AND digest=?')
+            .get(input.itemId, photo.id, digest(photo.prepared));
+          if (photo.prepared && (!known || !receipt || !compatiblePreparedVersions(receipt.versions))) throw new RequestError(409, 'prepared_source_conflict');
+          if (receipt && known.prepared_digest === receipt.digest && !compatiblePreparedVersions(known.prepared_versions)) {
+            throw new RequestError(409, 'prepared_source_conflict');
+          }
+          if (known && ['in_flight', 'unknown'].includes(known.state)) throw new RequestError(409, 'processing_unknown');
           database.prepare(`INSERT INTO illustration_sources(item_id,photo_id,digest,source,expires_at) VALUES (?,?,?,?,?)
             ON CONFLICT(item_id,photo_id) DO UPDATE SET source=excluded.source,expires_at=excluded.expires_at`)
             .run(input.itemId, photo.id, photo.digest, photo.source, deadline);
-          if (photo.prepared) database.prepare("UPDATE illustration_sources SET prepared=?,state='done' WHERE item_id=? AND photo_id=?")
-            .run(photo.prepared, input.itemId, photo.id);
+          if (known && known.prepared_mode !== provider.photoroomMode) {
+            database.prepare("UPDATE illustration_sources SET prepared=NULL,state='pending' WHERE item_id=? AND photo_id=?")
+              .run(input.itemId, photo.id);
+          }
+          if (receipt && receipt.photoroom_mode === provider.photoroomMode) {
+            database.prepare("UPDATE illustration_sources SET prepared=?,prepared_digest=?,prepared_versions=?,prepared_mode=?,state='done' WHERE item_id=? AND photo_id=?")
+              .run(photo.prepared, receipt.digest, receipt.versions, receipt.photoroom_mode, input.itemId, photo.id);
+          }
         }
         database.exec('COMMIT');
       } catch (error) { database.exec('ROLLBACK'); throw error; }

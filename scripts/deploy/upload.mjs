@@ -4,17 +4,20 @@ import { readFileSync, lstatSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateApiBudget } from '../../backend/src/provider-budget.mjs';
+import { configuredApiBudget } from '../../backend/src/provider-budget.mjs';
+import { photoroomConfiguration } from '../../backend/src/photoroom-config.mjs';
 try {
   const env = process.env;
   const app = env.FLY_APP_NAME;
   const profile = env.SAINT_LOOK_DEPLOYMENT_PROFILE || 'controlled-http';
   const illustrationsEnabled = env.SAINT_LOOK_ILLUSTRATIONS_ENABLED === 'true';
-  const apiBudget = env.SAINT_LOOK_API_BUDGET_JSON ? validateApiBudget(env.SAINT_LOOK_API_BUDGET_JSON) : null;
+  const budgetMode = env.SAINT_LOOK_API_BUDGET_MODE || 'trial';
+  const photoroom = photoroomConfiguration(env);
+  const apiBudget = env.SAINT_LOOK_API_BUDGET_JSON || budgetMode !== 'trial' ? configuredApiBudget(env) : null;
   if (illustrationsEnabled && !apiBudget) throw new Error('An explicitly approved API budget is required.');
-  if (illustrationsEnabled && (profile !== 'live' || !env.PHOTOROOM_API_KEY?.startsWith('sandbox_')
+  if (illustrationsEnabled && (profile !== 'live' || !photoroom.configured
     || !/^[A-Za-z0-9_+/.=:-]{8,1024}$/.test(env.GEMINI_API_KEY || ''))) {
-    throw new Error('Illustrations require explicit live configuration, sandbox Photoroom and Gemini credentials.');
+    throw new Error('Illustrations require explicit live configuration, approved Photoroom mode and Gemini credentials.');
   }
   const modelProfile = env.SAINT_LOOK_MODEL_PROFILE || 'disabled';
   const memoryMB = Number(env.SAINT_LOOK_FLY_MEMORY_MB || 1024);
@@ -26,7 +29,7 @@ try {
   }
   if (!['controlled-http', 'live'].includes(profile)) throw new Error('Unsupported deployment profile.');
   if (profile === 'live' && (env.AI_TRIAL_PREFLIGHT_VERIFIED !== 'true'
-    || ![env.TYPESAFE_API_KEY, env.PHOTOROOM_API_KEY].every(key => /^[A-Za-z0-9_+/.=-]{8,1024}$/.test(key || '')))) {
+    || !photoroom.configured || !/^[A-Za-z0-9_+/.=-]{8,1024}$/.test(env.TYPESAFE_API_KEY || ''))) {
     throw new Error('Live deployment requires verified account conditions and provider secrets.');
   }
   if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(app || '')) throw new Error('Configure an explicit Fly app name.');
@@ -43,6 +46,12 @@ try {
     }
     if (modelProfile !== 'disabled' && manifest.modelRuntime !== modelProfile) {
       throw new Error('Selected release does not support the requested model runtime.');
+    }
+    if (photoroom.mode === 'production' && !manifest.photoroomModes?.includes('production')) {
+      throw new Error('Selected release does not support production Photoroom.');
+    }
+    if (budgetMode === 'provider-quota' && !manifest.apiBudgetModes?.includes('provider-quota')) {
+      throw new Error('Selected release does not support provider-quota accounting.');
     }
   }
   const cliEnvironment = { ...env, NO_COLOR: '1' };
@@ -92,8 +101,8 @@ try {
   if (profile === 'live') {
     try {
       fly(['secrets', 'import', '--stage', '--app', app], 30000,
-        `TYPESAFE_API_KEY=${env.TYPESAFE_API_KEY}\nPHOTOROOM_API_KEY=${env.PHOTOROOM_API_KEY}\n`
-        + (illustrationsEnabled ? `PHOTOROOM_SANDBOX_API_KEY=${env.PHOTOROOM_API_KEY}\nGEMINI_API_KEY=${env.GEMINI_API_KEY}\n` : ''));
+        `TYPESAFE_API_KEY=${env.TYPESAFE_API_KEY}\nPHOTOROOM_API_KEY=${photoroom.key}\n`
+        + (illustrationsEnabled ? `${photoroom.mode === 'sandbox' ? `PHOTOROOM_SANDBOX_API_KEY=${photoroom.key}\n` : ''}GEMINI_API_KEY=${env.GEMINI_API_KEY}\n` : ''));
     } catch { throw new Error('Could not stage provider secrets. No deployment was started.'); }
   }
   const deploymentId = randomUUID();
@@ -105,13 +114,16 @@ try {
       '--env', `SAINT_LOOK_DEPLOYMENT_PROFILE=${profile}`,
       '--env', `SAINT_LOOK_MODEL_PROFILE=${modelProfile}`,
       '--env', `SAINT_LOOK_ILLUSTRATIONS_ENABLED=${illustrationsEnabled}`,
+      '--env', `SAINT_LOOK_PHOTOROOM_MODE=${photoroom.mode}`,
+      '--env', `PHOTOROOM_PRODUCTION_APPROVED=${photoroom.mode === 'production' && env.PHOTOROOM_PRODUCTION_APPROVED === 'true'}`,
+      '--env', `SAINT_LOOK_API_BUDGET_MODE=${budgetMode}`,
       '--env', `SAINT_LOOK_API_BUDGET_JSON=${apiBudget ? JSON.stringify(apiBudget) : ''}`,
       ...(modelProfile === 'disabled' ? [] : ['--env', 'SAINT_LOOK_MODEL_ASSETS=/opt/saint-look-model',
         '--env', 'SAINT_LOOK_MODEL_PYTHON=/opt/saint-look-ml/bin/python', '--env', 'SAINT_LOOK_MODEL_THREADS=1']),
       '--env', `SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED=${profile === 'live'}`, '--yes'], 600000);
   } catch { throw new Error('Fly deploy did not complete. Check Fly before attempting another deployment.'); }
   // This is our per-attempt marker, injected into the deployed process, not a Fly resource ID.
-  console.log(JSON.stringify({ revision, deploymentId, profile, modelProfile, memoryMB }));
+  console.log(JSON.stringify({ revision, deploymentId, profile, modelProfile, memoryMB, photoroomMode: photoroom.mode, apiBudgetMode: budgetMode }));
 } catch (error) {
   console.error(error instanceof Error && !error.message.includes('Command failed') ? error.message : 'Deployment upload failed.');
   process.exitCode = 1;

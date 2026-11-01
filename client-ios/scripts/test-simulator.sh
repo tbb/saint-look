@@ -266,8 +266,8 @@ if [[ "${SAINT_LOOK_LIVE_TRIAL:-0}" == '1' ]]; then
 import hashlib, json, os, re
 from pathlib import Path
 count = int(os.environ.get('SAINT_LOOK_TRIAL_PHOTO_COUNT', '0'))
-if count not in (2, 3):
-    raise SystemExit('Select two or three approved photos.')
+if count not in (1, 2, 3):
+    raise SystemExit('Select one to three approved photos.')
 folder = Path('SaintLook/TrialPhotos')
 manifest = json.loads((folder / 'manifest.json').read_text())
 photos = manifest['photos'][:count]

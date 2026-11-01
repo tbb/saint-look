@@ -12,6 +12,7 @@ import { providerFixture } from './providers/fixture.mjs';
 import { environment, photoRequest, upload, waitForItem } from './support.mjs';
 import { illustrationFixture } from './providers/illustration.mjs';
 import { createIllustrationProvider } from '../src/illustration-provider.mjs';
+import sharp from 'sharp';
 
 function illustration(photo, changes = {}) {
   return { operationId: randomUUID(), photoVersionId: photo.photoVersionId,
@@ -306,6 +307,55 @@ test('locally saved prepared sources survive acknowledgement and avoid sandbox c
   const bad = { ...refresh, operationId: randomUUID(), revision: 3, photos: [{ ...input.photos[0], preparedBase64: input.photos[0].imageBase64 }] };
   assert.equal((await requestIllustration(server, photo.itemId, bad)).status, 409);
   assert.equal(fixture.calls.preparation.length, 1);
+});
+
+test('production refresh replaces sandbox cache and accepts that old cache again after a later generation failure', async t => {
+  const handlers = { preparation: async (request, response, { body }) => {
+    const start = body.indexOf(Buffer.from('\x89PNG', 'latin1'));
+    const end = body.indexOf(Buffer.from('\r\n--'), start);
+    const { width, height } = await sharp(body.subarray(start, end)).metadata();
+    const color = request.headers['x-api-key'].startsWith('sandbox_') ? '#dd3322ff' : '#2255ddff';
+    const image = await sharp({ create: { width, height, channels: 4, background: '#00000000' } })
+      .composite([{ input: await sharp({ create: { width: width - 2, height: height - 2, channels: 4, background: color } }).png().toBuffer(), left: 1, top: 1 }]).png().toBuffer();
+    response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(image);
+  } };
+  const fixture = await illustrationFixture(t, handlers), env = await environment(t);
+  let server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  const first = await waitForIllustration(server, photo.itemId, input.operationId);
+  const sandboxCache = Buffer.from(await (await server.request(first.preparedSources[0].preparedPath)).arrayBuffer()).toString('base64');
+  assert.equal((await commitIllustration(server, photo, input)).response.status, 204);
+  await server.stop();
+  handlers.generation = async (_, response) => { response.writeHead(422); response.end('{}'); };
+  const production = { ...fixture.env, SAINT_LOOK_PHOTOROOM_MODE: 'production', PHOTOROOM_PRODUCTION_APPROVED: 'true',
+    PHOTOROOM_API_KEY: 'production-fixture-key' };
+  server = await env.launch(production);
+  const refresh = { ...input, operationId: randomUUID(), revision: 2, photos: [{ ...input.photos[0], preparedBase64: sandboxCache }] };
+  assert.equal((await requestIllustration(server, photo.itemId, refresh)).status, 202);
+  assert.equal((await waitForIllustration(server, photo.itemId, refresh.operationId, 'failed')).error, 'provider_rejected');
+  assert.equal(fixture.calls.preparation.length, 2, 'Sandbox cache must be reprocessed from the original');
+  assert.equal(fixture.calls.preparation[1].headers['x-api-key'], 'production-fixture-key');
+  await server.stop(); server = await env.launch(production);
+  delete handlers.generation;
+  const retry = { ...refresh, operationId: randomUUID(), revision: 3 };
+  assert.equal((await requestIllustration(server, photo.itemId, retry)).status, 202, 'Previously issued sandbox cache remains authentic after a failed production refresh');
+  const ready = await waitForIllustration(server, photo.itemId, retry.operationId);
+  const productionCache = Buffer.from(await (await server.request(ready.preparedSources[0].preparedPath)).arrayBuffer()).toString('base64');
+  assert.notEqual(productionCache, sandboxCache);
+  assert.equal(fixture.calls.preparation.length, 2, 'Retained successful production preparation is reused');
+  assert.equal(fixture.calls.finalization.at(-1).headers['x-api-key'], 'production-fixture-key');
+  assert.equal((await commitIllustration(server, photo, retry, 2)).response.status, 204);
+  const next = { ...retry, operationId: randomUUID(), revision: 4, photos: [{ ...input.photos[0], preparedBase64: productionCache }] };
+  assert.equal((await requestIllustration(server, photo.itemId, next)).status, 202);
+  await waitForIllustration(server, photo.itemId, next.operationId);
+  assert.equal(fixture.calls.preparation.length, 2, 'Delivered production cache avoids another segmentation');
+  const forged = { ...next, operationId: randomUUID(), revision: 5, photos: [{ ...input.photos[0], preparedBase64: input.photos[0].imageBase64 }] };
+  assert.equal((await requestIllustration(server, photo.itemId, forged)).status, 409);
+  assert.equal((await server.request(`/v1/items/${photo.itemId}`, { method: 'DELETE' })).status, 204);
+  const database = new DatabaseSync(join(env.directory, 'wardrobe.sqlite'));
+  assert.equal(database.prepare('SELECT COUNT(*) AS n FROM prepared_source_receipts WHERE item_id=?').get(photo.itemId).n, 0);
+  database.close();
 });
 
 test('a completed source set stays immutable after delivery and restart, while attribute updates retain its identity', async t => {

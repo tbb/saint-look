@@ -2,6 +2,7 @@ import sharp from 'sharp';
 import { readFileSync } from 'node:fs';
 import { exchange, ProviderError } from './providers.mjs';
 import { featureRequest, featureAnswer } from './illustration-features.mjs';
+import { photoroomConfiguration } from './photoroom-config.mjs';
 import { layoutGuide, layoutPoseGuide, layoutInstructions, registerGarmentLayout, templateVersion, layoutVersion } from './illustration-layout.mjs';
 
 export const illustrationVersions = Object.freeze({ modelVersion: 'gemini-3-pro-image',
@@ -29,8 +30,8 @@ export function createIllustrationProvider(env) {
   const origin = env.SAINT_LOOK_ILLUSTRATION_TEST_ORIGIN;
   const timeout = Number(env.SAINT_LOOK_ILLUSTRATION_TIMEOUT_MS || 60000);
   let configured = env.SAINT_LOOK_ILLUSTRATIONS_ENABLED === 'true';
-  const key = env.PHOTOROOM_SANDBOX_API_KEY;
-  if (!key?.startsWith('sandbox_') || !env.TYPESAFE_API_KEY?.trim() || !env.GEMINI_API_KEY?.trim()
+  const photoroom = photoroomConfiguration(env), key = photoroom.key;
+  if (!photoroom.configured || !env.TYPESAFE_API_KEY?.trim() || !env.GEMINI_API_KEY?.trim()
     || !Number.isInteger(timeout) || timeout < 50 || timeout > 120000
   ) configured = false;
   if (origin) {
@@ -50,6 +51,7 @@ export function createIllustrationProvider(env) {
   function ensureConfigured() { if (!configured) throw new ProviderError('illustration_unavailable'); }
   return {
     mode: origin ? 'test' : 'live',
+    photoroomMode: photoroom.mode,
     async available() {
       if (!configured) return false;
       if (env.SAINT_LOOK_ILLUSTRATION_TEST_CONTROLLED === 'true') {

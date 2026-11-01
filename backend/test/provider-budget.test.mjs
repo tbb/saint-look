@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { createProviderBudget, validateApiBudget } from '../src/provider-budget.mjs';
+import { createProviderBudget, validateApiBudget, configuredApiBudget } from '../src/provider-budget.mjs';
 import { environment, photoRequest, upload, waitForItem } from './support.mjs';
 import { providerFixture } from './providers/fixture.mjs';
 import { illustrationFixture } from './providers/illustration.mjs';
@@ -84,6 +84,47 @@ function fullPolicy(maxCostMicrousd = 4500000) {
 }
 const reservations = database => database.prepare('SELECT * FROM provider_reservations ORDER BY provider,operation_key').all();
 const storedPolicy = database => JSON.parse(database.prepare('SELECT policy FROM provider_budgets').get().policy);
+
+const productionQuota = { NODE_ENV: 'production', SAINT_LOOK_API_BUDGET_MODE: 'provider-quota',
+  SAINT_LOOK_PHOTOROOM_MODE: 'production', PHOTOROOM_PRODUCTION_APPROVED: 'true' };
+
+test('provider quota removes trial caps and expiry but preserves historical reservations and duplicate protection', () => {
+  const database = new DatabaseSync(':memory:');
+  try {
+    const env = { NODE_ENV: 'production', SAINT_LOOK_API_BUDGET_JSON: JSON.stringify(fullPolicy(8800000)) };
+    let budget = createProviderBudget(database, env);
+    budget.reserve('photoroom', 'old-sandbox'); budget.reserve('gemini', 'already-paid');
+    const before = reservations(database);
+    Object.assign(env, productionQuota);
+    env.SAINT_LOOK_API_BUDGET_JSON = JSON.stringify({ ...fullPolicy(), pricesCheckedAt: '2020-01-01T00:00:00Z' });
+    budget = createProviderBudget(database, env);
+    assert.equal(budget.available(), true);
+    assert.deepEqual(reservations(database), before);
+    for (let index = 0; index < 80; index++) budget.reserve('gemini', `production-${index}`);
+    budget.reserve('photoroom', 'production-cutout');
+    assert.equal(budget.available(), true);
+    assert.equal(storedPolicy(database).mode, 'provider-quota');
+    const rows = reservations(database);
+    assert.equal(rows.find(row => row.operation_key === 'old-sandbox').cost_microusd, 0);
+    assert.equal(rows.find(row => row.operation_key === 'production-cutout').cost_microusd, 20000);
+    assert.ok(rows.reduce((sum, row) => sum + row.cost_microusd, 0) > 28800000);
+    budget = createProviderBudget(database, env);
+    assert.throws(() => budget.reserve('gemini', 'already-paid'), { code: 'provider_request_already_reserved' });
+    assert.throws(() => budget.reserve('photoroom', 'production-cutout'), { code: 'provider_request_already_reserved' });
+    assert.deepEqual(reservations(database), rows);
+    env.SAINT_LOOK_API_BUDGET_MODE = 'trial'; env.SAINT_LOOK_API_BUDGET_JSON = JSON.stringify(fullPolicy(8800000));
+    assert.equal(budget.available(), false, 'A return to trial must not forgive production reservations');
+    assert.equal(storedPolicy(database).mode, 'provider-quota');
+  } finally { database.close(); }
+});
+
+test('provider-quota configuration cannot be enabled by a key, stale policy or unapproved production mode', () => {
+  assert.equal(configuredApiBudget(productionQuota).mode, 'provider-quota');
+  for (const overrides of [{ SAINT_LOOK_API_BUDGET_MODE: 'typo' }, { PHOTOROOM_PRODUCTION_APPROVED: '' },
+    { SAINT_LOOK_PHOTOROOM_MODE: 'sandbox' }, { SAINT_LOOK_API_BUDGET_MODE: '' }]) {
+    assert.throws(() => configuredApiBudget({ ...productionQuota, ...overrides }), { code: 'provider_budget_not_approved' });
+  }
+});
 
 test('raises only the known same-ID cap, retaining reservations, failures, legacy counts and unknown cost', () => {
   const database = new DatabaseSync(':memory:');

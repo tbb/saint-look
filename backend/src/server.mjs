@@ -19,6 +19,7 @@ import { createComposeRecommendations } from './recommendations-compose.mjs';
 import { createPreparations } from './preparations.mjs';
 import { publicationProtocol } from './publication-contract.mjs';
 import { createIllustrations } from './illustrations.mjs';
+import { photoroomConfiguration } from './photoroom-config.mjs';
 
 const revision = readRevision();
 
@@ -72,6 +73,7 @@ const server = createServer(async (request, response) => {
   try {
     const path = new URL(request.url, 'http://localhost').pathname;
     if (request.method === 'GET' && path === '/health') { const configuration = await preparations.config(); return send(response, 200, { status: 'ok', mode: provider.mode, revision, dataVersion: release.dataVersion, illustrationAvailable: await illustrations.available(), encoderAvailable: configuration.encoder.available, preparationAvailable: configuration.newItemPreparation.available, publicationProtocol,
+      photoroomMode: photoroomConfiguration(process.env).mode, apiBudgetMode: process.env.SAINT_LOOK_API_BUDGET_MODE || 'trial',
       ...(process.env.SAINT_LOOK_DEPLOYMENT_ID ? { deploymentId: process.env.SAINT_LOOK_DEPLOYMENT_ID } : {}) }); }
     if (!authorized(request)) return send(response, 401, { error: 'unauthorized' });
     retention.sweep();

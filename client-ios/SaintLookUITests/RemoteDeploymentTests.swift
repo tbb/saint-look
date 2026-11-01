@@ -95,7 +95,7 @@ final class LiveTrialTests: XCTestCase {
         guard env["SAINT_LOOK_LIVE_TRIAL"] == "1" else { throw XCTSkip("Live trial requires explicit account and photo preflight.") }
         continueAfterFailure = false
         let count = try XCTUnwrap(Int(env["SAINT_LOOK_TRIAL_PHOTO_COUNT"] ?? ""))
-        guard [2, 3].contains(count) else { XCTFail("Select two or three approved photos."); return }
+        guard [1, 2, 3].contains(count) else { XCTFail("Select one to three approved photos."); return }
         let origin = try XCTUnwrap(env["SAINT_LOOK_REMOTE_URL"])
         let url = try XCTUnwrap(URL(string: origin))
         guard url.scheme == "https", url.host != nil, url.user == nil, url.password == nil,

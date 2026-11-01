@@ -7,6 +7,9 @@ const ceilings = { photoroom: 60, jev: 48, gemini: 24 };
 const expandedCeilings = { photoroom: 135, jev: 70, gemini: 65 };
 const expandedCap = 28800000;
 const prices = { photoroom: 0, jev: 2753, gemini: 400000 };
+// Estimated reservations, not provider invoices. Historical sandbox rows stay $0.
+const quotaPolicy = { id: 'epic63-public-v1-5d85dde081e8', approved: true, mode: 'provider-quota',
+  ratesMicrousd: { photoroom: 20000, jev: 2753, gemini: 400000 } };
 export class ProviderBudgetError extends Error {
   constructor(code) { super(code); this.code = code; }
 }
@@ -28,10 +31,21 @@ export function validateApiBudget(input, now = Date.now()) {
     ratesMicrousd: { ...prices }, maxCostMicrousd: value.maxCostMicrousd };
 }
 
+export function configuredApiBudget(env) {
+  const mode = env.SAINT_LOOK_API_BUDGET_MODE || 'trial';
+  if (mode === 'trial') return validateApiBudget(env.SAINT_LOOK_API_BUDGET_JSON);
+  // The owner explicitly lifted the trial limits on 2026-11-01. Selecting this
+  // mode is a deliberate deployment setting; presence of a key never enables it.
+  if (mode === 'provider-quota' && env.SAINT_LOOK_PHOTOROOM_MODE === 'production'
+    && env.PHOTOROOM_PRODUCTION_APPROVED === 'true') return structuredClone(quotaPolicy);
+  throw new ProviderBudgetError('provider_budget_not_approved');
+}
+
 export function createProviderBudget(database, env) {
   // Controlled tests never spend money. An explicit policy exercises the same
   // persistent accounting through HTTP; production has no bypass.
-  if (env.NODE_ENV === 'test' && !env.SAINT_LOOK_API_BUDGET_JSON && env.SAINT_LOOK_TEST_REQUIRE_API_BUDGET !== 'true') {
+  if (env.NODE_ENV === 'test' && !env.SAINT_LOOK_API_BUDGET_JSON && (!env.SAINT_LOOK_API_BUDGET_MODE || env.SAINT_LOOK_API_BUDGET_MODE === 'trial')
+    && env.SAINT_LOOK_TEST_REQUIRE_API_BUDGET !== 'true') {
     return { reserve() {}, available() { return true; } };
   }
   database.exec(`CREATE TABLE IF NOT EXISTS provider_budgets (id TEXT PRIMARY KEY, policy TEXT NOT NULL);
@@ -40,12 +54,13 @@ export function createProviderBudget(database, env) {
       cost_microusd INTEGER NOT NULL, reserved_at INTEGER NOT NULL,
       PRIMARY KEY(budget_id, provider, operation_key)
     )`);
-  const readPolicy = () => validateApiBudget(env.SAINT_LOOK_API_BUDGET_JSON);
+  const readPolicy = () => configuredApiBudget(env);
   function policyIdentity(policy) {
     const { pricesCheckedAt, ...identity } = policy;
     return JSON.stringify(identity);
   }
   function remaining(policy, provider) {
+    if (policy.mode === 'provider-quota') return true;
     const total = database.prepare('SELECT COALESCE(SUM(cost_microusd),0) AS cost FROM provider_reservations WHERE budget_id=?').get(policy.id).cost;
     // Keep Nano Banana trial counts continuous across the fal -> Gemini rename.
     const count = provider === 'gemini'
@@ -61,6 +76,12 @@ export function createProviderBudget(database, env) {
     // reservation rows remain untouched and continue contributing to total cost.
     let previous;
     try { previous = JSON.parse(old.policy); } catch {}
+    let knownTrial = false;
+    try {
+      knownTrial = old.policy === policyIdentity(validateApiBudget({ ...previous, pricesCheckedAt: new Date().toISOString() }));
+    } catch {}
+    const isQuotaAdmission = policy.mode === 'provider-quota' && knownTrial;
+    const isQuotaReturn = !policy.mode && old.policy === policyIdentity(quotaPolicy);
     const isFalPolicy = previous?.id === policy.id && previous.approved === true
       && previous.maxCostMicrousd === 4500000 && policy.maxCostMicrousd === 4500000
       && JSON.stringify(previous.limits) === JSON.stringify({ photoroom: 60, jev: 48, fal: 24 })
@@ -75,8 +96,8 @@ export function createProviderBudget(database, env) {
     const isOwnerExpansion = policy.maxCostMicrousd === expandedCap
       && JSON.stringify(policy.limits) === JSON.stringify(expandedCeilings)
       && old.policy === policyIdentity({ ...policy, limits: ceilings, maxCostMicrousd: 8800000 });
-    if (!isFalPolicy && !isGeminiCapChange && !isOwnerExpansion) throw new ProviderBudgetError('provider_budget_not_approved');
-    if (isGeminiCapChange && policy.maxCostMicrousd === 4500000) {
+    if (!isFalPolicy && !isGeminiCapChange && !isOwnerExpansion && !isQuotaAdmission && !isQuotaReturn) throw new ProviderBudgetError('provider_budget_not_approved');
+    if (isQuotaReturn || (isGeminiCapChange && policy.maxCostMicrousd === 4500000)) {
       // Atomic with the cost condition even when available() performs the downgrade.
       // Every historical/unknown provider reservation contributes; nothing is reset.
       const changed = database.prepare(`UPDATE provider_budgets SET policy=? WHERE id=? AND
