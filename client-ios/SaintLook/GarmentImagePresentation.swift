@@ -4,12 +4,14 @@ import CoreGraphics
 /// Presentation copies only. The published square remains the fitting coordinate system.
 enum GarmentImagePresentation {
     static func preview(_ image: CGImage) -> CGImage {
-        // Zero-alpha margins carry placement, not visible content. Keep every
-        // nonzero-alpha pixel, including antialiasing and sandbox watermarks.
+        // Placement margins can contain alpha=1 quantization noise from the matte.
+        // Ignore only that sub-0.4% opacity when finding preview bounds; retain
+        // every stronger mark, including translucent fabric and watermarks.
+        // The published fitting asset and pixels inside the crop stay untouched.
         guard let pixels = rgba(image) else { return image }
         var left = image.width, top = image.height, right = -1, bottom = -1
         for y in 0..<image.height {
-            for x in 0..<image.width where pixels[(y * image.width + x) * 4 + 3] != 0 {
+            for x in 0..<image.width where pixels[(y * image.width + x) * 4 + 3] > 1 {
                 left = min(left, x); right = max(right, x)
                 top = min(top, y); bottom = max(bottom, y)
             }

@@ -47,17 +47,18 @@ try{
  const features=input.features||await call('attributes',()=>provider.attributes(photos,new AbortController().signal));
  const proportions=await measureTopProportions(prepared,features);state.proportions=proportions;
  state.features=features;save();console.log(JSON.stringify({stage:'features',type:features.type,traits:features.traits}));
- for(const variant of (process.env.TRIAL_ITEM==='hoodie'?['sleeve-guide','pose-last']:['source-edit'])){
+ for(const variant of (process.env.TRIAL_ITEM==='hoodie'?['unfold','ghost']:['source-edit'])){
   let generated;
   if(variant==='baseline')generated=(await call(variant+'-generation',()=>baseline.generate(photos,features,new AbortController().signal,id=>{state.baselineReceipt=id;save();}))).png;
   else{
    const edit=garmentEditInstructions(features,proportions);
+   const simple=variant==='unfold'?'Unfold both sleeves of this exact garment. Lay the garment front-facing with BOTH sleeves completely straight, almost vertical and slanting OUTWARDS by 15 degrees. Move the cuffs to the bottom LEFT and bottom RIGHT, outside the torso. Neither sleeve may overlap the front of the body or pocket. Show the entire front body unobstructed. Keep exactly TWO attached sleeves, no detached parts. Preserve the original roomy body cut, length, fabric, colours and all graphic artwork in their original positions. Keep the hood raised around an invisible head. Show only the garment on plain white. Detailed faithful editorial product illustration, entire garment large within 1024x1024.':'Make a front-view ghost mannequin product image of this exact garment, as worn by an invisible person standing upright with both arms straight DOWN, angled slightly OUTWARDS 15 degrees. Both cuffs must be at the outside bottom corners, away from the stomach. Sleeves are fully extended, never folded or crossed. Hood is raised. No visible person or mannequin, only the garment. Preserve its loose cut, relative body width and length, material, colour, pockets and every original print, symbol and graphic placement. Plain white background. Entire garment visible, detailed product illustration, 1024x1024.';
    const payload={model:'gemini-3-pro-image',store:true,generation_config:{max_output_tokens:2048},
-    input:[...(variant!=='pose-last'?[{type:'image',mime_type:'image/png',data:(await generationPoseGuide(features)).toString('base64')}]:[]),
+    input:[...(process.env.TRIAL_ITEM!=='hoodie'?[{type:'image',mime_type:'image/png',data:(await generationPoseGuide(features)).toString('base64')}]:[]),
       {type:'image',mime_type:'image/png',data:png.toString('base64')},
       {type:'image',mime_type:'image/png',data:prepared.toString('base64')},
       ...(variant==='pose-last'?[{type:'image',mime_type:'image/png',data:(await generationPoseGuide(features)).toString('base64')}]:[]),
-      {type:'text',text:variant==='pose-last'?edit.replace('Edit the LAST image','Edit the supplied garment photograph').replace('The first guide','The LAST guide')+' The last guide gives ONLY the new sleeve pose; keep the photographed body and all its graphics faithful.':edit}],
+      {type:'text',text:process.env.TRIAL_ITEM==='hoodie'?simple:edit}],
     response_format:{type:'image',mime_type:'image/jpeg',aspect_ratio:'1:1',image_size:'1K'}};
    const result=await call(variant+'-generation',async()=>JSON.parse(await exchange('https://generativelanguage.googleapis.com/v1beta/interactions',
     {method:'POST',headers:{'x-goog-api-key':process.env.GEMINI_API_KEY,'Content-Type':'application/json'},body:JSON.stringify(payload)},new AbortController().signal,120000,14*1024*1024)));
