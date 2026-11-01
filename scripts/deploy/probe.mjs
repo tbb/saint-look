@@ -37,6 +37,9 @@ try {
       const response = await fetch(base + '/health', { redirect: 'error', signal: AbortSignal.timeout(5000) });
       const health = response.ok ? await response.json() : null;
       if (health?.status === 'ok' && health.mode === expectedMode && health.revision === revision && health.dataVersion === dataVersion && health.deploymentId === deploymentId
+        && (!env.SAINT_LOOK_EXPECTED_PHOTOROOM_MODE || health.photoroomMode === env.SAINT_LOOK_EXPECTED_PHOTOROOM_MODE)
+        && (!env.SAINT_LOOK_EXPECTED_API_BUDGET_MODE || health.apiBudgetMode === env.SAINT_LOOK_EXPECTED_API_BUDGET_MODE)
+        && (env.SAINT_LOOK_EXPECT_PREPARATION !== 'true' || (health.illustrationAvailable === true && health.preparationAvailable === true))
         && (!expectsModel || health.encoderAvailable === true)) {
         ready = true; break;
       }

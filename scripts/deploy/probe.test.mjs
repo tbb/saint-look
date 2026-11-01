@@ -135,3 +135,23 @@ test('real-model release probe verifies authenticated real mode and active space
   assert.ok(f.requests.every(r => r.method === 'GET' && ['/health', '/v1/recommendations/config'].includes(r.url)));
   assert.ok(f.requests.filter(r => r.url === '/health').every(r => !r.authorization));
 });
+
+
+test('production readiness requires selected provider modes and full preparation before admitting a live release', async t => {
+  const health = { status: 'ok', mode: 'live', revision, dataVersion: 4, deploymentId: 'deployment-new',
+    photoroomMode: 'sandbox', apiBudgetMode: 'trial', illustrationAvailable: false, preparationAvailable: false };
+  const f = await fixture(t, health);
+  const selected = { SAINT_LOOK_DEPLOYMENT_PROFILE: 'live', SAINT_LOOK_EXPECTED_DATA_VERSION: '4', SAINT_LOOK_EXPECTED_PHOTOROOM_MODE: 'production',
+    SAINT_LOOK_EXPECTED_API_BUDGET_MODE: 'provider-quota', SAINT_LOOK_EXPECT_PREPARATION: 'true' };
+  assert.equal((await f.run(selected, ['health'])).code, 1);
+  health.photoroomMode = 'production';
+  assert.equal((await f.run(selected, ['health'])).code, 1);
+  health.apiBudgetMode = 'provider-quota';
+  assert.equal((await f.run(selected, ['health'])).code, 1);
+  health.illustrationAvailable = true;
+  assert.equal((await f.run(selected, ['health'])).code, 1);
+  health.preparationAvailable = true;
+  const result = await f.run(selected, ['health']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(f.requests.every(r => r.url === '/health' && r.method === 'GET' && !r.authorization));
+});

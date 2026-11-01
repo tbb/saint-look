@@ -122,11 +122,31 @@ unknown.
 ## Конфигурация и миграция
 
 Реальный путь требует явного `SAINT_LOOK_ILLUSTRATIONS_ENABLED=true`, серверных
-`PHOTOROOM_SANDBOX_API_KEY` (только `sandbox_…`), `TYPESAFE_API_KEY`, `GEMINI_API_KEY`.
-По умолчанию он отключён; этот документ не включает его и не разрешает новую
-пробу. Цепочка: Photoroom sandbox → JEV → Gemini Nano Banana Pro → Photoroom sandbox
+`TYPESAFE_API_KEY`, `GEMINI_API_KEY` и выбранного Photoroom-ключа.
+`SAINT_LOOK_PHOTOROOM_MODE=sandbox` (по умолчанию) требует `sandbox_…`;
+`production` требует `PHOTOROOM_API_KEY` без sandbox-префикса и
+`PHOTOROOM_PRODUCTION_APPROVED=true`. В обоих случаях отсутствие подходящего
+ключа отключает доступность, без fallback. Этот документ сам по себе не включает
+обработку. Цепочка: выбранный Photoroom → JEV → Gemini Nano Banana Pro → тот же Photoroom
 для снятия фона у непрозрачного JPEG. Оригинал и подготовленный ракурс идут
 отдельными подписанными референсами; манекен передаётся только генератору.
+
+По разрешению владельца от 1 ноября 2026 `SAINT_LOOK_API_BUDGET_MODE=provider-quota`
+в production отменяет внутренние пробные ограничения и ежедневное истечение
+допуска, сохраняя журнал и запрет повторных платных вызовов. Режим `trial`
+сохраняет прежние строгие проверки политики. `/health` явно возвращает
+`photoroomMode` и `apiBudgetMode`; wire-версия признаков
+`fitting-observable-v2-photoroom-sandbox` остаётся прежней ради совместимости
+существующего клиента и не обозначает фактический billing mode.
+
+Сервер хранит billing mode операции и подготовки исходника, а после очистки —
+хеши ранее выданных подготовленных копий. При явном обновлении sandbox-кэш
+аутентифицируется, но production заново сегментирует оригинал. Старый кэш не
+становится поддельным после сбоя последующей генерации: его receipt сохраняется.
+Кэш production повторно используется; неизвестные хеши отклоняются. При удалении
+вещи удаляются и эти hash-only receipts. Уже выполнявшаяся операция не меняет
+провайдера при рестарте: старые pending-операции другого режима завершаются
+`provider_configuration_changed`, неизвестные исходы сохраняют запрет повтора.
 
 CI использует `NODE_ENV=test` и `SAINT_LOOK_ILLUSTRATION_TEST_ORIGIN` с loopback
 HTTP. Внешний адрес или отсутствие test-origin при NODE_ENV=test запрещает

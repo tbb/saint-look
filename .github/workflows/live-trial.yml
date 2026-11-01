@@ -17,7 +17,7 @@ on:
         required: true
         default: '2'
         type: choice
-        options: ['2', '3']
+        options: ['1', '2', '3']
 
 permissions:
   contents: read
@@ -76,6 +76,13 @@ jobs:
           const proof = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/release-proof.json', 'utf8'));
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `data_version=${proof.dataVersion}\n`);
           JS
+      - name: Verify production Photoroom account without processing an image
+        if: vars.SAINT_LOOK_PHOTOROOM_MODE == 'production'
+        env:
+          SAINT_LOOK_PHOTOROOM_MODE: production
+          PHOTOROOM_PRODUCTION_APPROVED: ${{ vars.PHOTOROOM_PRODUCTION_APPROVED }}
+          PHOTOROOM_API_KEY: ${{ secrets.PHOTOROOM_API_KEY }}
+        run: node scripts/deploy/photoroom-account.mjs
       - name: Install pinned Fly CLI
         run: |
           mkdir -p "$RUNNER_TEMP/fly-bin"
@@ -94,9 +101,11 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SAINT_LOOK_ILLUSTRATIONS_ENABLED: ${{ vars.SAINT_LOOK_ILLUSTRATIONS_ENABLED }}
           SAINT_LOOK_API_BUDGET_JSON: ${{ vars.SAINT_LOOK_API_BUDGET_JSON }}
-          # Owner chose sandbox on 2026-10-26. Production requires a new explicit request.
-          # Keep the production secret stored separately; never fall back to it.
-          PHOTOROOM_API_KEY: ${{ secrets.PHOTOROOM_SANDBOX_API_KEY }}
+          SAINT_LOOK_API_BUDGET_MODE: ${{ vars.SAINT_LOOK_API_BUDGET_MODE || 'trial' }}
+          SAINT_LOOK_PHOTOROOM_MODE: ${{ vars.SAINT_LOOK_PHOTOROOM_MODE || 'sandbox' }}
+          PHOTOROOM_PRODUCTION_APPROVED: ${{ vars.PHOTOROOM_PRODUCTION_APPROVED }}
+          # Select the secret name, not a fallback value. Missing credentials fail before Fly.
+          PHOTOROOM_API_KEY: ${{ secrets[vars.SAINT_LOOK_PHOTOROOM_MODE == 'production' && 'PHOTOROOM_API_KEY' || 'PHOTOROOM_SANDBOX_API_KEY'] }}
         run: |
           node scripts/deploy/upload.mjs "$RUNNER_TEMP/release" > "$RUNNER_TEMP/deployment.json"
           node - <<'JS'
@@ -112,6 +121,9 @@ jobs:
           SAINT_LOOK_EXPECTED_DEPLOYMENT_ID: ${{ steps.upload.outputs.deployment_id }}
           SAINT_LOOK_EXPECTED_DATA_VERSION: ${{ steps.release.outputs.data_version }}
           SAINT_LOOK_EXPECTED_MODEL_PROFILE: ${{ vars.SAINT_LOOK_MODEL_PROFILE || 'disabled' }}
+          SAINT_LOOK_EXPECTED_PHOTOROOM_MODE: ${{ vars.SAINT_LOOK_PHOTOROOM_MODE || 'sandbox' }}
+          SAINT_LOOK_EXPECTED_API_BUDGET_MODE: ${{ vars.SAINT_LOOK_API_BUDGET_MODE || 'trial' }}
+          SAINT_LOOK_EXPECT_PREPARATION: ${{ vars.SAINT_LOOK_ILLUSTRATIONS_ENABLED }}
         run: node scripts/deploy/probe.mjs health
       - name: Record deployment identity
         env:

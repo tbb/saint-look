@@ -1,6 +1,7 @@
 import sharp from 'sharp';
 import { demoResult } from './demo-provider.mjs';
 import { jevRequest, jevAttributes, providerConfig } from './jev.mjs';
+import { photoroomConfiguration } from './photoroom-config.mjs';
 
 export class ProviderError extends Error {
   constructor(code, unknown = false) { super(code); this.code = code; this.unknown = unknown; }
@@ -45,6 +46,7 @@ export function createProviders(env) {
     async cutout() { return (await demoResult()).image; },
   };
   const testOrigin = env.SAINT_LOOK_TEST_PROVIDER_ORIGIN;
+  const photoroom = photoroomConfiguration(env);
   const timeout = Number(env.SAINT_LOOK_PROVIDER_TIMEOUT_MS || 60000);
   const attributesURL = `${testOrigin || 'https://api.typesafe.ai'}/v1/systemone`;
   const cutoutURL = `${testOrigin || 'https://sdk.photoroom.com'}/v1/segment`;
@@ -54,6 +56,7 @@ export function createProviders(env) {
       if (source.length > 5 * 1024 * 1024) throw new ProviderError('image_too_large');
       if (!Number.isInteger(timeout) || timeout < 50 || timeout > 120000) throw new ProviderError('provider_not_configured');
       if (!env.TYPESAFE_API_KEY?.trim() || !env.PHOTOROOM_API_KEY?.trim()) throw new ProviderError('provider_not_configured');
+      if (!testOrigin && !photoroom.configured) throw new ProviderError('provider_not_configured');
       if (env.NODE_ENV === 'test' && !testOrigin) throw new ProviderError('provider_not_configured');
       if (testOrigin) {
         let origin;
@@ -78,10 +81,11 @@ export function createProviders(env) {
       }
     },
     async cutout(source, signal) {
+      if (!testOrigin && !photoroom.configured) throw new ProviderError('provider_not_configured');
       const body = new FormData();
       body.set('image_file', new Blob([source], { type: 'image/png' }), 'item.png');
       body.set('format', 'png'); body.set('despill', 'false');
-      const bytes = await exchange(cutoutURL, { method: 'POST', headers: { 'x-api-key': env.PHOTOROOM_API_KEY }, body }, signal, timeout, 10 * 1024 * 1024);
+      const bytes = await exchange(cutoutURL, { method: 'POST', headers: { 'x-api-key': testOrigin ? env.PHOTOROOM_API_KEY : photoroom.key }, body }, signal, timeout, 10 * 1024 * 1024);
       try {
         if (bytes.length > 10 * 1024 * 1024 || !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) throw new Error('Invalid PNG');
         const image = sharp(bytes, { limitInputPixels: 16_000_000, failOn: 'warning' });
