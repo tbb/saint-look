@@ -311,7 +311,10 @@ test_options=("${build_options[@]}")
 # trials and the real benchmark retain their separate, explicit execution path.
 ui_test_command=(xcodebuild)
 if [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" != 1 && "${SAINT_LOOK_LIVE_TRIAL:-0}" != 1 && "${SAINT_LOOK_BENCHMARK:-0}" != 1 ]]; then
-  ui_test_command=(python3 scripts/ui-watchdog.py --summary "${result_path%.xcresult}-timings.json" -- xcodebuild)
+  case_deadline=600
+  # Large-text visual journeys have measured healthy cases around 655 seconds.
+  if [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" ]]; then case_deadline=900; fi
+  ui_test_command=(python3 scripts/ui-watchdog.py --case-seconds "$case_deadline" --summary "${result_path%.xcresult}-timings.json" -- xcodebuild)
 fi
 if [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" == '1' || "${SAINT_LOOK_LIVE_TRIAL:-0}" == '1' || -n "${SAINT_LOOK_VISUAL_PROFILE:-}" || "${SAINT_LOOK_BENCHMARK:-0}" == '1' || "${SAINT_LOOK_LAUNCH_PAIR:-0}" != 1 ]]; then
   # Shell variables are not a portable way to configure a Simulator test host.
