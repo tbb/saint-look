@@ -75,7 +75,7 @@ def run(command, summary, idle_seconds=180, case_seconds=600, startup_seconds=30
             except ProcessLookupError:
                 pass
             try:
-                process.wait(timeout=5)
+                process.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 pass
             try:
@@ -93,6 +93,13 @@ def run(command, summary, idle_seconds=180, case_seconds=600, startup_seconds=30
                                           elapsedSeconds=round(time.monotonic() - started, 2), tests=completed), indent=2) + '\n')
         return code
     finally:
+        # A broken output consumer must not leave a detached XCTest process alive.
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
         for number, handler in previous.items():
             signal.signal(number, handler)
         poller.close()
