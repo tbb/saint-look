@@ -65,14 +65,23 @@ def prepare(udid, command, summary_path, timeout):
         for number in previous_handlers:
             signal.signal(number, signal.SIG_IGN)
         if exit_code:
-            victims = [process for process in processes.values() if process.poll() != 0]
+            # A successful leader can still leave descendants in its process group.
+            victims = list(processes.values())
             for process in victims:
                 try:
                     os.killpg(process.pid, signal.SIGTERM)
                 except ProcessLookupError:
                     pass
+            def group_exists(process):
+                process.poll()  # Reap completed leaders before checking the group.
+                try:
+                    os.killpg(process.pid, 0)
+                    return True
+                except ProcessLookupError:
+                    return False
+
             deadline = time.monotonic() + 2
-            while any(process.poll() is None for process in victims) and time.monotonic() < deadline:
+            while any(group_exists(process) for process in victims) and time.monotonic() < deadline:
                 time.sleep(.02)
             for process in victims:
                 try:

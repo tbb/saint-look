@@ -66,6 +66,7 @@ elif name == 'xcrun':
             await_event('build-started')
         if os.environ.get('FAIL_BOOT'):
             await_event('build-holding')
+            time.sleep(float(os.environ.get('BOOT_FAIL_DELAY', '0')))
             sys.exit(43)
         if os.environ.get('HOLD_BOOT'):
             hold('boot')
@@ -218,6 +219,29 @@ class StartupTests(unittest.TestCase):
         self.assertEqual(summary['reason'], 'signal-SIGTERM')
         self.assertTrue((self.root / 'boot-child-stopped').exists())
         self.assertTrue((self.root / 'build-child-stopped').exists())
+
+    def test_failed_boot_stops_child_of_completed_build(self):
+        child_code = (
+            "import os, signal, sys, time; from pathlib import Path; "
+            "root=Path(os.environ['STARTUP_TEST_ROOT']); "
+            "signal.signal(signal.SIGTERM, lambda *_: ((root/'orphan-stopped').touch(), sys.exit(0))); "
+            "(root/'orphan-started').touch(); time.sleep(10)"
+        )
+        build_code = (
+            "import os, subprocess, sys, time; from pathlib import Path; "
+            "root=Path(os.environ['STARTUP_TEST_ROOT']); "
+            "subprocess.Popen([sys.executable, '-c', sys.argv[1]])\n"
+            "while not (root/'orphan-started').exists(): time.sleep(.01)\n"
+            "(root/'build-holding').touch()"
+        )
+        command = self.helper_command()[:-2] + [sys.executable, '-c', build_code, child_code]
+        result = subprocess.run(command, cwd=self.client,
+                                env={**self.env, 'FAIL_BOOT': '1', 'BOOT_FAIL_DELAY': '.2'},
+                                capture_output=True, text=True, timeout=12)
+        self.assertEqual(result.returncode, 43, result.stdout + result.stderr)
+        self.assertTrue((self.root / 'orphan-stopped').exists())
+        summary = json.loads((self.root / 'startup.json').read_text())
+        self.assertEqual(summary['phases']['build']['exitCode'], 0)
 
     def test_remote_smoke_preserves_serial_startup(self):
         result = self.run_runner(SAINT_LOOK_REMOTE_SMOKE='1', SAINT_LOOK_REMOTE_URL='https://fixture.invalid',
