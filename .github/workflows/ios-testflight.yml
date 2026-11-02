@@ -2,10 +2,6 @@ name: Internal TestFlight
 
 on:
   pull_request:
-    paths:
-      - 'client-ios/**'
-      - 'shared/**'
-      - '.github/workflows/ios-testflight.yml'
   workflow_dispatch:
     inputs:
       operation:
@@ -26,6 +22,8 @@ concurrency:
 
 jobs:
   policy:
+    outputs:
+      archive: ${{ steps.scope.outputs.archive }}
     if: github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -36,12 +34,19 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/ios-scope.py
+      - run: python3 scripts/ci/test-ios-scope.py
       - run: python3 client-ios/scripts/tests/test-testflight.py
       - run: node --test client-ios/scripts/tests/testflight-signing.test.mjs
       - run: node --test client-ios/scripts/tests/apple-token-check.test.mjs
 
   archive-check:
-    if: github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true'
+    if: >-
+      (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') &&
+      needs.policy.outputs.archive == 'true'
     needs: policy
     runs-on: macos-26
     timeout-minutes: 20

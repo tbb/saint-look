@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 
-REQUIRED = {'changes', 'ios-acceptance', 'ios-wardrobe-1', 'ios-wardrobe-2',
+REQUIRED = {'changes', 'ios-build', 'ios-acceptance', 'ios-wardrobe-1', 'ios-wardrobe-2',
             'ios-outfits-1', 'ios-outfits-2', 'ios-outfits-max-text',
             'ios-visual-iphone-light', 'ios-visual-iphone-dark',
             'ios-visual-iphone-max-text', 'ios-visual-ipad-light'}
