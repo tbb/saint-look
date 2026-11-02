@@ -73,6 +73,8 @@ jobs:
     if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
     needs: changes
     strategy:
+      # Leave macOS capacity for PR feedback while full acceptance is running.
+      max-parallel: 3
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.ios_matrix) }}
     runs-on: macos-26
