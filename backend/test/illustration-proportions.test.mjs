@@ -31,3 +31,16 @@ test('an ambiguous generated outline cannot evade a measurable source proportion
  assert.equal(check.measurable,true);assert.equal(check.valid,false);
  assert.equal(check.reason,'ambiguous-result-outline');
 });
+
+test('unfolding long sleeves does not change the measured torso hem',async()=>{
+ async function garment(cuffY){return sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M312 100 H712 V700 H312 Z M312 110 H230 V${cuffY} H290 V200 H312 Z M712 110 H794 V${cuffY} H734 V200 H712 Z" fill="#222"/></svg>`)).png().toBuffer();}
+ const checked=await compareTopProportions(await garment(650),await garment(850),{type:'sweater',traits:{sleeves:'long'}});
+ assert.equal(checked.valid,true,'Same body must pass independently of cuffs below its hem');
+ assert.ok(checked.relativeError<.01);
+});
+test('lowering a hood preserves the same neck-to-hem body ratio',async()=>{
+ async function garment(hoodTop){return sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M312 200 H712 V800 H312 Z M432 ${hoodTop} H592 V220 H432 Z" fill="#222"/></svg>`)).png().toBuffer();}
+ const checked=await compareTopProportions(await garment(20),await garment(160),{type:'hoodie',traits:{sleeves:'long'}});
+ assert.equal(checked.valid,true,'Lowered hood must not need 15% extra height above unchanged shoulders');
+ assert.ok(checked.relativeError<.01);
+});

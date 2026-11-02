@@ -32,6 +32,14 @@ async function call(stage,fn){
 try{
  const quota=await inspectPhotoroomAccount(process.env);console.log(JSON.stringify(quota));
  if(quota.availableImages<2)throw new Error('Insufficient production cutouts');
+ const networkFetch=globalThis.fetch;
+ globalThis.fetch=async(url,options)=>{
+  const response=await networkFetch(url,options);
+  if(String(url).endsWith('/v1/segment') && options?.body?.get?.('image_file')?.name==='finalization.png' && response.ok){
+   state.variants.production.cutout=Buffer.from(await response.clone().arrayBuffer()).toString('base64');save();
+  }
+  return response;
+ };
  const provider=createIllustrationProvider(process.env),signal=new AbortController().signal;
  const source=await sharp(Buffer.from(input.source,'base64')).png().toBuffer();
  state.sourceHash=createHash('sha256').update(source).digest('hex');state.original=source.toString('base64');save();

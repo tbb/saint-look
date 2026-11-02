@@ -68,4 +68,4 @@ jobs:
           if "$RUNNER_TEMP/before-crop" "$PWD/client-ios/SaintLook/VisualFixtures" > "$RUNNER_TEMP/before-crop.log" 2>&1; then
             echo 'Expected old crop to fail on matte noise'; exit 1
           fi
-          rg 'Near-transparent remote matte noise must not shrink' "$RUNNER_TEMP/before-crop.log"
+          grep -F 'Near-transparent remote matte noise must not shrink' "$RUNNER_TEMP/before-crop.log"

@@ -548,3 +548,21 @@ test('source editing puts the primary front last even when the back is supplied 
   assert.equal(images[0].data, back.toString('base64'));
   assert.equal(images.at(-1).data, front.toString('base64'));
 });
+
+test('restart from a finalized candidate reuses its durable PNG before the unstarted fidelity check',async t=>{
+ const fixture=await illustrationFixture(t),env=await environment(t),server=await env.launch(fixture.env);
+ const photo=await photoRequest();await upload(server,photo);await waitForItem(server,photo.itemId);
+ const input=illustration(photo);await requestIllustration(server,photo.itemId,input);
+ const ready=await waitForIllustration(server,photo.itemId,input.operationId);
+ const original=Buffer.from(await(await server.request(ready.resultPath)).arrayBuffer());
+ await server.stop();
+ // Reconstruct the durable boundary immediately before fidelity admission.
+ const db=new DatabaseSync(join(env.directory,'wardrobe.sqlite'));
+ const processing={...ready.processing,fidelity:'pending'};
+ db.prepare("UPDATE illustrations SET status='pending',processing=? WHERE operation_id=?").run(JSON.stringify(processing),input.operationId);db.close();
+ const restarted=await env.launch(fixture.env);
+ const resumed=await waitForIllustration(restarted,photo.itemId,input.operationId);
+ assert.deepEqual(Buffer.from(await(await restarted.request(resumed.resultPath)).arrayBuffer()),original);
+ assert.equal(fixture.calls.finalization.length,1,'Completed cutout must survive the finalization/fidelity boundary');
+ assert.equal(fixture.calls.generation.length,1);
+});
