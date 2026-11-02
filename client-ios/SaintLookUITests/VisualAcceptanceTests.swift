@@ -644,7 +644,10 @@ final class VisualAcceptanceTests: XCTestCase {
         try selectTab("Луки", in: app)
         let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'outfit-card-' ")).firstMatch
         try tap(saved, in: app)
-        for name in ["Прогулка по осеннему городу после работы", "Черновик", "Вечерний лук"] {
+        let names = profile == "iphone-light"
+            ? ["Прогулка по осеннему городу после работы", "Черновик", "Вечерний лук"]
+            : ["Прогулка по осеннему городу после работы"]
+        for name in names {
             try nativeTap(app.buttons["edit-outfit"], in: app)
             try waitVisible(app.buttons["cancel-outfit"], in: app)
             try enterName(name, in: app)
@@ -652,6 +655,55 @@ final class VisualAcceptanceTests: XCTestCase {
             try expectGone(app.textFields["outfit-name"], "Saved editor field must disappear")
             try require(app.staticTexts[name].waitForExistence(timeout: 5), "Detail must show the exact replacement name")
         }
+    }
+
+    /// Profile coverage starts at a saved state; the complete mutation journey runs on iPhone light.
+    @MainActor
+    func testPreparedScreensAcrossProfiles() async throws {
+        let before = try await activityCounts()
+        let illustrationsBefore = try await illustrationCounts()
+        let app = try launch("ready-look")
+        let summary = app.staticTexts["wardrobe-summary"]
+        try require(summary.waitForExistence(timeout: 5))
+        try requireEqual(summary.label, "Всего: 4. Готово: 4. Ожидают: 0.")
+        try capture("prepared-01-wardrobe-grid")
+        try openItem(0, in: app)
+        try capture("prepared-02-item-detail")
+        let edit = app.buttons["edit-item"]
+        try reveal(edit, in: app)
+        try require(edit.frame.height >= 44, "Item editing needs a native hit target at least 44 points tall")
+        try nativeTap(edit, in: app)
+        try waitVisible(app.buttons["cancel-item-edits"], in: app)
+        try tap(app.buttons["choose-colors"], in: app)
+        try require(app.buttons["color-white"].waitForExistence(timeout: 5))
+        try capture("prepared-03-item-colors")
+        try nativeTap(app.buttons["done-colors"], in: app)
+        try nativeTap(app.buttons["cancel-item-edits"], in: app)
+        try back(app)
+        try selectTab("Луки", in: app)
+        let saved = app.buttons["outfit-card-36000004-0000-0000-0000-000000000001"]
+        try require(saved.waitForExistence(timeout: 5))
+        try requireEqual(saved.label, "Прогулка по осеннему городу после работы")
+        try capture("prepared-04-outfit-collection")
+        try tap(saved, in: app)
+        try waitVisible(app.buttons["edit-outfit"], in: app)
+        try capture("prepared-05-outfit-detail-long-name")
+        try nativeTap(app.buttons["edit-outfit"], in: app)
+        try waitVisible(app.buttons["cancel-outfit"], in: app)
+        let first = slot("body", in: app)
+        try reveal(first, in: app)
+        try requireEqual(first.value as? String, "Футболка, Белый")
+        try capture("prepared-06-multilayer-editor")
+        try tap(first, in: app)
+        let current = app.buttons["outfit-candidate-\(itemIDs[0])"]
+        try require(current.waitForExistence(timeout: 5))
+        try require(current.isSelected)
+        try capture("prepared-07-body-picker-current")
+        try nativeTap(app.buttons["cancel-outfit-picker"], in: app)
+        try nativeTap(app.buttons["cancel-outfit"], in: app)
+        try expectGone(app.buttons["cancel-outfit"], "Unchanged prepared editor closes without a discard dialog")
+        try requireEqual(try await activityCounts(), before, "Prepared screens must not invoke ingestion providers")
+        try requireEqual(try await illustrationCounts(), illustrationsBefore, "Prepared screens must not invoke generation")
     }
 
     @MainActor

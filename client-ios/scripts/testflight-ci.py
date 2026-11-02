@@ -15,7 +15,7 @@ REQUIRED = {'changes', 'ios-acceptance', 'ios-wardrobe-1', 'ios-wardrobe-2',
 def checked_run(runs, sha, repository, jobs_for_run):
     for run in runs:
         if (run.get('head_sha') == sha and run.get('head_branch') == 'main'
-                and run.get('event') in ('push', 'workflow_dispatch') and run.get('status') == 'completed'
+                and run.get('event') in ('push', 'workflow_dispatch', 'schedule') and run.get('status') == 'completed'
                 and run.get('conclusion') == 'success' and run.get('path') == '.github/workflows/ci.yml'
                 and run.get('head_repository', {}).get('full_name') == repository
                 and type(run.get('id')) is int):

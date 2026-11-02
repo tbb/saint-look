@@ -164,6 +164,18 @@ class CIAdmissionTests(unittest.TestCase):
             ci.main()
         return json.loads(output.getvalue())['ciRunId']
 
+    def test_smoke_cannot_authorize_upload_but_full_scheduled_main_can(self):
+        smoke = {**self.run_record(), 'id': 124}
+        nightly = {**self.run_record(), 'event': 'schedule'}
+        complete = [dict(name=name, status='completed', conclusion='success') for name in ci.REQUIRED]
+        quick = [dict(name=name, status='completed', conclusion='success')
+                 for name in ['changes', 'ios-smoke', 'ios-acceptance']]
+        with self.assertRaisesRegex(ValueError, 'No successful complete main CI'):
+            self.admit_runs([smoke], {124: quick})
+        self.assertEqual(self.admit_runs([smoke, nightly], {124: quick, 123: complete}), 123)
+        with self.assertRaisesRegex(ValueError, 'No successful complete main CI'):
+            self.admit_runs([{**nightly, 'head_sha': 'b' * 40}], {123: complete})
+
     def test_newer_focused_dispatch_does_not_hide_complete_acceptance(self):
         focused = {**self.run_record(), 'id': 124, 'event': 'workflow_dispatch'}
         complete = [dict(name=name, status='completed', conclusion='success') for name in ci.REQUIRED]

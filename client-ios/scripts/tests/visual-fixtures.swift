@@ -32,6 +32,21 @@ import Foundation
         let persisted = try WardrobeCatalogFile(directory: root).load()
         precondition(persisted.items.count == 3 && persisted.pendingDeletionIDs.contains(catalog.items[0].id))
         print("PASS: relaunch preserves deletion and delivery intent")
+        var readyLookEnvironment = environment
+        readyLookEnvironment["SAINT_LOOK_VISUAL_SCENARIO"] = "ready-look"
+        _ = try VisualFixtures.prepare(environment: readyLookEnvironment, support: support, resources: sources, taxonomy: taxonomy)
+        let readyLook = try WardrobeCatalogFile(directory: root).load()
+        precondition(readyLook.items.count == 4 && readyLook.items.allSatisfy { $0.hasPreparedVersion && $0.photosLocked })
+        precondition(readyLook.pendingAcknowledgements == [] && readyLook.items.allSatisfy { $0.pendingPublication == nil })
+        precondition(readyLook.outfits.count == 1)
+        precondition(readyLook.outfits[0].name == "Прогулка по осеннему городу после работы")
+        precondition(readyLook.outfits[0].selectedIDs == Set(readyLook.items.map(\.id)))
+        precondition(readyLook.outfits[0].slots.filter { $0.zone == .body && $0.itemID != nil }.count == 2)
+        readyLookEnvironment["SAINT_LOOK_RESET_DATA"] = "0"
+        _ = try VisualFixtures.prepare(environment: readyLookEnvironment, support: support, resources: sources, taxonomy: taxonomy)
+        let restoredReadyLook = try WardrobeCatalogFile(directory: root).load()
+        precondition(restoredReadyLook.outfits == readyLook.outfits)
+        print("PASS: prepared public photos and a saved multilayer look persist without publication requests")
         var invalid = environment
         invalid["SAINT_LOOK_VISUAL_SCENARIO"] = "../../wardrobe"
         do {
