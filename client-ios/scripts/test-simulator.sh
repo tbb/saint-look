@@ -18,7 +18,22 @@ if [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" ]]; then
     exit 1
   fi
 fi
+build_only="${SAINT_LOOK_BUILD_ONLY:-0}"
+reuse_build="${SAINT_LOOK_REUSE_BUILD:-0}"
+[[ "$build_only" == 0 || "$build_only" == 1 ]]
+[[ "$reuse_build" == 0 || "$reuse_build" == 1 ]]
+[[ "$build_only$reuse_build" != 11 ]]
+if [[ "$build_only" == 1 || "$reuse_build" == 1 ]]; then
+  for mode in SAINT_LOOK_REMOTE_SMOKE SAINT_LOOK_LIVE_TRIAL SAINT_LOOK_BENCHMARK SAINT_LOOK_LAUNCH_PAIR; do
+    [[ "${!mode:-0}" != 1 ]] || { echo 'Shared products are only for controlled local suites.' >&2; exit 1; }
+  done
+fi
+if [[ "$build_only" == 1 && -n "${SAINT_LOOK_VISUAL_PROFILE:-}" ]]; then
+  echo 'Build products before selecting a visual profile.' >&2
+  exit 1
+fi
 xcodebuild -version
+if [[ "$reuse_build" == 1 ]]; then python3 scripts/simulator-products.py verify; fi
 work_directory="$(mktemp -d)"
 recording_pid=''
 remote_manifest=''
@@ -202,8 +217,10 @@ PYTHON
     exit 1
   fi
 fi
-xcrun simctl boot "$simulator_id" 2>/dev/null || true
-xcrun simctl bootstatus "$simulator_id" -b
+if [[ "$build_only" != 1 ]]; then
+  xcrun simctl boot "$simulator_id" 2>/dev/null || true
+  xcrun simctl bootstatus "$simulator_id" -b
+fi
 if [[ -n "${SAINT_LOOK_UI_APPEARANCE:-}" ]]; then
   [[ "$SAINT_LOOK_UI_APPEARANCE" == light || "$SAINT_LOOK_UI_APPEARANCE" == dark ]]
   previous_appearance="$(xcrun simctl ui "$simulator_id" appearance)"
@@ -280,7 +297,13 @@ for photo in photos:
         raise SystemExit('Trial photo differs from the reviewed manifest.')
 TRIAL_PHOTOS
 fi
-xcodebuild "${build_options[@]}" build-for-testing
+if [[ "$reuse_build" != 1 ]]; then
+  xcodebuild "${build_options[@]}" build-for-testing
+fi
+if [[ "$build_only" == 1 ]]; then
+  python3 scripts/simulator-products.py stamp
+  exit 0
+fi
 
 # XCTest runs in its own generated host, so the app's ATS settings do not apply
 # to the test's loopback control connection. Change only that generated host.

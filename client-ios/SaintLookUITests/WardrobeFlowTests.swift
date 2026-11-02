@@ -1342,10 +1342,22 @@ final class WardrobeFlowTests: XCTestCase {
                 }
                 // Native press computes its own hittable point after geometry settles.
                 let failures = testRun?.failureCount ?? 0
-                action.press(forDuration: 0.1)
+                // A 100 ms press has left the native menu open in CI.
+                // Send one longer press, then require activation before the caller continues.
+                action.press(forDuration: 0.25)
                 guard (testRun?.failureCount ?? 0) == failures else {
                     XCTFail("Native item menu press failed; stop before further actions")
                     throw InteractionError.buttonNotVisible(identifier)
+                }
+                if action.exists {
+                    let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                        !action.exists
+                    }, object: nil)
+                    guard XCTWaiter.wait(for: [dismissed], timeout: 5) == .completed else {
+                        capturePhotoSource("item-menu-command-not-activated", in: app)
+                        XCTFail("Native item menu command \(identifier) did not activate; stop before further actions")
+                        throw InteractionError.buttonNotVisible(identifier)
+                    }
                 }
                 return
             }
