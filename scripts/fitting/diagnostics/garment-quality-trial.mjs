@@ -31,7 +31,7 @@ async function call(stage,fn){
 }
 try{
  const quota=await inspectPhotoroomAccount(process.env);console.log(JSON.stringify(quota));
- if(quota.availableImages<2)throw new Error('Insufficient production cutouts');
+ if(quota.availableImages<(input.photoroomMode?6:2))throw new Error('Insufficient production cutouts');
  const networkFetch=globalThis.fetch;
  globalThis.fetch=async(url,options)=>{
   if(String(url).endsWith('/v1beta/interactions')&&options?.body){
@@ -76,7 +76,16 @@ try{
   const answer=JSON.parse(await exchange('https://generativelanguage.googleapis.com/v1beta/interactions/'+encodeURIComponent(input.receipt),{headers:{'x-goog-api-key':process.env.GEMINI_API_KEY}},signal,120000,14*1024*1024));
   state.recovery=answer;save();console.log(JSON.stringify({status:answer.status,model:answer.model,idMatches:answer.id===input.receipt,error:answer.error?.code,steps:answer.steps?.map(s=>({type:s.type,content:s.content?.map(c=>({type:c.type,hasData:!!c.data}))}))}));
  }
- const generated=input.correctionReceipt?await call('pose-correction',()=>provider.correctPose(input.correctionReceipt,features,signal,id=>{state.receipt=id;save();})):await call(input.receipt?'recovery':'generation',()=>provider.generate(photos,features,signal,id=>{state.receipt=id;save();},input.receipt));
+ const generated=input.photoroomMode ? await call('photoroom-'+input.photoroomMode,async()=>{
+  if(!['ghostMannequin','flatLay'].includes(input.photoroomMode))throw Error('Unknown fashion operation');
+  const body=new FormData();
+  body.set('imageFile',new Blob([source],{type:'image/png'}),'garment.png');
+  body.set(input.photoroomMode+'.mode','ai.auto');
+  body.set(input.photoroomMode+'.size','SQUARE_HD');
+  body.set(input.photoroomMode+'.prompt','Straight-on front view of this same garment. Unfold both long sleeves fully downwards, relaxed straight arms slightly away from the sides, with cuffs below the torso hem. Hood lowered behind the neckline, no head or body. Preserve the original roomy cut, torso width and length, all distressed prints on their original panels, fabric texture, kangaroo pocket and ribbed cuffs/waistband. No added details, no slimming, no rigid rectangular template, white background.');
+  const bytes=await exchange('https://image-api.photoroom.com/v2/edit',{method:'POST',headers:{'x-api-key':process.env.PHOTOROOM_API_KEY},body},signal,120000,14*1024*1024);
+  return {png:await sharp(bytes,{limitInputPixels:16000000}).png().toBuffer()};
+ }) : input.correctionReceipt?await call('pose-correction',()=>provider.correctPose(input.correctionReceipt,features,signal,id=>{state.receipt=id;save();})):await call(input.receipt?'recovery':'generation',()=>provider.generate(photos,features,signal,id=>{state.receipt=id;save();},input.receipt));
  state.variants.production.generated=generated.png.toString('base64');save();
  const result=await call('finalization',()=>provider.prepare(generated.png,signal,'finalization',features));
  state.variants.production.registered=result.toString('base64');save();
