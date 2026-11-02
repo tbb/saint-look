@@ -344,8 +344,8 @@ struct IllustrationResult: Codable {
 
 enum IllustrationContract {
     static let currentModelVersion = "gemini-3-pro-image"
-    static let currentTemplateVersion = "category-front-anchors-v4"
-    static let currentGeometryVersion = "fitting-anchors-1024-v4"
+    static let currentTemplateVersion = "category-front-anchors-v5"
+    static let currentGeometryVersion = "fitting-anchors-1024-v5"
     private static let supportedModels: Set<String> = [currentModelVersion, "fal-ai/nano-banana-pro/edit"]
 
     static func accepts(modelVersion: String, templateVersion: String, geometryVersion: String) -> Bool {
@@ -357,7 +357,9 @@ enum IllustrationContract {
             && geometryVersion == "fitting-anchors-1024-v2"
         let previousV3 = modelVersion == currentModelVersion && templateVersion == "category-front-anchors-v3"
             && geometryVersion == "fitting-anchors-1024-v3"
-        return legacy || previousAnchors || previousV3 || current
+        let previousV4 = modelVersion == currentModelVersion && templateVersion == "category-front-anchors-v4"
+            && geometryVersion == "fitting-anchors-1024-v4"
+        return legacy || previousAnchors || previousV3 || previousV4 || current
     }
 }
 
@@ -413,7 +415,7 @@ extension WardrobeItem {
 
     var hasFittingGeometry: Bool {
         guard let result = displayedIllustration else { return false }
-        return ["fitting-anchors-1024-v2", "fitting-anchors-1024-v3", IllustrationContract.currentGeometryVersion].contains(result.response.geometryVersion)
+        return ["fitting-anchors-1024-v2", "fitting-anchors-1024-v3", "fitting-anchors-1024-v4", IllustrationContract.currentGeometryVersion].contains(result.response.geometryVersion)
     }
 
     var needsFittingUpdate: Bool {
@@ -469,6 +471,7 @@ extension WardrobeItem {
 enum IllustrationFailure {
     static func message(for code: String) -> String {
         switch code {
+        case "illustration_identity_unconfirmed": return "Не удалось подтвердить сохранность деталей вещи. Исходное фото сохранено. Можно повторить подготовку."
         case "illustration_identity_changed": return "Иллюстрация изменила детали вещи. Исходное фото сохранено. Можно повторить подготовку."
         case "illustration_proportions_changed": return "Не удалось сохранить пропорции вещи. Исходное фото сохранено. Можно повторить подготовку."
         case "illustration_geometry_invalid": return "Иллюстрация не совпала с посадкой на манекене. Исходное фото сохранено. Можно повторить подготовку."

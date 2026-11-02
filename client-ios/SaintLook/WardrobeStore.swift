@@ -635,7 +635,8 @@ extension WardrobeStore {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    func fittingIllustrationURL(for item: WardrobeItem) -> URL? {
+    func fittingIllustrationURL(for item: WardrobeItem, in outfit: Outfit? = nil) -> URL? {
+        if let outfit, !outfit.acceptsFittingPose(of: item, in: items) { return nil }
         guard item.hasFittingGeometry else { return nil }
         return illustrationURL(for: item)
     }
