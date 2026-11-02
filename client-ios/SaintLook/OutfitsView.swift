@@ -688,10 +688,6 @@ struct OutfitEditorView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            if draft.hasMixedFittingPoses(in: store.items) {
-                Text("Обновите посадку старых вещей, чтобы показать все слои вместе. Их фотографии сохранены ниже.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
             if draft.selectedIDs.isEmpty {
                 Text("Выберите вещи по зонам. Иллюстрации появятся на манекене; фотографии доступны ниже.")
                     .font(.footnote).foregroundStyle(.secondary)
