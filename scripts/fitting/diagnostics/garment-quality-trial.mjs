@@ -35,6 +35,10 @@ try{
  const networkFetch=globalThis.fetch;
  globalThis.fetch=async(url,options)=>{
   const response=await networkFetch(url,options);
+  if(String(url).endsWith('/v1beta/interactions')&&response.ok){
+   const answer=await response.clone().json();
+   state.generationMetadata={status:answer.status,usage:answer.usage,steps:answer.steps?.map(step=>({type:step.type,content:step.content?.map(c=>({type:c.type})),summary:step.summary?.map(c=>({type:c.type}))}))};save();
+  }
   if(!response.ok)console.log(JSON.stringify({provider:new URL(url).hostname,status:response.status}));
   if(String(url).endsWith('/v1/segment') && options?.body?.get?.('image_file')?.name==='finalization.png' && response.ok){
    state.variants.production.cutout=Buffer.from(await response.clone().arrayBuffer()).toString('base64');save();
