@@ -15,6 +15,9 @@ let attributesCalls = 0;
 let cutoutCalls = 0;
 let encoderPreparationCalls = 0, modelRankCalls = 0;
 const modelCalls = { push() { encoderPreparationCalls++; } }, rankCalls = { push() { modelRankCalls++; } };
+// Stable across ingestion and illustration observations of one sequential setup item.
+// The UI helper restores the default only after complete readiness, never mid-pipeline.
+let itemType = 't_shirt';
 let nextAttributes = null;
 let nextCutout = null;
 let illustrationMode = null;
@@ -50,15 +53,17 @@ const server = createServer(async (request, response) => {
       if (request.method === 'POST') {
         const input = JSON.parse((await bodyOf(request, 1024)).toString());
         if (!input || typeof input !== 'object' || Array.isArray(input)
-          || Object.keys(input).some(key => !['reset', 'nextAttributes', 'nextCutout', 'illustrationMode'].includes(key))
+          || Object.keys(input).some(key => !['reset', 'nextAttributes', 'nextCutout', 'illustrationMode', 'itemType'].includes(key))
+          || ('itemType' in input && !['t_shirt', 'hoodie', 'jacket', 'sweater', 'trousers'].includes(input.itemType))
           || ('reset' in input && typeof input.reset !== 'boolean')
           || ('nextAttributes' in input && ![null, 'photo_on_person', 'photo_multiple_items'].includes(input.nextAttributes))
           || ('nextCutout' in input && ![null, 'provider_quota_exceeded', 'red'].includes(input.nextCutout))
           || ('illustrationMode' in input && ![null, 'success', 'held', 'failed', 'unknown'].includes(input.illustrationMode))) {
           return reply(response, 400, { error: 'invalid_control' });
         }
-        if (input.reset) { attributesCalls = 0; cutoutCalls = 0; nextAttributes = null; nextCutout = null; illustrationMode = null;
+        if (input.reset) { itemType = 't_shirt'; attributesCalls = 0; cutoutCalls = 0; nextAttributes = null; nextCutout = null; illustrationMode = null;
           illustrationPreparationCalls = 0; illustrationAttributesCalls = 0; illustrationGenerationCalls = 0; illustrationFinalizationCalls = 0; encoderPreparationCalls = 0; modelRankCalls = 0; }
+        if ('itemType' in input) itemType = input.itemType;
         if ('nextAttributes' in input) nextAttributes = input.nextAttributes;
         if ('nextCutout' in input) nextCutout = input.nextCutout;
         if ('illustrationMode' in input) illustrationMode = input.illustrationMode;
@@ -96,7 +101,7 @@ const server = createServer(async (request, response) => {
         illustrationAttributesCalls++;
         const answers = Object.fromEntries(Object.entries(payload.questions).map(([name, q]) => {
           if (q.type === 'noul') return [name, { type: 'noul', noul: name === 'color_blue' ? 0.99 : 0.01 }];
-          const selected = name === 'suitability' ? 'suitable' : name === 'item_type' ? 't_shirt' : 'unknown';
+          const selected = name === 'suitability' ? 'suitable' : name === 'item_type' ? itemType : 'unknown';
           return [name, { type: 'choice', choice: selected, confidence: 1,
             probabilities: Object.fromEntries(Object.keys(q.criteria).map(key => [key, key === selected ? 1 : 0])) }];
         }));
@@ -110,7 +115,7 @@ const server = createServer(async (request, response) => {
       nextAttributes = null;
       return reply(response, 200, jevAnswer({
         reason: reason === 'photo_on_person' ? 'on_person' : reason === 'photo_multiple_items' ? 'multiple_items' : 'suitable',
-        type: 't_shirt', colors: { blue: 0.98 },
+        type: itemType, colors: { blue: 0.98 },
       }));
     }
     if (request.url === '/v1/segment') {

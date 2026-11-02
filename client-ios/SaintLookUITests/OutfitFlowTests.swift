@@ -70,6 +70,30 @@ final class OutfitFlowTests: XCTestCase {
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
     }
 
+    private enum FixtureFailure: Error { case invalidControlResponse }
+
+    private func providerItemType(_ type: String) async throws {
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:8789/__control")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer saint-look-ui-provider-control-token-00000001", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["itemType": type])
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw FixtureFailure.invalidControlResponse
+        }
+    }
+
+    @MainActor
+    private func addReadyItem(_ type: String, count: Int, in app: XCUIApplication) async throws {
+        // Only fixture observations change. The native add action, backend pipelines,
+        // download, publication and acknowledgement still run normally.
+        try await providerItemType(type)
+        tap(app.buttons["add-demo-photo"], in: app)
+        await summary(app, ready: count, pending: 0)
+        try await providerItemType("t_shirt")
+    }
+
     private enum BenchmarkFailure: Error { case invalidConfiguration, invalidResponse }
 
     private final class BenchmarkRedirectBlocker: NSObject, URLSessionTaskDelegate {
@@ -698,15 +722,7 @@ final class OutfitFlowTests: XCTestCase {
     func testPickerMarksCurrentThingAndFiltersTypesWithoutChangingTheSlotOnCancel() async throws {
         let app = launch(reset: true)
         for (index, type) in ["t_shirt", "hoodie"].enumerated() {
-            tap(app.buttons["add-demo-photo"], in: app)
-            await summary(app, ready: index + 1, pending: 0)
-            openFirstItem(in: app)
-            tap(app.buttons["edit-item"], in: app)
-            tap(app.buttons["choose-type"], in: app)
-            tap(app.buttons["type-\(type)"], in: app)
-            app.buttons["save-item-edits"].tap()
-        await publishEditedItem(app)
-            await summary(app, ready: index + 1, pending: 0)
+            try await addReadyItem(type, count: index + 1, in: app)
         }
         let before = try await activityCounts()
         app.tabBars.buttons["Луки"].tap()
@@ -801,17 +817,8 @@ final class OutfitFlowTests: XCTestCase {
     @MainActor
     func testCreateUnnamedOutfitSurvivesBackgroundResultOfflineRestartAndItemDeletion() async throws {
         let app = launch(reset: true, trace: "create")
-        app.buttons["add-demo-photo"].tap()
-        await summary(app, ready: 1, pending: 0)
-        app.buttons["add-demo-photo"].tap()
-        await summary(app, ready: 2, pending: 0)
-        openFirstItem(in: app)
-        tap(app.buttons["edit-item"].firstMatch, in: app)
-        tap(app.buttons["choose-type"], in: app)
-        tap(app.buttons["type-trousers"], in: app)
-        app.buttons["save-item-edits"].tap()
-        await publishEditedItem(app)
-        await summary(app, ready: 2, pending: 0)
+        try await addReadyItem("t_shirt", count: 1, in: app)
+        try await addReadyItem("trousers", count: 2, in: app)
 
         // The pending photo must finish after the new outfit is saved.
         try await control("offline")
@@ -900,16 +907,7 @@ final class OutfitFlowTests: XCTestCase {
         let app = launch(reset: true)
         // Distinct types make selection observable without depending on generated IDs/order.
         for (index, type) in ["t_shirt", "hoodie", "jacket", "sweater", "trousers"].enumerated() {
-            app.buttons["add-demo-photo"].tap()
-            await summary(app, ready: index + 1, pending: 0)
-            openFirstItem(in: app)
-            tap(app.buttons["edit-item"].firstMatch, in: app)
-            tap(app.buttons["choose-type"], in: app)
-            tap(app.buttons["type-\(type)"], in: app)
-            XCTAssertTrue(app.buttons["save-item-edits"].waitForExistence(timeout: 5), "Choosing a visible type must return to the editor")
-            app.buttons["save-item-edits"].tap()
-        await publishEditedItem(app)
-            await summary(app, ready: index + 1, pending: 0)
+            try await addReadyItem(type, count: index + 1, in: app)
         }
         app.tabBars.buttons["Луки"].tap()
         app.buttons["create-first-outfit"].tap()
@@ -1135,16 +1133,7 @@ final class OutfitFlowTests: XCTestCase {
     func testEditCancelRenameIncompleteAndDeletePreservesOtherLookOffline() async throws {
         let app = launch(reset: true)
         for (index, type) in ["t_shirt", "trousers"].enumerated() {
-            app.buttons["add-demo-photo"].tap()
-            await summary(app, ready: index + 1, pending: 0)
-            openFirstItem(in: app)
-            tap(app.buttons["edit-item"].firstMatch, in: app)
-            tap(app.buttons["choose-type"], in: app)
-            tap(app.buttons["type-\(type)"], in: app)
-            XCTAssertTrue(app.buttons["save-item-edits"].waitForExistence(timeout: 5), "Choosing a visible type must return to the editor")
-            app.buttons["save-item-edits"].tap()
-        await publishEditedItem(app)
-            await summary(app, ready: index + 1, pending: 0)
+            try await addReadyItem(type, count: index + 1, in: app)
         }
         try await control("offline")
         app.tabBars.buttons["Луки"].tap()
