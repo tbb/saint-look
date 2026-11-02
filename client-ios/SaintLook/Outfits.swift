@@ -576,3 +576,35 @@ extension OutfitRecommendationSession {
         return response.message
     }
 }
+
+// A saved legacy outfit keeps its original pose. Once a v5 arm-bearing layer is
+// selected, legacy arm layers use their photo fallback until explicitly updated.
+// Never deform an old image or silently give it the new geometry version.
+enum FittingArmPose { case legacy, wide }
+
+extension WardrobeItem {
+    var fittingArmPose: FittingArmPose? {
+        guard hasFittingGeometry, let response = displayedIllustration?.response,
+              let features = response.effectiveFeatures ?? response.observedFeatures,
+              let type = WardrobeTaxonomy.shared.types.first(where: { $0.label == features.type })?.id,
+              ["t_shirt", "polo", "shirt", "blouse", "sweater", "cardigan", "sweatshirt", "hoodie",
+               "blazer", "jacket", "coat", "raincoat", "dress", "jumpsuit", "swimwear", "gloves"].contains(type)
+        else { return nil }
+        return response.geometryVersion == IllustrationContract.currentGeometryVersion ? .wide : .legacy
+    }
+}
+
+extension Outfit {
+    func fittingArmPose(in items: [WardrobeItem]) -> FittingArmPose {
+        let poses = items.filter { selectedIDs.contains($0.id) }.compactMap(\.fittingArmPose)
+        return poses.contains(.wide) || poses.isEmpty ? .wide : .legacy
+    }
+
+    func acceptsFittingPose(of item: WardrobeItem, in items: [WardrobeItem]) -> Bool {
+        item.fittingArmPose == nil || item.fittingArmPose == fittingArmPose(in: items)
+    }
+
+    func hasMixedFittingPoses(in items: [WardrobeItem]) -> Bool {
+        items.contains { selectedIDs.contains($0.id) && !acceptsFittingPose(of: $0, in: items) }
+    }
+}

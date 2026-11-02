@@ -471,8 +471,8 @@ test('a geometrically valid slim redraw cannot be published for a wide source wi
   assert.equal(result.status,'failed');
   assert.equal(result.error,'illustration_proportions_changed');
   assert.equal(result.resultPath,null);
-  assert.equal(fixture.calls.generation.length,1,'Quality rejection must not silently submit another paid generation');
-  assert.equal(fixture.calls.finalization.length,1);
+  assert.equal(fixture.calls.generation.length,2,'A confirmed defect gets exactly one corrective attempt');
+  assert.equal(fixture.calls.finalization.length,2);
 });
 
 function fidelityReply(response, body, choice = 'preserved', confidence = 1) {
@@ -488,7 +488,7 @@ function fidelityReply(response, body, choice = 'preserved', confidence = 1) {
   response.end(JSON.stringify({ model: payload.model, answers, usage: { input_tokens: 1000 } }));
 }
 
-test('publication requires confirmed identity; uncertain and weak evidence fail without silent retries', async t => {
+test('confirmed identity defects get one correction; uncertainty alone does not reject', async t => {
   let choice = 'changed', confidence = .96;
   const fixture = await illustrationFixture(t, { fidelity: async (_request, response, { body }) => fidelityReply(response, body, choice, confidence) });
   const env = await environment(t), server = await env.launch(fixture.env);
@@ -499,25 +499,58 @@ test('publication requires confirmed identity; uncertain and weak evidence fail 
   assert.equal(failed.processing.fidelity, 'failed');
   assert.equal((await server.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}/result`)).status, 409);
   await requestIllustration(server, photo.itemId, input);
-  assert.equal(fixture.calls.generation.length, 1); assert.equal(fixture.calls.fidelity.length, 1);
+  assert.equal(fixture.calls.generation.length, 2); assert.equal(fixture.calls.fidelity.length, 2);
+  const correction = JSON.parse(fixture.calls.generation[1].body).input.at(-1).text;
+  assert.match(correction, /CORRECTION/); assert.match(correction, /artwork/);
   let revision = 1;
   for (const evidence of [{choice:'uncertain',confidence:.96}, {choice:'preserved',confidence:.44},
     {choice:'preserved',confidence:.69}, {choice:'changed',confidence:.7}]) {
     ({choice,confidence}=evidence);
     const retry = { ...input, operationId: randomUUID(), revision: ++revision };
     await requestIllustration(server, photo.itemId, retry);
-    const rejected=await waitForIllustration(server, photo.itemId, retry.operationId, ['ready','failed']);
-    assert.equal(rejected.status,'failed');
-    assert.equal(rejected.error,'illustration_identity_unconfirmed');
-    assert.equal((await server.request(`/v1/items/${photo.itemId}/illustrations/${retry.operationId}/result`)).status,409);
+    const accepted=await waitForIllustration(server, photo.itemId, retry.operationId, ['ready','failed']);
+    assert.equal(accepted.status,'ready');
     await requestIllustration(server,photo.itemId,retry);
-    assert.equal(fixture.calls.generation.length,revision);
-    assert.equal(fixture.calls.fidelity.length,revision);
+    assert.equal(fixture.calls.generation.length,revision+1);
+    assert.equal(fixture.calls.fidelity.length,revision+1);
   }
-  choice='preserved'; confidence=.7;
-  const confirmed={...input,operationId:randomUUID(),revision:++revision};
-  await requestIllustration(server,photo.itemId,confirmed);
-  assert.equal((await waitForIllustration(server,photo.itemId,confirmed.operationId)).status,'ready');
+});
+
+test('a corrected candidate publishes only after its checks and reuses source preparation', async t => {
+  let checks=0;
+  const fixture = await illustrationFixture(t, { fidelity: async (_request,response,{body}) =>
+    fidelityReply(response,body,++checks===1?'changed':'preserved',.96) });
+  const env=await environment(t),server=await env.launch(fixture.env);
+  const photo=await photoRequest();await upload(server,photo);await waitForItem(server,photo.itemId);
+  const input=illustration(photo);await requestIllustration(server,photo.itemId,input);
+  assert.equal((await waitForIllustration(server,photo.itemId,input.operationId)).status,'ready');
+  assert.equal(fixture.calls.generation.length,2);assert.equal(fixture.calls.finalization.length,2);
+  assert.equal(fixture.calls.preparation.length,1);assert.equal(fixture.calls.attributes.length,1);
+  await requestIllustration(server,photo.itemId,input);
+  assert.equal(fixture.calls.generation.length,2);
+});
+
+test('unknown outcome of the correction is never submitted again, including after restart',async t=>{
+  let generations=0;
+  const fixture=await illustrationFixture(t,{
+    fidelity:async (_request,response,{body})=>fidelityReply(response,body,'changed',.96),
+    generation:async (_request,response,{result})=>{
+      if(++generations===2)return;
+      response.writeHead(200,{'Content-Type':'application/json'});
+      response.end(JSON.stringify({id:'v1_correction-test',model:'gemini-3-pro-image',status:'completed',
+        steps:[{type:'model_output',content:[{type:'image',mime_type:'image/png',data:result.toString('base64')}]}]}));
+    }
+  });
+  const env=await environment(t),server=await env.launch(fixture.env);
+  const photo=await photoRequest();await upload(server,photo);await waitForItem(server,photo.itemId);
+  const input=illustration(photo);await requestIllustration(server,photo.itemId,input);
+  await until(()=>generations===2);
+  await server.stop('SIGKILL');const restarted=await env.launch(fixture.env);
+  const failed=await waitForIllustration(restarted,photo.itemId,input.operationId,'failed');
+  assert.equal(failed.error,'processing_unknown');
+  await requestIllustration(restarted,photo.itemId,input);
+  assert.equal((await requestIllustration(restarted,photo.itemId,{...input,operationId:randomUUID(),revision:2})).status,409);
+  assert.equal(generations,2);
 });
 
 test('crash during fidelity preserves its uncertain outcome without a second paid check or generation', async t => {
@@ -565,7 +598,7 @@ test('source editing puts the primary front last even when the back is supplied 
   assert.equal((await sharp(primary).metadata()).hasAlpha,false,'The generator must see an unambiguous matte behind the source');
 });
 
-test('restart from a finalized candidate reuses its durable PNG before the unstarted fidelity check',async t=>{
+for(const boundary of ['segmented','finalized']) test(`restart from a ${boundary} candidate reuses its durable PNG before the unstarted fidelity check`,async t=>{
  const fixture=await illustrationFixture(t),env=await environment(t),server=await env.launch(fixture.env);
  const photo=await photoRequest();await upload(server,photo);await waitForItem(server,photo.itemId);
  const input=illustration(photo);await requestIllustration(server,photo.itemId,input);
@@ -575,6 +608,7 @@ test('restart from a finalized candidate reuses its durable PNG before the unsta
  // Reconstruct the durable boundary immediately before fidelity admission.
  const db=new DatabaseSync(join(env.directory,'wardrobe.sqlite'));
  const processing={...ready.processing,fidelity:'pending'};
+ if(boundary==='segmented')db.prepare('UPDATE illustrations SET result=NULL,result_digest=NULL WHERE operation_id=?').run(input.operationId);
  db.prepare("UPDATE illustrations SET status='pending',processing=? WHERE operation_id=?").run(JSON.stringify(processing),input.operationId);db.close();
  const restarted=await env.launch(fixture.env);
  const resumed=await waitForIllustration(restarted,photo.itemId,input.operationId);
@@ -614,4 +648,5 @@ test('folded hoodie editing preserves source views and uses a measured pose targ
  assert.ok(Math.abs((right-left+1)/600-400/600)<.02,'Pose target preserves the source body ratio, not a default slim torso');
  assert.match(request.input.at(-1).text,/#808080/);
  assert.ok(!request.input.at(-1).text.includes('"body_length"'),'Inferred fit labels must not override the visible source');
+ assert.match(request.input.at(-1).text,/"sleeves":"long"/,'Observed sleeve length must not be lost when passing identity features');
 });

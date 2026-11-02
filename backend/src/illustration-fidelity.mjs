@@ -13,11 +13,11 @@ export async function fidelityRequest(source,candidate) {
 }
 export function fidelityAnswer(payload,request) {
   const {evidence}=featureAnswer(payload,request);
-  // Use the same 0.7 evidence floor as observable garment attributes. This is
-  // an admission rule, not a calibrated probability of visual correctness.
-  const values=Object.values(evidence);
-  const changed=values.some(value=>value.choice==='changed'&&value.confidence>=.85);
-  const confirmed=values.every(value=>value.choice==='preserved'&&value.confidence>=.7);
-  return {valid:confirmed,error:changed?'illustration_identity_changed'
-    :confirmed?null:'illustration_identity_unconfirmed',evidence};
+  // Confidence is evidence strength, not a calibrated probability of correctness.
+  // Ambiguity alone cannot establish an identity change. Geometry and measured
+  // proportions are independent checks; only a concrete high-confidence change
+  // from this comparison rejects the candidate.
+  const defects=Object.entries(evidence)
+    .filter(([,value])=>value.choice==='changed'&&value.confidence>=.85).map(([name])=>name);
+  return {valid:!defects.length,error:defects.length?'illustration_identity_changed':null,defects,evidence};
 }

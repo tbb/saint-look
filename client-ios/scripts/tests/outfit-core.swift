@@ -1044,13 +1044,25 @@ struct OutfitCoreChecks {
         precondition(!restoredLegacy.hasFittingGeometry)
         // Round-trip an actual previous publication, not a replacement image.
         let currentJSON = String(data: try JSONEncoder().encode(currentFit), encoding: .utf8)!
-        for version in ["v2", "v3"] {
+        for version in ["v2", "v3", "v4"] {
             let previousJSON = currentJSON.replacingOccurrences(of: IllustrationContract.currentGeometryVersion, with: "fitting-anchors-1024-\(version)")
                 .replacingOccurrences(of: IllustrationContract.currentTemplateVersion, with: "category-front-anchors-\(version)")
             let previousFit = try JSONDecoder().decode(WardrobeItem.self, from: Data(previousJSON.utf8))
             precondition(previousFit.hasPreparedVersion && previousFit.hasFittingGeometry && previousFit.needsFittingUpdate,
                          "Previous anchored publication stays visible until explicit fitting refresh")
             precondition(previousFit.displayedIllustration?.filename == currentFit.displayedIllustration?.filename)
+            let oldOnly = Outfit(slots: [OutfitSlot(zone: .body, itemID: previousFit.id)])
+            precondition(oldOnly.fittingArmPose(in: [previousFit]) == .legacy)
+            precondition(oldOnly.acceptsFittingPose(of: previousFit, in: [previousFit]))
+            // Different items: an old lower layer must not acquire v5 sleeve geometry.
+            var other = WardrobeItem(id: UUID(), operationID: UUID(), photoVersionID: UUID())
+            other.status = .ready; other.type = "Футболка"; other.resultFilename = "controlled-cutout.png"
+            other = try preparedFixture(other)
+            let mixed = Outfit(slots: [OutfitSlot(zone: .body, itemID: previousFit.id), OutfitSlot(zone: .body, itemID: other.id)])
+            precondition(mixed.fittingArmPose(in: [previousFit, other]) == .wide)
+            precondition(!mixed.acceptsFittingPose(of: previousFit, in: [previousFit, other]))
+            precondition(mixed.acceptsFittingPose(of: other, in: [previousFit, other]))
+            precondition(mixed.hasMixedFittingPoses(in: [previousFit, other]))
             precondition(previousFit.illustrationStatusMessage?.contains("Пока используется") == true)
             precondition(IllustrationContract.accepts(modelVersion: "gemini-3-pro-image", templateVersion: "category-front-anchors-\(version)", geometryVersion: "fitting-anchors-1024-\(version)"))
         }
