@@ -53,10 +53,25 @@ while True:
         self.assertEqual(summary['activeTest'], '-[Tests testCreate]')
         self.assertLess(summary['elapsedSeconds'], 3)
 
+    def test_recorded_xcode_launch_timeout_stops_before_later_ui_actions(self):
+        result, summary = self.run_child("""
+import time
+print("Test Case '-[Tests testAdditionalPhoto]' started.")
+print('/work/WardrobeFlowTests.swift:78: error: -[Tests testAdditionalPhoto] : Failed to launch <XCUIApplicationImpl: 0x1059485c0 com.saintlook.dev at /work/SaintLook.app> via Xcode: Timed out while launching application via Xcode.')
+while True:
+ print('Wait for com.saintlook.dev to idle')
+ time.sleep(0.02)
+""", '--case-seconds', '1')
+        self.assertEqual(result.returncode, 65)
+        self.assertEqual(summary['reason'], 'app-launch-failed')
+        self.assertEqual(summary['activeTest'], '-[Tests testAdditionalPhoto]')
+        self.assertLess(summary['elapsedSeconds'], 3)
+
     def test_platform_warning_alone_does_not_abort_acceptance(self):
         result, summary = self.run_child("""
 print("Test Case '-[Tests testOne]' started.")
 print('warning: Simulator device failed to launch com.saintlook.dev. No such process.')
+print('warning: Failed to launch <XCUIApplicationImpl: 0x123 com.saintlook.dev at /work/SaintLook.app> via Xcode: Timed out while launching application via Xcode.')
 print("Test Case '-[Tests testOne]' passed (1.5 seconds).")
 """)
         self.assertEqual(result.returncode, 0)

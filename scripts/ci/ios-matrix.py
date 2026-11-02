@@ -77,11 +77,17 @@ def matrix(selected='all', profile='all'):
     return {'include': rows}
 
 
+def shared_build(selected, rows):
+    # Diagnostics and real-model measurements retain their original startup.
+    return selected in ('all', 'wardrobe', 'outfits', 'visual') and len(rows['include']) > 1
+
+
 if __name__ == '__main__':
     if len(sys.argv) == 3 and sys.argv[1] == '--visual-selectors':
         print('\n'.join(visual_tests(sys.argv[2])))
         sys.exit(0)
-    value = matrix(selected_suite(os.environ['GITHUB_EVENT_NAME'], os.environ.get('IOS_SUITE', '')),
-                   os.environ.get('VISUAL_PROFILES', 'all'))
+    selected = selected_suite(os.environ['GITHUB_EVENT_NAME'], os.environ.get('IOS_SUITE', ''))
+    value = matrix(selected, os.environ.get('VISUAL_PROFILES', 'all'))
     with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
         output.write(f'ios_matrix={json.dumps(value)}\n')
+        output.write(f'shared_build={str(shared_build(selected, value)).lower()}\n')

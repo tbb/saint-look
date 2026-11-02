@@ -196,6 +196,17 @@ class CIAdmissionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.admit_runs(runs, {124: jobs[:5], 123: jobs[5:]})
 
+    def test_complete_acceptance_requires_the_shared_build(self):
+        jobs = [dict(name=name, status='completed', conclusion='success') for name in ci.REQUIRED]
+        self.assertIn('ios-build', ci.REQUIRED)
+        with self.assertRaises(ValueError):
+            ci.check_jobs([job for job in jobs if job['name'] != 'ios-build'])
+        for job in jobs:
+            if job['name'] == 'ios-build':
+                job['conclusion'] = 'skipped'
+        with self.assertRaises(ValueError):
+            ci.check_jobs(jobs)
+
     def test_skipped_and_missing_jobs_do_not_count_as_green(self):
         jobs = [dict(name=name, status='completed', conclusion='success') for name in ci.REQUIRED]
         ci.check_jobs(jobs)

@@ -61,6 +61,13 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(sum(row['suite'] == 'outfits-max-text' for row in rows), 1)
         self.assertEqual(len({row['label'] for row in rows}), len(rows))
 
+    def test_shared_build_only_for_multiple_ordinary_jobs(self):
+        for suite in ['all', 'wardrobe', 'outfits', 'visual']:
+            self.assertTrue(matrix.shared_build(suite, matrix.matrix(suite)))
+        for suite in ['smoke', 'benchmark', 'native-menus', 'outfits-launch-pair', 'wardrobe-expired-retry']:
+            self.assertFalse(matrix.shared_build(suite, matrix.matrix(suite)))
+        self.assertFalse(matrix.shared_build('visual', matrix.matrix('visual', 'ipad-light')))
+
     def test_manual_diagnostics_remain_focused(self):
         for suite in ['outfits-launch-pair', 'wardrobe-expired-retry', 'benchmark']:
             self.assertEqual([row['suite'] for row in matrix.matrix(suite)['include']], [suite])

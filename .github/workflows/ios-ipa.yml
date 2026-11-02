@@ -2,10 +2,6 @@ name: iPhone IPA
 
 on:
   pull_request:
-    paths:
-      - 'client-ios/**'
-      - 'shared/**'
-      - '.github/workflows/ios-ipa.yml'
   workflow_dispatch:
 
 permissions:
@@ -16,10 +12,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: ipa-inputs
+    if: github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      ipa: ${{ steps.scope.outputs.ipa }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/ios-scope.py
+
   ipa:
+    needs: changes
     # Real owner credentials are used only for a manual build of reviewed main.
     if: >-
       (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') &&
+      needs.changes.outputs.ipa == 'true' &&
       (github.event_name == 'pull_request' ||
        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: macos-26
