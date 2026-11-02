@@ -350,6 +350,10 @@ if os.environ.get('SAINT_LOOK_VISUAL_PROFILE'):
     if os.environ['SAINT_LOOK_VISUAL_PROFILE'] not in ('iphone-light', 'iphone-dark', 'iphone-max-text', 'ipad-light'):
         raise SystemExit('Unknown visual profile.')
     keys = ('SAINT_LOOK_VISUAL_PROFILE',)
+if 'SAINT_LOOK_OUTFIT_SCREENSHOTS' in os.environ:
+    if os.environ['SAINT_LOOK_OUTFIT_SCREENSHOTS'] not in ('0', '1'):
+        raise SystemExit('Outfit screenshot capture must be 0 or 1.')
+    keys += ('SAINT_LOOK_OUTFIT_SCREENSHOTS',)
 if any(not os.environ.get(key) for key in keys):
     raise SystemExit('Remote smoke configuration is incomplete.')
 matched = 0

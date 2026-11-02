@@ -25,6 +25,10 @@ on:
         type: choice
         default: all
         options: [all, wardrobe, outfits, outfits-max-text, outfits-launch-pair, wardrobe-expired-retry, visual, camera, wardrobe-recovery, native-menus, benchmark]
+      outfit_screenshots:
+        description: Capture extra outfit flow screenshots (visual profiles always capture)
+        type: boolean
+        default: false
       visual_profiles:
         description: Visual evidence profiles (only used by the visual suite)
         type: choice
@@ -98,6 +102,7 @@ jobs:
           NODE_ENV: test
           SAINT_LOOK_TEST_CLOCK_FILE: ${{ runner.temp }}/saint-look-clock.json
           SAINT_LOOK_RECORD_VIDEO: '0'
+          SAINT_LOOK_OUTFIT_SCREENSHOTS: ${{ (matrix.suite == 'outfits' || matrix.suite == 'outfits-max-text') && !inputs.outfit_screenshots && '0' || '1' }}
           SAINT_LOOK_OWNER_TOKEN: saint-look-ui-tests-owner-token-00000001
           SAINT_LOOK_PROVIDER: live
           SAINT_LOOK_TEST_PROVIDER_ORIGIN: http://127.0.0.1:8789

@@ -315,14 +315,14 @@ final class OutfitFlowTests: XCTestCase {
                         && bounds.minX < navigationFrame.maxX && bounds.maxX > navigationFrame.minX
                 }
                 guard reachableNavigation, containers.count == 1, let container = containers.first else {
-                    capture("ambiguous-constructor-scroll-surface")
+                    capture("ambiguous-constructor-scroll-surface", diagnostic: true)
                     XCTFail("Constructor scrolling requires one visible surface under its foreground navigation bar")
                     return false
                 }
                 let bounds = container.frame
                 let content = viewport.intersection(bounds)
                 guard !content.isEmpty, content.height > 60 else {
-                    capture("invalid-constructor-scroll-path")
+                    capture("invalid-constructor-scroll-path", diagnostic: true)
                     XCTFail("Constructor scrolling requires a usable content viewport")
                     return false
                 }
@@ -340,7 +340,7 @@ final class OutfitFlowTests: XCTestCase {
                 let destination = CGPoint(x: origin.x, y: origin.y + movement)
                 guard bounds.contains(origin), bounds.contains(destination),
                       appFrame.contains(origin), appFrame.contains(destination) else {
-                    capture("invalid-constructor-scroll-path")
+                    capture("invalid-constructor-scroll-path", diagnostic: true)
                     XCTFail("Both constructor scroll endpoints must remain inside its visible ScrollView")
                     return false
                 }
@@ -354,7 +354,7 @@ final class OutfitFlowTests: XCTestCase {
             let end = start.withOffset(CGVector(dx: 0, dy: movement))
             start.press(forDuration: 0.05, thenDragTo: end)
         }
-        capture("unreachable-outfit-control")
+        capture("unreachable-outfit-control", diagnostic: true)
         XCTFail("Could not reveal control; last target frame \(lastFrame), content viewport \(lastViewport), searching toward top: \(towardTop)")
         return false
     }
@@ -380,7 +380,7 @@ final class OutfitFlowTests: XCTestCase {
             let option = try addressedNativeDialogAction("\(action)-\(slotID)", in: app)
             option.tap()
         } catch {
-            capture("ambiguous-native-dialog-action")
+            capture("ambiguous-native-dialog-action", diagnostic: true)
             XCTFail("The addressed native dialog action must be unambiguous: \(error)")
         }
     }
@@ -391,7 +391,7 @@ final class OutfitFlowTests: XCTestCase {
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
         let result = XCTWaiter.wait(for: [gone], timeout: timeout)
         if result != .completed {
-            capture("outfit-dismissal-timeout")
+            capture("outfit-dismissal-timeout", diagnostic: true)
             let state = XCTAttachment(string: element.debugDescription)
             state.name = "outfit-dismissal-accessibility-state"
             state.lifetime = .keepAlways
@@ -477,7 +477,12 @@ final class OutfitFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func capture(_ name: String) {
+    private func capture(_ name: String, diagnostic: Bool = false) {
+        let environment = ProcessInfo.processInfo.environment
+        // Ordinary CI asserts the flow; visual profiles own the success gallery.
+        // Explicit diagnostics and the real pixel benchmark retain their evidence.
+        guard diagnostic || environment["SAINT_LOOK_BENCHMARK"] == "1"
+                || environment["SAINT_LOOK_OUTFIT_SCREENSHOTS"] != "0" else { return }
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -950,7 +955,7 @@ final class OutfitFlowTests: XCTestCase {
             let changed = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "label CONTAINS %@", type), object: app.buttons[firstID])
             let result = XCTWaiter.wait(for: [changed], timeout: 5)
-            if result != .completed { capture("cycle-selection-timeout") }
+            if result != .completed { capture("cycle-selection-timeout", diagnostic: true) }
             XCTAssertEqual(result, .completed, "The single cycle action must update its addressed layer")
         }
         performSlotAction("next-slot", slotID: cycleSlotID, in: app)
@@ -1112,7 +1117,7 @@ final class OutfitFlowTests: XCTestCase {
             let cleared = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "label CONTAINS %@", "Выбрать вещь"), object: clearedRow)
             guard XCTWaiter.wait(for: [cleared], timeout: 5) == .completed else {
-                capture("outfit-clear-row-timeout")
+                capture("outfit-clear-row-timeout", diagnostic: true)
                 XCTFail("Clearing the addressed body row must show its empty label")
                 return
             }
