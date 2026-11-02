@@ -25,7 +25,7 @@ async function evaluate({name,input}) {
  try {
   const source=await sharp(Buffer.from(input.source,'base64')).png().toBuffer();
   const prepared=input.prepared?Buffer.from(input.prepared,'base64'):await call(name+':preparation',()=>provider.prepare(source,signal));
-  const photos=[{source,prepared,role:'front'}];
+  const photos=[{source:input.generationSource?Buffer.from(input.generationSource,'base64'):source,prepared,role:'front'}];
   const features=input.features||await call(name+':attributes',()=>provider.attributes(photos,signal));record.features=features;
   let correction;
   for(let attempt=1;attempt<=2;attempt++) {
