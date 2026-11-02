@@ -102,6 +102,14 @@ enum GarmentImagePresentation {
 #if canImport(UIKit)
 import UIKit
 
+private func fittingImageFileStamp(_ files: [URL]) -> String? {
+    let stamps = files.compactMap { file -> String? in
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: file.path) else { return nil }
+        return "\(file.path)|\(attributes[.modificationDate] ?? "")|\(attributes[.size] ?? "")"
+    }
+    return stamps.count == files.count ? stamps.joined(separator: "\n") : nil
+}
+
 @MainActor
 enum GarmentPreviewCache {
     private static let cache: NSCache<NSString, UIImage> = {
@@ -130,13 +138,8 @@ enum FittingOcclusionCache {
     }()
     static func covered(_ candidate: URL, by overlays: [URL], shortSleeves: Bool) -> Bool {
         guard !overlays.isEmpty else { return false }
-        let files = [candidate] + overlays
-        let stamps = files.compactMap { url -> String? in
-            guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else { return nil }
-            return "\(url.path)|\(attributes[.modificationDate] ?? "")|\(attributes[.size] ?? "")"
-        }
-        guard stamps.count == files.count else { return false }
-        let key = (stamps.joined(separator: "\n") + "|\(shortSleeves)") as NSString
+        guard let stamp = fittingImageFileStamp([candidate] + overlays) else { return false }
+        let key = (stamp + "|\(shortSleeves)") as NSString
         if let result = cache.object(forKey: key) { return result.boolValue }
         guard let image = UIImage(contentsOfFile: candidate.path)?.cgImage else { return false }
         let upper = overlays.compactMap { UIImage(contentsOfFile: $0.path)?.cgImage }
@@ -156,13 +159,8 @@ enum FittingLayerImageCache {
     }()
     static func image(at url: URL, underClosedLongTops overlays: [URL]) -> UIImage? {
         guard !overlays.isEmpty else { return UIImage(contentsOfFile: url.path) }
-        let files = [url] + overlays
-        let stamps = files.compactMap { file -> String? in
-            guard let attributes = try? FileManager.default.attributesOfItem(atPath: file.path) else { return nil }
-            return "\(file.path)|\(attributes[.modificationDate] ?? "")|\(attributes[.size] ?? "")"
-        }
-        guard stamps.count == files.count else { return UIImage(contentsOfFile: url.path) }
-        let key = stamps.joined(separator: "\n") as NSString
+        guard let stamp = fittingImageFileStamp([url] + overlays) else { return UIImage(contentsOfFile: url.path) }
+        let key = stamp as NSString
         if let result = cache.object(forKey: key) { return result }
         guard let source = UIImage(contentsOfFile: url.path), let cg = source.cgImage else { return nil }
         let masks = overlays.compactMap { UIImage(contentsOfFile: $0.path)?.cgImage }

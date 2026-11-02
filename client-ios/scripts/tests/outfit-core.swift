@@ -1120,6 +1120,11 @@ struct OutfitCoreChecks {
             precondition(outer.canContainShortSleeves(of: shortInner) == expected,
                          "Open or ambiguous outer garments cannot contain inner sleeves")
         }
+        for type in ["Кардиган", "Куртка", "Пальто", "Пиджак"] {
+            let openFront = IllustrationFeatures(version: shortInner.version, type: type, colors: [], traits: ["sleeves": "long", "fastening": "none"])
+            precondition(!openFront.canContainShortSleeves(of: shortInner),
+                         "No fastening does not prove a cardigan/jacket has a closed front")
+        }
         print("PASS: Gemini admission, legacy publication restart and same-source prepared cache compatibility")
     }
 
