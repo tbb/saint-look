@@ -5,10 +5,11 @@ import { once } from 'node:events';
 import { createInterface } from 'node:readline';
 import { createIllustrationProvider } from '../src/illustration-provider.mjs';
 import { checkGarmentLayout } from '../src/illustration-layout.mjs';
+import { compareTopProportions } from '../src/illustration-proportions.mjs';
 import { createProviders } from '../src/providers.mjs';
 import { demoResult } from '../src/demo-provider.mjs';
 
-test('Simulator provider returns the requested trousers through generation and finalization', async t => {
+for (const type of ['Футболка', 'Брюки', 'Худи', 'Куртка', 'Свитер']) test(`Simulator provider returns requested ${type} through generation and finalization`, async t => {
   const child = spawn(process.execPath, ['test/providers/ui-server.mjs'], {
     env: { ...process.env, NODE_ENV: 'test', SAINT_LOOK_UI_PROVIDER_PORT: '0' }, stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -23,11 +24,14 @@ test('Simulator provider returns the requested trousers through generation and f
   const provider = createIllustrationProvider({ NODE_ENV:'test', SAINT_LOOK_ILLUSTRATIONS_ENABLED:'true',
     SAINT_LOOK_ILLUSTRATION_TEST_ORIGIN:origin, PHOTOROOM_SANDBOX_API_KEY:'sandbox_fixture',
     TYPESAFE_API_KEY:'fixture', GEMINI_API_KEY:'fixture' });
-  const source = (await demoResult()).image, features={type:'Брюки',colors:['Синий']};
+  const source = (await demoResult()).image, features={type,colors:['Синий']};
   const signal=new AbortController().signal;
-  const generated=await provider.generate([{source,prepared:source,role:'front'}],features,signal,()=>{});
+  const prepared=await provider.prepare(source,signal);
+  const generated=await provider.generate([{source,prepared,role:'front'}],features,signal,()=>{});
   const result=await provider.prepare(generated.png,signal,'finalization',features);
   assert.equal((await checkGarmentLayout(result,features)).valid,true);
+  const proportions=await compareTopProportions(prepared,result,features);
+  assert.ok(!proportions.measurable || proportions.valid,JSON.stringify(proportions));
 });
 
 

@@ -1,3 +1,4 @@
+import {qualityCorrection} from './illustration-quality.mjs';
 import { featureDigest, validateObserved } from './publication-contract.mjs';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
@@ -5,9 +6,10 @@ import { RequestError, uuid } from './upload.mjs';
 import { requireNotDeleted } from './deletion.mjs';
 import { ProviderError } from './providers.mjs';
 import { createIllustrationProvider, illustrationVersions, illustrationTaxonomy } from './illustration-provider.mjs';
-import { registerGarmentLayout, garmentLayout } from './illustration-layout.mjs';
+import {compareTopProportions,measureTopProportions} from './illustration-proportions.mjs';
+import { registerGarmentForFitting, garmentLayout } from './illustration-layout.mjs';
 
-const stages = ['preparation', 'attributes', 'generation', 'finalization'];
+const stages = ['preparation', 'attributes', 'unfolding', 'generation', 'finalization', 'fidelity'];
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const parse = value => value === null ? null : JSON.parse(value);
 const json = value => JSON.stringify(value ?? null);
@@ -19,6 +21,9 @@ function compatiblePreparedVersions(serialized) {
   // Switching renderers preserves segmentation; its billing mode is checked separately.
   return versions && ['fal-ai/nano-banana-pro/edit', illustrationVersions.modelVersion].includes(versions.modelVersion)
     && ((versions.templateVersion === illustrationVersions.templateVersion && versions.geometryVersion === illustrationVersions.geometryVersion)
+      || (versions.modelVersion === 'gemini-3-pro-image' && versions.templateVersion === 'category-front-anchors-v5' && versions.geometryVersion === 'fitting-anchors-1024-v5')
+      || (versions.modelVersion === 'gemini-3-pro-image' && versions.templateVersion === 'category-front-anchors-v4' && versions.geometryVersion === 'fitting-anchors-1024-v4')
+      || (versions.modelVersion === 'gemini-3-pro-image' && versions.templateVersion === 'category-front-anchors-v3' && versions.geometryVersion === 'fitting-anchors-1024-v3')
       || (versions.modelVersion === 'gemini-3-pro-image' && versions.templateVersion === 'category-front-anchors-v2' && versions.geometryVersion === 'fitting-anchors-1024-v2')
       || (versions.templateVersion === 'front-360x560-proposed-v1' && versions.geometryVersion === 'fitting-square-1024-v1'));
 }
@@ -93,6 +98,11 @@ export function createIllustrations(database, env, retention, budget) {
   const illustrationColumns = new Set(database.prepare('PRAGMA table_info(illustrations)').all().map(column => column.name));
   if (!illustrationColumns.has('photoroom_mode')) database.exec("ALTER TABLE illustrations ADD COLUMN photoroom_mode TEXT NOT NULL DEFAULT 'sandbox'");
   for (const column of ['result_digest', 'observed_digest', 'effective_digest']) if (!illustrationColumns.has(column)) database.exec(`ALTER TABLE illustrations ADD COLUMN ${column} TEXT`);
+  if (!illustrationColumns.has('fitting_poses')) database.exec('ALTER TABLE illustrations ADD COLUMN fitting_poses TEXT');
+  if (!illustrationColumns.has('quality_attempt')) database.exec('ALTER TABLE illustrations ADD COLUMN quality_attempt INTEGER NOT NULL DEFAULT 0');
+  if (!illustrationColumns.has('quality_history')) database.exec("ALTER TABLE illustrations ADD COLUMN quality_history TEXT NOT NULL DEFAULT '[]'");
+  if (!illustrationColumns.has('unfolded')) database.exec('ALTER TABLE illustrations ADD COLUMN unfolded BLOB');
+  if (!illustrationColumns.has('cutout')) database.exec('ALTER TABLE illustrations ADD COLUMN cutout BLOB');
   // Existing undelivered v3 output has real bytes: bind them before any cleanup.
   for (const row of database.prepare('SELECT * FROM illustrations WHERE result IS NOT NULL OR observed IS NOT NULL OR effective IS NOT NULL').all()) {
     database.prepare('UPDATE illustrations SET result_digest=COALESCE(result_digest,?),observed_digest=COALESCE(observed_digest,?),effective_digest=COALESCE(effective_digest,?) WHERE operation_id=?')
@@ -137,7 +147,7 @@ export function createIllustrations(database, env, retention, budget) {
     // Ordinary photo replacement is authoritative even when the illustration
     // worker is awaiting a provider. The old operation must not lock the item.
     database.prepare(`UPDATE illustrations SET status='failed',error='operation_superseded',retention_state='superseded',
-      generated=NULL,result=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL
+      unfolded=NULL,generated=NULL,cutout=NULL,result=NULL,fitting_poses=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL
       WHERE retention_state='active' AND EXISTS (SELECT 1 FROM items
         WHERE items.item_id=illustrations.item_id AND items.photo_version_id<>illustrations.photo_version_id)`).run();
     for (const source of database.prepare('SELECT item_id,photo_id FROM illustration_sources WHERE source IS NOT NULL').all()) {
@@ -146,7 +156,7 @@ export function createIllustrations(database, env, retention, budget) {
       if (!referenced) database.prepare(`UPDATE illustration_sources SET ${cleared},state=CASE WHEN state='in_flight' THEN 'unknown' ELSE state END WHERE item_id=? AND photo_id=?`).run(source.item_id, source.photo_id);
     }
     database.prepare(`UPDATE illustrations SET status='failed',error='result_expired',retention_state='expired',
-      generated=NULL,result=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL,processing=?
+      unfolded=NULL,generated=NULL,cutout=NULL,result=NULL,fitting_poses=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL,processing=?
       WHERE retention_state='active' AND expires_at<=?`).run(json(Object.fromEntries(stages.map(stage => [stage, 'cleared']))), now);
     database.prepare(`UPDATE illustration_sources SET ${cleared} WHERE expires_at<=?`).run(now);
   }
@@ -171,6 +181,7 @@ export function createIllustrations(database, env, retention, budget) {
         return { photoId: photo.id, sourceSHA256: photo.digest, preparedSHA256: source?.prepared_digest ?? null,
           versions: parse(source?.prepared_versions ?? null), preparedPath: `/v1/items/${row.item_id}/illustrations/${row.operation_id}/sources/${photo.id}/prepared` };
       }) : [],
+      fittingPoses: row.status === 'ready' ? parse(row.fitting_poses) : null,
       resultPath: row.status === 'ready' ? `/v1/items/${row.item_id}/illustrations/${row.operation_id}/result` : null, error: row.error };
   }
   function live(operationId) {
@@ -229,35 +240,91 @@ export function createIllustrations(database, env, retention, budget) {
         database.prepare('UPDATE illustrations SET observed=?,effective=?,observed_digest=?,effective_digest=? WHERE operation_id=?').run(json(observed), json(effective), featureDigest(observed), featureDigest(effective), operationId);
         setStage(operationId, stage, 'done');
       }
+      stage = 'unfolding'; row = live(operationId); if (!row) return;
+      const layout = garmentLayout(effective); // Unsupported types never spend on normalization.
+      const needsUnfolding = layout.group === 'hooded' && effective.traits?.sleeves === 'long';
+      let unfolded = row.unfolded && Buffer.from(row.unfolded);
+      if (needsUnfolding && !unfolded && !row.generated && !row.provider_receipt) {
+        setStage(operationId, stage, 'in_flight');
+        budget.reserve('photoroom', `${operationId}:unfolding:${row.photo_version_id}`);
+        unfolded = await provider.unfold(photos.find(photo => photo.role === 'front').source, abort.signal);
+        const active = live(operationId); if (!active) return;
+        database.prepare('UPDATE illustrations SET unfolded=?,processing=? WHERE operation_id=?')
+          .run(unfolded, json({...parse(active.processing), unfolding:'done'}), operationId);
+      }
+      if (unfolded) photos.find(photo => photo.role === 'front').generationReference = unfolded;
+      else setStage(operationId, stage, 'skipped');
       stage = 'generation'; row = live(operationId); if (!row) return;
       let generated = row.generated && { png: Buffer.from(row.generated), usableAlpha: Boolean(row.generated_alpha) };
       if (!generated) {
         garmentLayout(effective); // Reject unsupported placement before reserving a paid generation.
         setStage(operationId, stage, 'in_flight');
-        if (!row.provider_receipt) budget.reserve('gemini', `${operationId}:illustration:generation:${row.photo_version_id}`);
+        if (!row.provider_receipt) budget.reserve('gemini', `${operationId}:illustration:generation:${row.photo_version_id}:${row.quality_attempt}`);
         generated = await provider.generate(photos, effective, abort.signal, receipt => {
           if (live(operationId)) database.prepare('UPDATE illustrations SET provider_receipt=? WHERE operation_id=?').run(receipt, operationId);
-        }, row.provider_receipt);
+        }, row.provider_receipt, parse(row.quality_history).at(-1)?.correction);
         if (!live(operationId)) return;
         database.prepare('UPDATE illustrations SET generated=?,generated_alpha=? WHERE operation_id=?').run(generated.png, Number(generated.usableAlpha), operationId);
         setStage(operationId, stage, 'done');
       }
       stage = 'finalization';
-      let result;
-      if (generated.usableAlpha) {
-        result = await registerGarmentLayout(generated.png, effective); setStage(operationId, stage, 'skipped');
+      let result = row.result && Buffer.from(row.result);
+      if (!result) {
+        let finalizationState = generated.usableAlpha ? 'skipped' : 'done';
+        let cutout = row.cutout && Buffer.from(row.cutout);
+        if (!cutout) {
+          if (generated.usableAlpha) cutout = generated.png;
+          else {
+            setStage(operationId, stage, 'in_flight');
+            budget.reserve('photoroom', `${operationId}:finalization:${row.photo_version_id}:${row.quality_attempt}`);
+            // Save the paid segmentation before doing fallible local placement.
+            cutout = await provider.prepare(generated.png, abort.signal, stage);
+          }
+          const active = live(operationId); if (!active) return;
+          database.prepare('UPDATE illustrations SET cutout=?,processing=? WHERE operation_id=?')
+            .run(cutout,json({...parse(active.processing),finalization:finalizationState}),operationId);
+        }
+        const fitting = await registerGarmentForFitting(cutout,effective,await measureTopProportions(cutout,effective));
+        result = fitting.png;
+        const active = live(operationId); if (!active) return;
+        // Persist the paid output and its completed stage together. It remains
+        // private while pending; restart must not pay for finalization again.
+        const processing = { ...parse(active.processing), finalization: finalizationState };
+        database.prepare('UPDATE illustrations SET result=?,result_digest=?,processing=?,fitting_poses=? WHERE operation_id=?')
+          .run(result, digest(result), json(processing), json(fitting.poses), operationId);
       }
-      else {
-        setStage(operationId, stage, 'in_flight');
-        budget.reserve('photoroom', `${operationId}:finalization:${row.photo_version_id}`);
-        result = await provider.prepare(generated.png, abort.signal, stage, effective);
-        if (!live(operationId)) return;
-        setStage(operationId, stage, 'done');
-      }
-      if (live(operationId)) database.prepare("UPDATE illustrations SET result=?,result_digest=?,status='ready',error=NULL WHERE operation_id=?").run(result, digest(result), operationId);
+      const front=photos.find(photo=>photo.role==='front')||photos[0];
+      const proportions=await compareTopProportions(front.prepared,result,effective);
+      if(proportions.measurable && !proportions.valid) throw new ProviderError('illustration_proportions_changed');
+      if(!live(operationId))return;
+      stage='fidelity';setStage(operationId,stage,'in_flight');
+      budget.reserve('gemini',`${operationId}:illustration:structure:${row.photo_version_id}:${row.quality_attempt}`);
+      budget.reserve('jev',`${operationId}:illustration:fidelity:${row.photo_version_id}:${row.quality_attempt}`);
+      await provider.fidelity(front.source,result,abort.signal);
+      const checked = live(operationId); if (!checked) return;
+      database.prepare("UPDATE illustrations SET processing=?,status='ready',error=NULL WHERE operation_id=?")
+        .run(json({ ...parse(checked.processing), fidelity: 'done' }), operationId);
     } catch (error) {
       if (!live(operationId)) return;
       const unknown = !(error instanceof ProviderError) || error.unknown;
+      const active = live(operationId);
+      const correction = !unknown && qualityCorrection(error);
+      if (correction && active.quality_attempt === 0) {
+        // Only completed, demonstrably defective candidates admit a new POST.
+        // Persist its ordinal and the previous receipt BEFORE scheduling it;
+        // a crash while the second request is in flight remains unknown.
+        const history = [...parse(active.quality_history), {
+          correction, providerReceipt: active.provider_receipt,
+          generatedDigest: active.generated ? digest(active.generated) : null,
+          resultDigest: active.result_digest,
+        }];
+        database.prepare(`UPDATE illustrations SET quality_attempt=1,quality_history=?,
+          generated=NULL,generated_alpha=0,cutout=NULL,result=NULL,result_digest=NULL,provider_receipt=NULL,
+          processing=? WHERE operation_id=? AND status='pending' AND quality_attempt=0`)
+          .run(json(history),json({...parse(active.processing),generation:'pending',finalization:'pending',fidelity:'pending'}),operationId);
+        schedule(operationId);
+        return;
+      }
       setStage(operationId, stage, unknown ? 'unknown' : 'failed');
       database.prepare("UPDATE illustrations SET status='failed',error=? WHERE operation_id=?").run(error instanceof ProviderError ? error.code : 'processing_unknown', operationId);
       if (stage === 'preparation') database.prepare("UPDATE illustration_sources SET state=? WHERE item_id=? AND state='in_flight'").run(unknown ? 'unknown' : 'failed', row.item_id);
@@ -402,7 +469,7 @@ export function createIllustrations(database, env, retention, budget) {
         // This is the publication commit: generated output alone never freezes photos.
         lockSources(row);
         database.prepare(`UPDATE illustrations SET retention_state='delivered',status='failed',error='result_delivered',
-          generated=NULL,result=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL,processing=? WHERE operation_id=?`)
+          unfolded=NULL,generated=NULL,cutout=NULL,result=NULL,fitting_poses=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL,processing=? WHERE operation_id=?`)
           .run(json(Object.fromEntries(stages.map(stage => [stage, 'cleared']))), operationId);
         for (const photo of parse(row.photos)) {
           const used = database.prepare("SELECT photos FROM illustrations WHERE item_id=? AND retention_state='active'").all(itemId)

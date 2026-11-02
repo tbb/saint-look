@@ -76,6 +76,7 @@ const server = createServer(async (request, response) => {
     const body = await bodyOf(request, 16 * 1024 * 1024);
     if (await modelFixture(request, response, body, {}, modelCalls, rankCalls)) return;
     if (request.url === '/v1beta/interactions') {
+      if(JSON.parse(body).model==='gemini-3.8-flash')return reply(response,200,{id:'v1_ui-structure',model:'gemini-3.8-flash',status:'completed',steps:[{type:'model_output',content:[{type:'text',text:JSON.stringify({sleeve_count:2,folded_sleeves:false,duplicated_parts:false,raised_hood:false,confidence:.99,evidence:'Controlled two-sleeve fixture.'})}]}]});
       illustrationGenerationCalls++;
       if (illustrationMode === 'held') await new Promise(resolve => heldGenerations.add(resolve));
       if (illustrationMode === 'unknown') { response.destroy(); return; }
@@ -86,7 +87,12 @@ const server = createServer(async (request, response) => {
       let cutout = illustrationCutout;
       if (features.type !== 'Футболка') {
         const layout = garmentLayout(features);
-        cutout = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-100 0 560 560"><path d="${layout.path}" fill="#315c93"/></svg>`)).png().toBuffer();
+        // Match the blue source glyph's torso ratio for manual jacket/sweater edits.
+        // The stock placement guide is narrower and is not an identity fixture.
+        const path = layout.group === 'upper' ? layout.path
+          .replaceAll('L216 206','L224 206').replaceAll('L220 297 L139 297','L228 297 L131 297')
+          .replaceAll('L143 206','L135 206') : layout.path;
+        cutout = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-100 0 560 560"><path d="${path}" fill="#315c93"/></svg>`)).png().toBuffer();
       }
       const jpeg = await sharp(cutout).flatten({background:'#ffffff'}).jpeg().toBuffer();
       illustrationCutouts.set(await imageKey(jpeg), cutout);
@@ -97,11 +103,11 @@ const server = createServer(async (request, response) => {
     }
     if (request.url === '/v1/systemone') {
       const payload = JSON.parse(body);
-      if (payload.questions?.silhouette) {
-        illustrationAttributesCalls++;
+      if (payload.questions?.silhouette || payload.questions?.artwork) {
+        if (payload.questions?.silhouette) illustrationAttributesCalls++;
         const answers = Object.fromEntries(Object.entries(payload.questions).map(([name, q]) => {
           if (q.type === 'noul') return [name, { type: 'noul', noul: name === 'color_blue' ? 0.99 : 0.01 }];
-          const selected = name === 'suitability' ? 'suitable' : name === 'item_type' ? itemType : 'unknown';
+          const selected = payload.questions.artwork ? 'preserved' : name === 'suitability' ? 'suitable' : name === 'item_type' ? itemType : 'unknown';
           return [name, { type: 'choice', choice: selected, confidence: 1,
             probabilities: Object.fromEntries(Object.keys(q.criteria).map(key => [key, key === selected ? 1 : 0])) }];
         }));

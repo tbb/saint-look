@@ -635,7 +635,22 @@ extension WardrobeStore {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    func fittingIllustrationURL(for item: WardrobeItem) -> URL? {
+    func fittingComposition(for outfit: Outfit) -> FittingComposition {
+        outfit.fittingComposition(in: items, available: { illustrationURL(for: $0) != nil }, covered: { item, overlays in
+            guard let url = illustrationURL(for: item) else { return false }
+            let upper = overlays.compactMap { illustrationURL(for: $0) }
+            guard upper.count == overlays.count else { return false }
+            return FittingOcclusionCache.covered(url, by: upper, shortSleeves: item.hasShortFittingSleeves)
+        })
+    }
+
+    func hasMixedFittingPoses(in outfit: Outfit) -> Bool {
+        let composition = fittingComposition(for: outfit)
+        return items.contains { outfit.selectedIDs.contains($0.id) && $0.hasFittingGeometry && !composition.renderedIDs.contains($0.id) }
+    }
+
+    func fittingIllustrationURL(for item: WardrobeItem, in outfit: Outfit? = nil) -> URL? {
+        if let outfit, !fittingComposition(for: outfit).renderedIDs.contains(item.id) { return nil }
         guard item.hasFittingGeometry else { return nil }
         return illustrationURL(for: item)
     }

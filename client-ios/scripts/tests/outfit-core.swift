@@ -1042,16 +1042,56 @@ struct OutfitCoreChecks {
         let currentFit = try preparedFixture(item)
         precondition(!currentFit.needsFittingUpdate && currentFit.hasFittingGeometry, "A current anchored publication can be fitted")
         precondition(!restoredLegacy.hasFittingGeometry)
+        var missing = currentFit.displayedIllustration!.response
+        missing.fittingPoses = nil
+        let currentRequest = IllustrationRequest(operationID: missing.operationId, photoVersionID: missing.photoVersionId,
+            sourceSetVersionID: missing.sourceSetVersionId, revision: missing.revision, manualType: nil, manualColors: nil, status: .ready)
+        do { try missing.validate(for: currentFit, request: currentRequest); fatalError("v6 requires pose evidence") }
+        catch ClientError.invalidResponse { }
+        for invalid in [[], ["open", "open"], ["invented"]] {
+            missing.fittingPoses = invalid
+            do { try missing.validate(for: currentFit, request: currentRequest); fatalError("Invalid pose evidence") }
+            catch ClientError.invalidResponse { }
+        }
+        let absentJSON = String(data: try JSONEncoder().encode(currentFit), encoding: .utf8)!
+            .replacingOccurrences(of: "\"fittingPoses\":[\"open\"]", with: "\"fittingPoses\":null")
+        let absentFit = try JSONDecoder().decode(WardrobeItem.self, from: Data(absentJSON.utf8))
+        precondition(!absentFit.hasFittingGeometry && absentFit.needsFittingUpdate,
+                     "Stored v6 without evidence must fall back, never guess a pose")
+
         // Round-trip an actual previous publication, not a replacement image.
         let currentJSON = String(data: try JSONEncoder().encode(currentFit), encoding: .utf8)!
-        let previousJSON = currentJSON.replacingOccurrences(of: IllustrationContract.currentGeometryVersion, with: "fitting-anchors-1024-v2")
-            .replacingOccurrences(of: IllustrationContract.currentTemplateVersion, with: "category-front-anchors-v2")
-        let previousFit = try JSONDecoder().decode(WardrobeItem.self, from: Data(previousJSON.utf8))
-        precondition(previousFit.hasPreparedVersion && previousFit.hasFittingGeometry && previousFit.needsFittingUpdate,
-                     "Previous anchored publication stays visible until explicit fitting refresh")
-        precondition(previousFit.displayedIllustration?.filename == currentFit.displayedIllustration?.filename)
-        precondition(previousFit.illustrationStatusMessage?.contains("Пока используется") == true)
-        precondition(IllustrationContract.accepts(modelVersion: "gemini-3-pro-image", templateVersion: "category-front-anchors-v2", geometryVersion: "fitting-anchors-1024-v2"))
+        for version in ["v2", "v3", "v4"] {
+            let previousJSON = currentJSON.replacingOccurrences(of: IllustrationContract.currentGeometryVersion, with: "fitting-anchors-1024-\(version)")
+                .replacingOccurrences(of: IllustrationContract.currentTemplateVersion, with: "category-front-anchors-\(version)")
+            let previousFit = try JSONDecoder().decode(WardrobeItem.self, from: Data(previousJSON.utf8))
+            precondition(previousFit.hasPreparedVersion && previousFit.hasFittingGeometry && previousFit.needsFittingUpdate,
+                         "Previous anchored publication stays visible until explicit fitting refresh")
+            precondition(previousFit.displayedIllustration?.filename == currentFit.displayedIllustration?.filename)
+            let oldOnly = Outfit(slots: [OutfitSlot(zone: .body, itemID: previousFit.id)])
+            precondition(oldOnly.fittingComposition(in: [previousFit]).pose == .legacy)
+            precondition(oldOnly.fittingComposition(in: [previousFit]).renderedIDs.contains(previousFit.id))
+            // Different items: an old lower layer must not acquire v5 sleeve geometry.
+            var other = WardrobeItem(id: UUID(), operationID: UUID(), photoVersionID: UUID())
+            other.status = .ready; other.type = "Футболка"; other.resultFilename = "controlled-cutout.png"
+            other = try preparedFixture(other)
+            let mixed = Outfit(slots: [OutfitSlot(zone: .body, itemID: previousFit.id), OutfitSlot(zone: .body, itemID: other.id)])
+            precondition(mixed.fittingComposition(in: [previousFit, other]).pose == .wide)
+            precondition(!mixed.fittingComposition(in: [previousFit, other]).renderedIDs.contains(previousFit.id))
+            precondition(mixed.fittingComposition(in: [previousFit, other]).renderedIDs.contains(other.id))
+            precondition(mixed.fittingComposition(in: [previousFit, other]).renderedIDs.count == 1)
+            let covered = mixed.fittingComposition(in: [previousFit, other], covered: { candidate, overlays in
+                candidate.id == previousFit.id && overlays.map(\.id) == [other.id]
+            })
+            precondition(covered.pose == .wide && covered.renderedIDs == Set([previousFit.id, other.id]),
+                         "Only already rendered outer layers may release the inner sleeve constraint")
+            let missingOuter = mixed.fittingComposition(in: [previousFit, other], available: { $0.id != other.id })
+            precondition(missingOuter.pose == .legacy && missingOuter.renderedIDs == [previousFit.id],
+                         "An unavailable outer image cannot choose the pose or occlude another layer")
+
+            precondition(previousFit.illustrationStatusMessage?.contains("Пока используется") == true)
+            precondition(IllustrationContract.accepts(modelVersion: "gemini-3-pro-image", templateVersion: "category-front-anchors-\(version)", geometryVersion: "fitting-anchors-1024-\(version)"))
+        }
         precondition(restoredLegacy.publishedVersion?.illustration?.response.modelVersion == "fal-ai/nano-banana-pro/edit")
         for model in [IllustrationContract.currentModelVersion, "fal-ai/nano-banana-pro/edit", "unapproved-renderer"] {
             let cached = IllustrationPreparedPhoto(photoID: item.photoVersionID, filename: "prepared.png",
@@ -1065,6 +1105,13 @@ struct OutfitCoreChecks {
                 sourceDigest: "source-digest", preparedDigest: "prepared-digest", modelVersion: IllustrationContract.currentModelVersion,
                 templateVersion: versions.0, geometryVersion: versions.1)
             precondition(!cached.matchesPreparationContract(photoID: item.photoVersionID), "Incompatible preparation geometry cannot be reused")
+        }
+        for (type, sleeves, expected) in [("Худи", "long", true), ("Куртка", "long", true),
+            ("Пальто", "long", false), ("Плащ", "long", false), ("Жилет", "sleeveless", false),
+            ("Футболка", "short", false), ("Футболка", "long", true), ("Рубашка", "short", false)] {
+            let features = IllustrationFeatures(version: "fitting-observable-v2-photoroom-sandbox", type: type,
+                colors: [], traits: ["hood": "yes", "sleeves": sleeves])
+            precondition(features.usesLoweredHoodPose == expected, "Head occlusion must match generator pose for \(type)")
         }
         print("PASS: Gemini admission, legacy publication restart and same-source prepared cache compatibility")
     }
@@ -1150,6 +1197,7 @@ struct OutfitCoreChecks {
             manualType: request.manualType, manualColors: request.manualColors, modelVersion: modelVersion,
             templateVersion: modelVersion == IllustrationContract.currentModelVersion ? IllustrationContract.currentTemplateVersion : "front-360x560-proposed-v1",
             geometryVersion: modelVersion == IllustrationContract.currentModelVersion ? IllustrationContract.currentGeometryVersion : "fitting-square-1024-v1", resultPath: nil, error: nil,
+            fittingPoses: modelVersion == IllustrationContract.currentModelVersion ? ["open"] : nil,
             preparedSources: [IllustrationPreparedSource(photoId: item.photoVersionID, preparedPath: "/prepared")])
         return IllustrationResult(filename: filename, response: response)
     }

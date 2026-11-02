@@ -4,12 +4,13 @@ import sharp from 'sharp';
 import { modelFixture } from './model.mjs';
 import { createHash } from 'node:crypto';
 import { garmentLayout } from '../../src/illustration-layout.mjs';
+import {measuredGuideSVG} from '../../src/illustration-edit-pose.mjs';
 
 // The fixture implements external HTTP boundaries, never production fallback.
 export async function illustrationFixture(t, handlers = {}) {
-  const calls = { preparation: [], attributes: [], generation: [], recovery: [], finalization: [], model: [], rank: [] };
+  const calls = { unfolding: [], structure: [], fidelity: [], preparation: [], attributes: [], generation: [], recovery: [], finalization: [], model: [], rank: [] };
   const result = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: '#00000000' } })
-    .composite([{ input: await sharp({ create: { width: 120, height: 270, channels: 4, background: '#dd3322ff' } }).png().toBuffer(), left: 452, top: 240 }]).png().toBuffer();
+    .composite([{ input: await sharp({ create: { width: 200, height: 270, channels: 4, background: '#dd3322ff' } }).png().toBuffer(), left: 412, top: 240 }]).png().toBuffer();
   const generated = await sharp(result).flatten({ background: '#ffffff' }).jpeg().toBuffer();
   const imageKey = async bytes => createHash('sha256').update(await sharp(bytes).ensureAlpha().raw().toBuffer()).digest('hex');
   const cutouts = new Map([[await imageKey(generated), result]]);
@@ -30,17 +31,19 @@ export async function illustrationFixture(t, handlers = {}) {
       if (request.url === '/result.png') {
         response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(handlers.opaque ? await sharp(result).flatten({ background: '#ffffff' }).png().toBuffer() : result); return;
       }
-      const stage = request.url === '/v1/systemone' ? 'attributes' : request.url === '/v1beta/interactions' ? 'generation'
+      const stage = request.url === '/v2/edit' ? 'unfolding' : request.url === '/v1/systemone' ? (JSON.parse(body).questions?.artwork?'fidelity':'attributes') : request.url === '/v1beta/interactions' ? (JSON.parse(body).model==='gemini-3.8-flash'?'structure':'generation')
         : request.url === '/v1/segment' ? (body.includes(Buffer.from('finalization.png')) ? 'finalization' : 'preparation') : null;
       if (!stage) { response.writeHead(404); response.end(); return; }
       calls[stage].push({ body, headers: request.headers, path: request.url });
       if (handlers[stage]) { await handlers[stage](request, response, { body, result }); return; }
-      if (stage === 'attributes') {
+      if(stage==='unfolding'){response.writeHead(200,{'Content-Type':'image/png'});response.end(result);}
+      else if(stage==='structure'){response.writeHead(200,{'Content-Type':'application/json'});response.end(JSON.stringify({id:'v1_structure-1',model:'gemini-3.8-flash',status:'completed',steps:[{type:'model_output',content:[{type:'text',text:JSON.stringify({sleeve_count:2,folded_sleeves:false,duplicated_parts:false,raised_hood:false,confidence:.99,evidence:'Two normal sleeves.'})}]}]}));}
+      else if (stage === 'attributes'||stage === 'fidelity') {
         const payload = JSON.parse(body);
         const answers = Object.fromEntries(Object.entries(payload.questions).map(([name, q]) => {
           if (q.type === 'noul') return [name, { type: 'noul', noul: handlers.colors
             ? (handlers.colors[name.slice(6)] ?? 0.01) : name === 'color_red' ? 0.99 : 0.01 }];
-          const selected = name === 'suitability' ? 'suitable' : name === 'item_type' ? 't_shirt' : 'unknown';
+          const selected = stage === 'fidelity' ? 'preserved' : name === 'suitability' ? 'suitable' : name === 'item_type' ? 't_shirt' : handlers.traits?.[name] || 'unknown';
           return [name, { type: 'choice', choice: selected, confidence: 1,
             probabilities: Object.fromEntries(Object.keys(q.criteria).map(key => [key, key === selected ? 1 : 0])) }];
         }));
@@ -51,9 +54,10 @@ export async function illustrationFixture(t, handlers = {}) {
         calls.generation.at(-1).interaction = request;
         const features = JSON.parse(request.input.at(-1).text.split('take precedence): ')[1]);
         let cutout = result;
-        if (features.type !== 'Футболка') {
+        if (features.type !== 'Футболка' || features.traits?.sleeves==='short') {
           const layout = garmentLayout(features);
-          cutout = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-100 0 560 560"><path d="${layout.path}" fill="#dd3322"/></svg>`)).png().toBuffer();
+          const shortGuide=features.traits?.sleeves==='short' ? measuredGuideSVG({...features,traits:{...features.traits,body_length:'regular'}},{bodyWidthToLength:.64}) : null;
+          cutout = await sharp(Buffer.from(shortGuide || `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-100 0 560 560"><path d="${layout.path}" fill="#dd3322"/></svg>`)).png().toBuffer();
         }
         const jpeg = await sharp(cutout).flatten({ background: '#ffffff' }).jpeg().toBuffer();
         cutouts.set(await imageKey(jpeg), cutout);

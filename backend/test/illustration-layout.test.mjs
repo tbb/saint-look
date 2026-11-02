@@ -54,7 +54,8 @@ test('registration never crops visible sandbox watermark pixels outside the garm
 
 test('wide full-length trousers cannot pass by shrinking their hems above the ankles', async () => {
   const source = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M250 100 H750 V900 H550 L525 350 H475 L450 900 H250 Z" fill="#222"/></svg>')).png().toBuffer();
-  await assert.rejects(registerGarmentLayout(source, {type:'trousers'}), {code:'illustration_geometry_invalid'});
+  const registered=await registerGarmentLayout(source,{type:'trousers'});
+  assert.equal((await checkGarmentLayout(registered,{type:'trousers'})).valid,true, 'Wide legs must keep their width and full ankle-reaching length');
   const shortened = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M430 483 H590 V746 H530 L520 570 H500 L490 746 H430 Z" fill="#222"/></svg>')).png().toBuffer();
   assert.equal((await checkGarmentLayout(shortened,{type:'trousers'})).valid, false);
 });
@@ -119,13 +120,9 @@ test('shoulder alignment also retains regular hems and full-length sleeves', asy
   const registered=await registerGarmentLayout(source,polo);
   assert.equal((await checkGarmentLayout(registered,polo)).valid,true);
   const jacket={type:'jacket',traits:{neckline:'collar',body_length:'regular',sleeves:'long'}};
-  const outer=await registerGarmentLayout(await readFile(new URL('./fixtures/fitting-shoulder-jacket.png',import.meta.url)),jacket);
-  const data=await sharp(outer).ensureAlpha().raw().toBuffer();
-  for(const [left,right] of [[333,420],[604,691]]) {
-    let cuff=-1;
-    for(let y=400;y<650;y++){let count=0;for(let x=left;x<=right;x++)if(data[(y*1024+x)*4+3]>=224)count++;if(count>=5)cuff=y;}
-    assert.ok(cuff>=535,`A declared long sleeve must reach the wrist region; cuff=${cuff}`);
-  }
+  const oldPose=await readFile(new URL('./fixtures/fitting-shoulder-jacket.png',import.meta.url));
+  await assert.rejects(registerGarmentLayout(oldPose,jacket),{code:'illustration_geometry_invalid'},
+    'Old-pose cuffs must not be relabelled as fitting the new wrist anchors');
 });
 
 test('an elongated tee keeps its proportions and remains visible below a regular hoodie', async () => {
@@ -187,4 +184,38 @@ test('uncertain length also preserves an observed cropped torso instead of inven
     const features={type:'t_shirt',traits:{body_length,neckline:'round'}};
     assert.deepEqual(await registerGarmentLayout(source,features),source,'Unknown must not enlarge a short torso to cover the waist');
   }
+});
+
+test('v5 clothing guides share the rotated wrists, including coats and gloves',async()=>{
+  const {garmentLayout}=await import('../src/illustration-layout.mjs');
+  for(const type of ['hoodie','jacket','coat','gloves']) {
+    const features={type,traits:{sleeves:'long',body_length:'regular'}};
+    const layout=garmentLayout(features);
+    assert.ok(Math.abs(layout.anchors.leftWrist[0]-68)<1);
+    assert.ok(Math.abs(layout.anchors.rightWrist[0]-292)<1);
+    assert.ok(Math.abs(layout.anchors.leftWrist[1]-295)<1);
+    const guide=await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-100 0 560 560"><path d="${layout.path}" fill="#222"/></svg>`)).png().toBuffer();
+    assert.equal((await checkGarmentLayout(guide,features)).valid,true,type+': guide must satisfy its own geometric contract');
+    const pixels=await sharp(guide).ensureAlpha().raw().toBuffer();
+    for(const [x,y] of [[307,539],[716,539]]) {
+      let contact=0;for(let dy=-6;dy<=6;dy++)for(let dx=-6;dx<=6;dx++)if(pixels[((y+dy)*1024+x+dx)*4+3]>200)contact++;
+      assert.ok(contact>=20,type+': actual cuffs must contact the new wrists');
+    }
+  }
+});
+
+test('display ease enlarges a narrow long torso uniformly without relabelling its length',async()=>{
+  const {measureTopProportions,compareTopProportions}=await import('../src/illustration-proportions.mjs');
+  const source=await sharp(Buffer.from(shortTee.replace('L585 450','L585 540'))).png().toBuffer();
+  const features={type:'t_shirt',traits:{body_length:'regular',silhouette:'straight'}};
+  const before=await measureTopProportions(source,features);
+  const result=await registerGarmentLayout(source,features,before);
+  const after=await measureTopProportions(result,features);
+  assert.ok(after.bodyWidth>=190,'A non-fitted torso must clear the mannequin plus display ease');
+  assert.ok(after.bodyTop+after.visibleLength>560,'Extra length remains below an ordinary hoodie');
+  assert.equal((await compareTopProportions(source,result,features)).valid,true);
+  assert.equal(features.traits.body_length,'regular','Display normalization does not invent a long classification');
+  const cropped={...features,traits:{...features.traits,body_length:'cropped'}};
+  const short=await sharp(Buffer.from(shortTee)).png().toBuffer();
+  assert.deepEqual(await registerGarmentLayout(short,cropped,await measureTopProportions(short,cropped)),short);
 });

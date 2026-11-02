@@ -28,10 +28,11 @@ async function until(check) {
   throw new Error('Expected external request did not arrive');
 }
 async function waitForIllustration(server, itemId, operationId, status = 'ready') {
+  const expected=Array.isArray(status)?status:[status];
   for (let i = 0; i < 150; i++) {
     const response = await server.request(`/v1/items/${itemId}/illustrations/${operationId}`);
     const value = await response.json();
-    if (value.status === status) return value;
+    if (expected.includes(value.status)) return value;
     if (value.status === 'failed') throw new Error(JSON.stringify(value));
     await new Promise(resolve => setTimeout(resolve, 25));
   }
@@ -63,7 +64,7 @@ test('single photo produces a separate transparent illustration with observed tr
   assert.equal(ready.observedFeatures.type, 'Футболка');
   assert.deepEqual(ready.effectiveFeatures.colors, ['Красный']);
   assert.equal(ready.effectiveFeatures.traits.silhouette, 'unknown');
-  assert.deepEqual(ready.processing, { preparation: 'done', attributes: 'done', generation: 'done', finalization: 'done' });
+  assert.deepEqual(ready.processing, { preparation: 'done', attributes: 'done', unfolding: 'skipped', generation: 'done', finalization: 'done', fidelity: 'done' });
   const generation = fixture.calls.generation[0];
   assert.equal(generation.path, '/v1beta/interactions');
   assert.equal(generation.headers['x-goog-api-key'], 'fixture');
@@ -456,4 +457,286 @@ for (const versions of [
   server = await env.launch(fixture.env);
   assert.equal((await requestIllustration(server, photo.itemId, { ...refresh, operationId: randomUUID(), revision: 3 })).status, 409);
   assert.equal(fixture.calls.preparation.length, 1);
+});
+
+
+test('a geometrically valid slim redraw cannot be published for a wide source with unknown silhouette', async t => {
+  const fixture=await illustrationFixture(t,{traits:{sleeves:'short'}});
+  const env=await environment(t),server=await env.launch(fixture.env);
+  const photo=await photoRequest();
+  photo.imageBase64=(await sharp({create:{width:668,height:858,channels:3,background:'#222'}}).png().toBuffer()).toString('base64');
+  await upload(server,photo);await waitForItem(server,photo.itemId);
+  const input=illustration(photo);await requestIllustration(server,photo.itemId,input);
+  const result=await waitForIllustration(server,photo.itemId,input.operationId,['ready','failed']);
+  assert.equal(result.status,'failed');
+  assert.equal(result.error,'illustration_proportions_changed');
+  assert.equal(result.resultPath,null);
+  assert.equal(fixture.calls.generation.length,2,'A confirmed defect gets exactly one corrective attempt');
+  assert.equal(fixture.calls.finalization.length,2);
+});
+
+function fidelityReply(response, body, choice = 'preserved', confidence = 1) {
+  const payload = JSON.parse(body);
+  const answers = Object.fromEntries(Object.entries(payload.questions).map(([name, q]) => {
+    const selected = name === 'artwork' ? choice : 'preserved';
+    const certainty = name === 'artwork' ? confidence : 1;
+    return [name, { type: 'choice', choice: selected, confidence: certainty,
+      probabilities: Object.fromEntries(Object.keys(q.criteria).map(key =>
+        [key, key === selected ? certainty : (1 - certainty) / (Object.keys(q.criteria).length - 1)])) }];
+  }));
+  response.writeHead(200, { 'Content-Type': 'application/json' });
+  response.end(JSON.stringify({ model: payload.model, answers, usage: { input_tokens: 1000 } }));
+}
+
+test('confirmed identity defects get one correction; uncertainty alone does not reject', async t => {
+  let choice = 'changed', confidence = .96;
+  const fixture = await illustrationFixture(t, { fidelity: async (_request, response, { body }) => fidelityReply(response, body, choice, confidence) });
+  const env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  const failed = await waitForIllustration(server, photo.itemId, input.operationId, ['ready', 'failed']);
+  assert.equal(failed.error, 'illustration_identity_changed');
+  assert.equal(failed.processing.fidelity, 'failed');
+  assert.equal((await server.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}/result`)).status, 409);
+  await requestIllustration(server, photo.itemId, input);
+  assert.equal(fixture.calls.generation.length, 2); assert.equal(fixture.calls.fidelity.length, 2);
+  const correction = JSON.parse(fixture.calls.generation[1].body).input.at(-1).text;
+  assert.match(correction, /CORRECTION/); assert.match(correction, /artwork/);
+  let revision = 1;
+  for (const evidence of [{choice:'uncertain',confidence:.96}, {choice:'preserved',confidence:.44},
+    {choice:'preserved',confidence:.69}, {choice:'changed',confidence:.7}]) {
+    ({choice,confidence}=evidence);
+    const retry = { ...input, operationId: randomUUID(), revision: ++revision };
+    await requestIllustration(server, photo.itemId, retry);
+    const accepted=await waitForIllustration(server, photo.itemId, retry.operationId, ['ready','failed']);
+    assert.equal(accepted.status,'ready');
+    await requestIllustration(server,photo.itemId,retry);
+    assert.equal(fixture.calls.generation.length,revision+1);
+    assert.equal(fixture.calls.fidelity.length,revision+1);
+  }
+});
+
+test('a corrected candidate publishes only after its checks and reuses source preparation', async t => {
+  let checks=0;
+  const fixture = await illustrationFixture(t, { fidelity: async (_request,response,{body}) =>
+    fidelityReply(response,body,++checks===1?'changed':'preserved',.96) });
+  const env=await environment(t),server=await env.launch(fixture.env);
+  const photo=await photoRequest();await upload(server,photo);await waitForItem(server,photo.itemId);
+  const input=illustration(photo);await requestIllustration(server,photo.itemId,input);
+  assert.equal((await waitForIllustration(server,photo.itemId,input.operationId)).status,'ready');
+  assert.equal(fixture.calls.generation.length,2);assert.equal(fixture.calls.finalization.length,2);
+  assert.equal(fixture.calls.preparation.length,1);assert.equal(fixture.calls.attributes.length,1);
+  await requestIllustration(server,photo.itemId,input);
+  assert.equal(fixture.calls.generation.length,2);
+});
+
+test('unknown outcome of the correction is never submitted again, including after restart',async t=>{
+  let generations=0;
+  const fixture=await illustrationFixture(t,{
+    fidelity:async (_request,response,{body})=>fidelityReply(response,body,'changed',.96),
+    generation:async (_request,response,{result})=>{
+      if(++generations===2)return;
+      response.writeHead(200,{'Content-Type':'application/json'});
+      response.end(JSON.stringify({id:'v1_correction-test',model:'gemini-3-pro-image',status:'completed',
+        steps:[{type:'model_output',content:[{type:'image',mime_type:'image/png',data:result.toString('base64')}]}]}));
+    }
+  });
+  const env=await environment(t),server=await env.launch(fixture.env);
+  const photo=await photoRequest();await upload(server,photo);await waitForItem(server,photo.itemId);
+  const input=illustration(photo);await requestIllustration(server,photo.itemId,input);
+  await until(()=>generations===2);
+  await server.stop('SIGKILL');const restarted=await env.launch(fixture.env);
+  const failed=await waitForIllustration(restarted,photo.itemId,input.operationId,'failed');
+  assert.equal(failed.error,'processing_unknown');
+  await requestIllustration(restarted,photo.itemId,input);
+  assert.equal((await requestIllustration(restarted,photo.itemId,{...input,operationId:randomUUID(),revision:2})).status,409);
+  assert.equal(generations,2);
+});
+
+test('crash during fidelity preserves its uncertain outcome without a second paid check or generation', async t => {
+  const fixture = await illustrationFixture(t, { fidelity: async () => {} });
+  const env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  await until(() => fixture.calls.fidelity.length === 1);
+  await server.stop('SIGKILL'); const restarted = await env.launch(fixture.env);
+  const failed = await waitForIllustration(restarted, photo.itemId, input.operationId, 'failed');
+  assert.equal(failed.processing.fidelity, 'unknown'); assert.equal(failed.error, 'processing_unknown');
+  assert.equal((await requestIllustration(restarted, photo.itemId, input)).status, 200);
+  assert.equal((await requestIllustration(restarted, photo.itemId, { ...input, operationId: randomUUID(), revision: 2 })).status, 409);
+  assert.equal(fixture.calls.generation.length, 1); assert.equal(fixture.calls.fidelity.length, 1);
+});
+
+test('deleting an item during fidelity rejects the late result and its replay', async t => {
+  let release;
+  const fixture = await illustrationFixture(t, { fidelity: async (_request, response, { body }) => {
+    await new Promise(resolve => { release = resolve; }); fidelityReply(response, body);
+  } });
+  const env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  await until(() => release);
+  assert.equal((await server.request(`/v1/items/${photo.itemId}`, { method: 'DELETE' })).status, 204);
+  release();
+  assert.equal((await requestIllustration(server, photo.itemId, input)).status, 410);
+  assert.equal((await server.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}/result`)).status, 410);
+  assert.equal(fixture.calls.fidelity.length, 1);
+});
+
+test('source editing puts the primary front last even when the back is supplied later', async t => {
+  const fixture = await illustrationFixture(t);
+  const provider = createIllustrationProvider(fixture.env);
+  const front = await sharp({ create: { width: 64, height: 64, channels: 4, background: '#ff0000' } }).png().toBuffer();
+  const back = await sharp({ create: { width: 64, height: 64, channels: 4, background: '#0000ff' } }).png().toBuffer();
+  await provider.generate([{ role: 'front', source: front, prepared: front }, { role: 'back', source: back, prepared: back }],
+    { type: 'Футболка', traits: {} }, new AbortController().signal, () => {});
+  const images = fixture.calls.generation[0].interaction.input.filter(value => value.type === 'image');
+  assert.equal(images.length, 4, 'Apparel edits must not receive a competing filled garment template');
+  assert.equal(images[0].data, back.toString('base64'));
+  const primary=Buffer.from(images.at(-1).data,'base64');
+  assert.deepEqual(await sharp(primary).raw().toBuffer(),await sharp(front).flatten({background:'#ffffff'}).raw().toBuffer());
+  assert.equal((await sharp(primary).metadata()).hasAlpha,false,'The generator must see an unambiguous matte behind the source');
+});
+
+for(const boundary of ['segmented','finalized']) test(`restart from a ${boundary} candidate reuses its durable PNG before the unstarted fidelity check`,async t=>{
+ const fixture=await illustrationFixture(t),env=await environment(t),server=await env.launch(fixture.env);
+ const photo=await photoRequest();await upload(server,photo);await waitForItem(server,photo.itemId);
+ const input=illustration(photo);await requestIllustration(server,photo.itemId,input);
+ const ready=await waitForIllustration(server,photo.itemId,input.operationId);
+ const original=Buffer.from(await(await server.request(ready.resultPath)).arrayBuffer());
+ await server.stop();
+ // Reconstruct the durable boundary immediately before fidelity admission.
+ const db=new DatabaseSync(join(env.directory,'wardrobe.sqlite'));
+ const processing={...ready.processing,fidelity:'pending'};
+ if(boundary==='segmented')db.prepare('UPDATE illustrations SET result=NULL,result_digest=NULL WHERE operation_id=?').run(input.operationId);
+ db.prepare("UPDATE illustrations SET status='pending',processing=? WHERE operation_id=?").run(JSON.stringify(processing),input.operationId);db.close();
+ const restarted=await env.launch(fixture.env);
+ const resumed=await waitForIllustration(restarted,photo.itemId,input.operationId);
+ assert.deepEqual(Buffer.from(await(await restarted.request(resumed.resultPath)).arrayBuffer()),original);
+ assert.equal(fixture.calls.finalization.length,1,'Completed cutout must survive the finalization/fidelity boundary');
+ assert.equal(fixture.calls.generation.length,1);
+});
+
+test('a light garment keeps its pixels against a contrasting generator matte',async t=>{
+ const fixture=await illustrationFixture(t),provider=createIllustrationProvider(fixture.env);
+ const prepared=await sharp({create:{width:64,height:64,channels:4,background:'#00000000'}})
+  .composite([{input:await sharp({create:{width:30,height:50,channels:4,background:'#ffffff'}}).png().toBuffer(),left:17,top:7}]).png().toBuffer();
+ await provider.generate([{role:'front',source:prepared,prepared}],{type:'Футболка',colors:['Белый'],traits:{}},new AbortController().signal,()=>{});
+ const request=fixture.calls.generation[0].interaction;
+ const primary=Buffer.from(request.input.filter(v=>v.type==='image').at(-1).data,'base64');
+ const pixels=await sharp(primary).raw().toBuffer();
+ assert.deepEqual([...pixels.subarray(0,3)],[128,128,128]);
+ assert.deepEqual([...pixels.subarray((30*64+30)*3,(30*64+30)*3+3)],[255,255,255]);
+ assert.match(request.input.at(-1).text,/#808080/);
+});
+
+test('folded hoodie editing preserves source views and uses a measured pose target last',async t=>{
+ const fixture=await illustrationFixture(t),provider=createIllustrationProvider(fixture.env);
+ const prepared=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M312 200 H712 V800 H312 Z M432 100 H592 V220 H432 Z" fill="#eee"/></svg>')).png().toBuffer();
+ const back=await sharp({create:{width:64,height:64,channels:4,background:'#0000ff'}}).png().toBuffer();
+ await provider.generate([{role:'front',source:prepared,prepared},{role:'back',source:back,prepared:back}],
+  {type:'Худи',colors:['Белый'],traits:{sleeves:'long',body_length:'regular',silhouette:'unknown'}},new AbortController().signal,()=>{});
+ const request=fixture.calls.generation[0].interaction,images=request.input.filter(v=>v.type==='image');
+ assert.equal(images.length,4,'Back original/prepared, original front, then measured target');
+ assert.equal(images[0].data,back.toString('base64'));
+ assert.equal(images.at(-2).data,prepared.toString('base64'),'Original identity remains immediately before the pose target');
+ const {data,info}=await sharp(Buffer.from(images.at(-1).data,'base64')).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+ assert.deepEqual([info.width,info.height],[1024,1024]);
+ assert.deepEqual([...data.subarray(0,3)],[128,128,128],'Light hoodies keep contrasting matte in their pose target');
+ for(let i=0;i<data.length;i+=4)if(data[i]===128&&data[i+1]===128&&data[i+2]===128)data[i+3]=0;
+ const target=await sharp(data,{raw:info}).png().toBuffer();
+ const {measureTopProportions}=await import('../src/illustration-proportions.mjs');
+ const measured=await measureTopProportions(target,{type:'Худи'});
+ assert.ok(Math.abs(measured.bodyWidthToLength/(400/601)-1)<.02,'Pose target preserves the source body ratio, not a default slim torso');
+ assert.match(request.input.at(-1).text,/#808080/);
+ assert.ok(!request.input.at(-1).text.includes('"body_length"'),'Inferred fit labels must not override the visible source');
+ assert.match(request.input.at(-1).text,/"sleeves":"long"/,'Observed sleeve length must not be lost when passing identity features');
+});
+
+test('four-sleeve structural defect gets one correction and never publishes the bad candidate',async t=>{
+ const fixture=await illustrationFixture(t,{structure:async(_request,response)=>{
+  response.writeHead(200,{'Content-Type':'application/json'});
+  response.end(JSON.stringify({id:'v1_four-sleeves',model:'gemini-3.8-flash',status:'completed',steps:[{type:'model_output',content:[{type:'text',text:JSON.stringify({sleeve_count:4,folded_sleeves:true,duplicated_parts:true,raised_hood:false,confidence:.99,evidence:'Two inner cuffs and two outer cuffs.'})}]}]}));
+ }});
+ const env=await environment(t),server=await env.launch(fixture.env),photo=await photoRequest();
+ await upload(server,photo);await waitForItem(server,photo.itemId);
+ const input=illustration(photo);await requestIllustration(server,photo.itemId,input);
+ const failed=await waitForIllustration(server,photo.itemId,input.operationId,'failed');
+ assert.equal(failed.error,'illustration_geometry_invalid');assert.equal(failed.resultPath,null);
+ assert.equal(fixture.calls.generation.length,2);assert.equal(fixture.calls.structure.length,2);assert.equal(fixture.calls.fidelity.length,0);
+ assert.match(JSON.parse(fixture.calls.generation[1].body).input.at(-1).text,/duplicated_parts/);
+});
+
+test('crash during structural inspection does not repeat either paid inspection',async t=>{
+ const fixture=await illustrationFixture(t,{structure:async()=>{}}),env=await environment(t),server=await env.launch(fixture.env);
+ const photo=await photoRequest();await upload(server,photo);await waitForItem(server,photo.itemId);
+ const input=illustration(photo);await requestIllustration(server,photo.itemId,input);await until(()=>fixture.calls.structure.length===1);
+ await server.stop('SIGKILL');const restarted=await env.launch(fixture.env);
+ assert.equal((await waitForIllustration(restarted,photo.itemId,input.operationId,'failed')).error,'processing_unknown');
+ await requestIllustration(restarted,photo.itemId,input);
+ assert.equal(fixture.calls.structure.length,1);assert.equal(fixture.calls.fidelity.length,0);assert.equal(fixture.calls.generation.length,1);
+});
+
+
+test('specialized hoodie unfolding is retained across quality correction and erased on delivery',async t=>{
+ const fixture=await illustrationFixture(t,{traits:{sleeves:'long',body_length:'regular'},structure:async(_request,response)=>{
+  const bad=fixture.calls.structure.length===1;
+  response.writeHead(200,{'Content-Type':'application/json'});
+  response.end(JSON.stringify({id:'v1_unfold-check',model:'gemini-3.8-flash',status:'completed',steps:[{type:'model_output',content:[{type:'text',text:JSON.stringify({sleeve_count:bad?4:2,folded_sleeves:bad,duplicated_parts:bad,raised_hood:false,confidence:.99,evidence:'Controlled structural decision.'})}]}]}));
+ }});
+ const env=await environment(t),server=await env.launch(fixture.env),photo=await photoRequest();
+ await upload(server,photo);await waitForItem(server,photo.itemId);
+ const input=illustration(photo,{manualType:'Худи'});await requestIllustration(server,photo.itemId,input);
+ const ready=await waitForIllustration(server,photo.itemId,input.operationId);
+ assert.equal(ready.processing.unfolding,'done');
+ assert.equal(fixture.calls.unfolding.length,1);assert.equal(fixture.calls.generation.length,2);
+ const request=JSON.parse(fixture.calls.generation[0].body);
+ assert.ok(request.input.some(part=>part.type==='image'&&part.data===fixture.result.toString('base64')),'Generator uses the unfolded reference');
+ const originalPixels=await sharp(Buffer.from(photo.imageBase64,'base64')).raw().toBuffer({resolveWithObject:true});
+ const covered=new Set();
+ for(const [panel,start]of [['left',0],['centre',.25],['right',.55]]) {
+  const index=request.input.findIndex(part=>part.type==='text'&&part.text.startsWith('Original '+panel+' detail panel'));
+  assert.ok(index>=0,'Every original panel, including both sleeve graphics, is supplied');
+  const actual=await sharp(Buffer.from(request.input[index+1].data,'base64')).raw().toBuffer({resolveWithObject:true});
+  const left=Math.floor(originalPixels.info.width*start);
+  const expected=await sharp(Buffer.from(photo.imageBase64,'base64')).extract({left,top:0,width:actual.info.width,height:actual.info.height}).raw().toBuffer();
+  assert.deepEqual(actual.data,expected,'Reference panels retain exact original pixels');
+  for(let x=left;x<left+actual.info.width;x++)covered.add(x);
+  assert.equal(actual.info.height,originalPixels.info.height);
+ }
+ assert.equal(covered.size,originalPixels.info.width,'Overlapping panels retain the entire original');
+ const check=JSON.parse(fixture.calls.fidelity[0].body);
+ const {jevRequest}=await import('../src/jev.mjs');
+ const original=await jevRequest(Buffer.from(photo.imageBase64,'base64'));
+ assert.equal(check.assets[check.state.photo_0_original_reference].data_base64,Object.values(original.assets)[0].data_base64,
+  'Identity must be checked against the original photograph, never the AI-unfolded reference');
+ const db=new DatabaseSync(join(env.directory,'wardrobe.sqlite'));
+ assert.ok(db.prepare('SELECT unfolded FROM illustrations WHERE operation_id=?').get(input.operationId).unfolded);
+ await commitIllustration(server,photo,input);
+ assert.equal(db.prepare('SELECT unfolded FROM illustrations WHERE operation_id=?').get(input.operationId).unfolded,null);db.close();
+});
+
+test('crash during specialized unfolding stops without repeating the paid request',async t=>{
+ const fixture=await illustrationFixture(t,{traits:{sleeves:'long'},unfolding:async()=>{}});
+ const env=await environment(t),server=await env.launch(fixture.env),photo=await photoRequest();
+ await upload(server,photo);await waitForItem(server,photo.itemId);
+ const input=illustration(photo,{manualType:'Худи'});await requestIllustration(server,photo.itemId,input);
+ await until(()=>fixture.calls.unfolding.length===1);await server.stop('SIGKILL');
+ const restarted=await env.launch(fixture.env);
+ const failed=await waitForIllustration(restarted,photo.itemId,input.operationId,'failed');
+ assert.equal(failed.error,'processing_unknown');assert.equal(failed.processing.unfolding,'unknown');
+ await requestIllustration(restarted,photo.itemId,input);
+ assert.equal(fixture.calls.unfolding.length,1);assert.equal(fixture.calls.generation.length,0);
+});
+
+
+test('an unfolded hoodie without measured length keeps its whole pose as the last edit image',async t=>{
+ const fixture=await illustrationFixture(t),provider=createIllustrationProvider(fixture.env);
+ const photo=await photoRequest(),source=Buffer.from(photo.imageBase64,'base64');
+ const features={type:'Худи',colors:['Чёрный'],traits:{sleeves:'long',body_length:'unknown'}};
+ await provider.generate([{role:'front',source,prepared:source,generationReference:fixture.result}],features,new AbortController().signal,()=>{});
+ const request=JSON.parse(fixture.calls.generation[0].body);
+ const images=request.input.filter(part=>part.type==='image');
+ assert.equal(images.length,4,'Three original panels and the entire unfolded pose; no invented-length guide');
+ assert.equal(images.at(-1).data,fixture.result.toString('base64'),'Fallback edit-last instruction must target the complete garment');
 });

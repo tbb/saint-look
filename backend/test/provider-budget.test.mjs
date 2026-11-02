@@ -32,7 +32,7 @@ test('failed calls keep their reservation across restart and cannot exceed the a
 });
 
 test('illustration reservations bound Gemini submissions and expose exhausted preparation capability', async t => {
-  const fixture = await illustrationFixture(t), env = await environment(t), server = await env.launch({ ...fixture.env, SAINT_LOOK_API_BUDGET_JSON: policy() });
+  const fixture = await illustrationFixture(t), env = await environment(t), server = await env.launch({ ...fixture.env, SAINT_LOOK_API_BUDGET_JSON: policy({ photoroom: 2, jev: 2, gemini: 2 }) });
   const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
   const initial = { operationId: randomUUID(), photoVersionId: photo.photoVersionId, sourceSetVersionId: randomUUID(), revision: 1,
     photos: [{ id: photo.photoVersionId, role: 'front', imageBase64: photo.imageBase64 }] };
@@ -51,7 +51,7 @@ test('illustration reservations bound Gemini submissions and expose exhausted pr
   const second = { ...initial, operationId: randomUUID(), revision: 2 };
   assert.equal((await send(second)).status, 202);
   assert.equal((await finish(second.operationId, 'failed')).error, 'provider_budget_exhausted');
-  assert.equal(fixture.calls.generation.length, 1); assert.equal(fixture.calls.preparation.length, 1);
+  assert.equal(fixture.calls.generation.length, 1); assert.equal(fixture.calls.structure.length, 1); assert.equal(fixture.calls.preparation.length, 1);
 });
 
 test('migrates the exact deployed fal policy while preserving old reservations and total spend', () => {

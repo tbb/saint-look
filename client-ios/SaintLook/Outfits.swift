@@ -576,3 +576,60 @@ extension OutfitRecommendationSession {
         return response.message
     }
 }
+
+// Whole garments keep their published geometry. One shared, finite arm pose
+// must fit every visible sleeve; covered inner sleeves do not constrain it.
+enum FittingArmPose: Hashable, CaseIterable {
+    case legacy, wide, spread
+    var shoulderRotation: CGFloat { self == .legacy ? 0 : self == .wide ? 13 : 34 }
+    static let preference: [FittingArmPose] = [.wide, .legacy, .spread]
+}
+
+extension WardrobeItem {
+    var fittingArmPoses: Set<FittingArmPose>? {
+        guard hasFittingGeometry, let response = displayedIllustration?.response,
+              let features = response.effectiveFeatures ?? response.observedFeatures,
+              let type = WardrobeTaxonomy.shared.types.first(where: { $0.label == features.type })?.id,
+              ["t_shirt", "polo", "shirt", "blouse", "sweater", "cardigan", "sweatshirt", "hoodie",
+               "blazer", "jacket", "coat", "raincoat", "dress", "jumpsuit", "swimwear", "gloves"].contains(type)
+        else { return nil }
+        if let poses = response.fittingPoses, response.geometryVersion == IllustrationContract.currentGeometryVersion {
+            return Set(poses.compactMap { $0 == "open" ? .wide : $0 == "relaxed" ? .legacy : $0 == "spread" ? .spread : nil })
+        }
+        return [response.geometryVersion == "fitting-anchors-1024-v5" ? .wide : .legacy]
+    }
+    var hasShortFittingSleeves: Bool {
+        let features = displayedIllustration?.response.effectiveFeatures ?? displayedIllustration?.response.observedFeatures
+        return features?.traits["sleeves"] == "short"
+            || (["Футболка", "Поло"].contains(features?.type ?? "") && features?.traits["sleeves"] != "long")
+    }
+}
+
+extension Outfit {
+    /// The same selection runs in the app and Foundation checks. Image access and
+    /// alpha coverage are injected; pose precedence belongs to the outfit.
+    func fittingComposition(in items: [WardrobeItem], available: (WardrobeItem) -> Bool = { _ in true },
+                            covered: (WardrobeItem, [WardrobeItem]) -> Bool = { _, _ in false }) -> FittingComposition {
+        let ordered = [OutfitZone.bottom, .shoes, .body, .head].flatMap { zone in
+            slots.filter { $0.zone == zone }.compactMap { slot in items.first { $0.id == slot.itemID } }
+        }.filter { $0.hasFittingGeometry && available($0) }
+        let outerPoses = ordered.reversed().compactMap(\.fittingArmPoses).first
+        let choices = FittingArmPose.preference.filter { outerPoses?.contains($0) ?? true }
+        var best = FittingComposition(pose: choices.first ?? .wide, renderedIDs: [])
+        for pose in choices {
+            var rendered = Set<UUID>(), overlays: [WardrobeItem] = []
+            for item in ordered.reversed() {
+                if (item.fittingArmPoses?.contains(pose) ?? true) || covered(item, overlays) {
+                    rendered.insert(item.id); overlays.append(item)
+                }
+            }
+            if rendered.count > best.renderedIDs.count { best = FittingComposition(pose: pose, renderedIDs: rendered) }
+        }
+        return best
+    }
+}
+
+struct FittingComposition {
+    let pose: FittingArmPose
+    let renderedIDs: Set<UUID>
+}

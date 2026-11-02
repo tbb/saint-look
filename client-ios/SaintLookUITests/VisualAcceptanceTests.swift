@@ -34,7 +34,9 @@ final class VisualAcceptanceTests: XCTestCase {
         try reveal(try canvas(in: app), in: app, towardTop: true)
         try capture("real-fit-04-editor")
         try nativeTap(app.buttons["cancel-outfit"], in: app)
-        try expectGone(app.buttons["cancel-outfit"], "Editor must dismiss before selecting the long tee")
+        // Wait for the destination screen. XCTest can retain the dismissed sheet's
+        // button in its snapshot even after the detail view is visible.
+        try waitVisible(app.buttons["edit-outfit"], in: app)
         try back(app, to: "Луки")
         try tap(app.buttons["outfit-card-36000004-0000-0000-0000-000000000005"], in: app)
         try waitVisible(app.buttons["edit-outfit"], in: app)

@@ -318,6 +318,8 @@ enum VisualFixtures {
         let imageSHA256: String
         let representationSHA256: String
         let representationFilename: String
+        let fittingPoses: [String]?
+        let traits: [String: String]?
     }
 
     private static func prepareFitting(root: URL, resources: URL, taxonomy: WardrobeTaxonomy, trial: Bool = false) throws {
@@ -355,15 +357,17 @@ enum VisualFixtures {
                         "dropped_shoulders", "contrast_cuffs", "lettering"]
             var traits = Dictionary(uniqueKeysWithValues: keys.map { ($0, "unknown") })
             if input.0 == "trial-longtee" { traits["body_length"] = "long" }
+            traits.merge(metadata[input.0]?.traits ?? [:]) { _, actual in actual }
             let features = IllustrationFeatures(version: "fitting-observable-v2-photoroom-sandbox", type: type,
                 colors: [color], traits: traits)
             let response = IllustrationResponse(itemId: item.id, operationId: operation,
                 photoVersionId: item.photoVersionID, sourceSetVersionId: item.sourceSetVersionID,
                 revision: 1, status: .ready, mode: "test", processing: [:], observedFeatures: features,
                 effectiveFeatures: features, manualType: nil, manualColors: nil,
-                modelVersion: IllustrationContract.currentModelVersion, templateVersion: IllustrationContract.currentTemplateVersion,
-                geometryVersion: IllustrationContract.currentGeometryVersion,
-                resultPath: "/v1/items/\(item.id.uuidString.lowercased())/illustrations/\(operation.uuidString.lowercased())/result", error: nil)
+                modelVersion: IllustrationContract.currentModelVersion,
+                templateVersion: trial && metadata[input.0]?.fittingPoses == nil ? "category-front-anchors-v3" : IllustrationContract.currentTemplateVersion,
+                geometryVersion: trial && metadata[input.0]?.fittingPoses == nil ? "fitting-anchors-1024-v3" : IllustrationContract.currentGeometryVersion,
+                resultPath: "/v1/items/\(item.id.uuidString.lowercased())/illustrations/\(operation.uuidString.lowercased())/result", error: nil, fittingPoses: metadata[input.0]?.fittingPoses ?? (trial ? nil : ["open"]))
             item.illustrationResult = IllustrationResult(filename: filename, response: response)
             // This isolated scenario depicts an already committed test publication,
             // not a v2 catalog awaiting a real server receipt.
@@ -443,7 +447,7 @@ enum VisualFixtures {
             status: .ready, mode: "test", processing: [:], observedFeatures: features, effectiveFeatures: features,
             manualType: nil, manualColors: nil, modelVersion: old.response.modelVersion,
             templateVersion: old.response.templateVersion, geometryVersion: old.response.geometryVersion,
-            resultPath: nil, error: nil)
+            resultPath: nil, error: nil, fittingPoses: old.response.fittingPoses)
         item.illustration = seed.illustration
         item.illustrationResult = IllustrationResult(filename: old.filename, response: response)
         let representationJSON = try String(contentsOf: fixtures.appendingPathComponent(hashes.representationFilename), encoding: .utf8)
