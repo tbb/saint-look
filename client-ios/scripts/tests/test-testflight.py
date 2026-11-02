@@ -2,10 +2,14 @@ import base64
 import copy
 import datetime as dt
 import importlib.util
+import io
+import json
+from contextlib import redirect_stdout
 from pathlib import Path
 import plistlib
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 def load(name):
@@ -134,12 +138,51 @@ class CIAdmissionTests(unittest.TestCase):
                     head_repository={'full_name': 'tbb/saint-look'})
 
     def test_requires_successful_same_repository_main_revision(self):
-        self.assertEqual(ci.checked_run([self.run_record()], SHA, 'tbb/saint-look'), 123)
+        def complete_jobs(_run_id):
+            return [dict(name=name, status='completed', conclusion='success') for name in ci.REQUIRED]
+        self.assertEqual(ci.checked_run([self.run_record()], SHA, 'tbb/saint-look', complete_jobs), 123)
+        self.assertEqual(ci.checked_run([{**self.run_record(), 'event': 'workflow_dispatch'}], SHA, 'tbb/saint-look', complete_jobs), 123)
         for key, value in [('head_sha', 'b' * 40), ('event', 'pull_request'), ('head_branch', 'topic'),
                            ('conclusion', 'failure'), ('status', 'in_progress'),
                            ('path', '.github/workflows/other.yml'), ('head_repository', {'full_name': 'fork/repo'})]:
             with self.subTest(key=key), self.assertRaises(ValueError):
-                ci.checked_run([{**self.run_record(), key: value}], SHA, 'tbb/saint-look')
+                ci.checked_run([{**self.run_record(), key: value}], SHA, 'tbb/saint-look', complete_jobs)
+
+    def admit_runs(self, runs, jobs_by_run):
+        def response(command, **_kwargs):
+            path = command[-1]
+            if '/workflows/ci.yml/runs?' in path:
+                return json.dumps({'workflow_runs': runs}).encode()
+            run_id = int(path.split('/actions/runs/')[1].split('/')[0])
+            return json.dumps({'jobs': jobs_by_run[run_id]}).encode()
+
+        output = io.StringIO()
+        env = dict(GITHUB_SHA=SHA, GITHUB_REPOSITORY='tbb/saint-look',
+                   GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='workflow_dispatch')
+        with patch.dict(ci.os.environ, env, clear=True), \
+                patch.object(ci.subprocess, 'check_output', side_effect=response), redirect_stdout(output):
+            ci.main()
+        return json.loads(output.getvalue())['ciRunId']
+
+    def test_newer_focused_dispatch_does_not_hide_complete_acceptance(self):
+        focused = {**self.run_record(), 'id': 124, 'event': 'workflow_dispatch'}
+        complete = [dict(name=name, status='completed', conclusion='success') for name in ci.REQUIRED]
+        focused_jobs = [dict(name=name, status='completed', conclusion='success')
+                        for name in ['changes', 'ios-camera', 'ios-acceptance']]
+        self.assertEqual(self.admit_runs([focused, self.run_record()], {124: focused_jobs, 123: complete}), 123)
+
+    def test_focused_dispatch_alone_cannot_authorize_delivery(self):
+        focused = {**self.run_record(), 'event': 'workflow_dispatch'}
+        jobs = [dict(name=name, status='completed', conclusion='success')
+                for name in ['changes', 'ios-camera', 'ios-acceptance']]
+        with self.assertRaises(ValueError):
+            self.admit_runs([focused], {123: jobs})
+
+    def test_required_jobs_cannot_be_combined_across_runs(self):
+        jobs = [dict(name=name, status='completed', conclusion='success') for name in sorted(ci.REQUIRED)]
+        runs = [{**self.run_record(), 'id': 124, 'event': 'workflow_dispatch'}, self.run_record()]
+        with self.assertRaises(ValueError):
+            self.admit_runs(runs, {124: jobs[:5], 123: jobs[5:]})
 
     def test_skipped_and_missing_jobs_do_not_count_as_green(self):
         jobs = [dict(name=name, status='completed', conclusion='success') for name in ci.REQUIRED]

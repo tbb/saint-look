@@ -1,20 +1,23 @@
-name: Local ingestion checks
+name: iOS checks
 
 on:
   push:
     branches: [main]
+    paths:
+      - 'client-ios/**'
+      - 'shared/**'
+      - 'docs/api/**'
+      - 'backend/test/providers/**'
+      - 'scripts/ci/**'
+      - '.github/workflows/ci.yml'
   pull_request:
     paths:
-      - 'shared/**'
-      - 'backend/**'
       - 'client-ios/**'
+      - 'shared/**'
       - 'docs/api/**'
-      - '.github/workflows/**'
-      - '!.github/workflows/fitting-experiment.yml'
-      - 'scripts/deploy/**'
-      - 'docs/deployment.md'
-      - 'fly.toml'
-      - '.dockerignore'
+      - 'backend/test/providers/**'
+      - 'scripts/ci/**'
+      - '.github/workflows/ci.yml'
   workflow_dispatch:
     inputs:
       ios_suite:
@@ -22,6 +25,10 @@ on:
         type: choice
         default: all
         options: [all, wardrobe, outfits, outfits-max-text, outfits-launch-pair, wardrobe-expired-retry, visual, camera, wardrobe-recovery, native-menus, benchmark]
+      outfit_screenshots:
+        description: Capture extra outfit flow screenshots (visual profiles always capture)
+        type: boolean
+        default: false
       visual_profiles:
         description: Visual evidence profiles (only used by the visual suite)
         type: choice
@@ -32,7 +39,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ingestion-${{ github.event.pull_request.number || github.ref }}
+  group: ios-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -44,72 +51,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     outputs:
-      backend: ${{ steps.paths.outputs.backend }}
-      ios: ${{ steps.paths.outputs.ios }}
       ios_matrix: ${{ steps.paths.outputs.ios_matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           persist-credentials: false
       - id: paths
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           IOS_SUITE: ${{ inputs.ios_suite || 'all' }}
           VISUAL_PROFILES: ${{ inputs.visual_profiles || 'all' }}
         run: |
-          python3 - <<'PY'
-          import json, os, subprocess
-          base, head = os.environ['BASE_SHA'], os.environ['HEAD_SHA']
-          paths = subprocess.check_output(['git', 'diff', '--name-only', base, head], text=True).splitlines() if base and head else []
-          common = not base or any(p != '.github/workflows/fitting-experiment.yml' and p.startswith(('shared/', 'docs/api/', '.github/workflows/')) for p in paths)
-          selected_suite = os.environ['IOS_SUITE'] or 'all'
-          suites = ['wardrobe', 'outfits', 'visual'] if selected_suite == 'all' else (['native-menu-delete', 'native-menu-text'] if selected_suite == 'native-menus' else [selected_suite])
-          selected_profile = os.environ['VISUAL_PROFILES'] or 'all'
-          profiles = ['iphone-light', 'iphone-dark', 'iphone-max-text', 'ipad-light'] if selected_profile == 'all' else [selected_profile]
-          matrix = [{'suite': suite, 'profile': profile, 'label': f'{suite}-{profile}' if profile else suite}
-                    for suite in suites for profile in (profiles if suite == 'visual' else [''])]
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              for name, prefix in [('backend', 'backend/'), ('ios', 'client-ios/')]:
-                  needed = common or any(p.startswith(prefix) for p in paths)
-                  output.write(f'{name}={str(needed).lower()}\n')
-              output.write(f'ios_matrix={json.dumps({"include": matrix})}\n')
-          PY
-
-  backend:
-    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.backend == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.ios_suite == 'benchmark')
-    needs: changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
-      - run: npm --prefix backend ci --ignore-scripts
-      - run: npm --prefix backend run check
-      - run: npm --prefix backend test
-      - run: PYTHONPATH=backend/ml python3 -m unittest backend/ml/test_contract.py
+          python3 scripts/ci/ios-matrix.py
 
   ios:
-    name: ${{ matrix.suite == 'wardrobe' && 'ios' || format('ios-{0}', matrix.label) }}
-    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && needs.changes.outputs.ios == 'true'
+    name: ios-${{ matrix.label }}
+    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
     needs: changes
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.ios_matrix) }}
     runs-on: macos-26
-    # Wardrobe now has 33 public scenarios plus cold Simulator startup and manifest smoke.
-    # Each visual profile gets its own cold boot/build/evidence budget; no serial four-profile timeout.
-    # Outfits runs normal and maximum text sequentially. Both passed, but the
-    # combined job exceeded 60 min. Allow 75 min including setup and finalization.
-    # Other regression suites retain 60 min; camera 40 and focused diagnostics 20.
-    timeout-minutes: ${{ (matrix.suite == 'outfits-launch-pair' || matrix.suite == 'wardrobe-expired-retry') && 20 || matrix.suite == 'camera' && 40 || matrix.suite == 'outfits' && 75 || 60 }}
+    # Balanced flow shards retain every scenario; large text runs independently.
+    timeout-minutes: ${{ (matrix.suite == 'outfits-launch-pair' || matrix.suite == 'wardrobe-expired-retry') && 20 || matrix.suite == 'benchmark' && 60 || 35 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -135,10 +98,11 @@ jobs:
           # The optional benchmark creates its nonce only on this runner.
           SAINT_LOOK_BENCHMARK: ${{ matrix.suite == 'benchmark' && '1' || '0' }}
           SAINT_LOOK_VISUAL_PROFILES: ${{ matrix.profile || 'all' }}
-          SAINT_LOOK_UI_TEST_ONLY: ${{ matrix.suite == 'outfits' && 'SaintLookUITests/OutfitFlowTests' || 'SaintLookUITests/WardrobeFlowTests' }}
+          SAINT_LOOK_UI_TEST_ONLY: ${{ matrix.selectors || 'SaintLookUITests/WardrobeFlowTests' }}
           NODE_ENV: test
           SAINT_LOOK_TEST_CLOCK_FILE: ${{ runner.temp }}/saint-look-clock.json
-          SAINT_LOOK_RECORD_VIDEO: '1'
+          SAINT_LOOK_RECORD_VIDEO: '0'
+          SAINT_LOOK_OUTFIT_SCREENSHOTS: ${{ (matrix.suite == 'outfits' || matrix.suite == 'outfits-max-text') && !inputs.outfit_screenshots && '0' || '1' }}
           SAINT_LOOK_OWNER_TOKEN: saint-look-ui-tests-owner-token-00000001
           SAINT_LOOK_PROVIDER: live
           SAINT_LOOK_TEST_PROVIDER_ORIGIN: http://127.0.0.1:8789
@@ -226,13 +190,13 @@ jobs:
             exit $?
           fi
           if [[ "$TEST_SUITE" == "outfits" || "$TEST_SUITE" == "outfits-max-text" ]]; then
-            # Main/PR run both font sizes. Manual max-text selection reuses the same checks.
+            # Normal flow shards and maximum text run independently, without repeating setup.
             trap 'exit 130' INT
             trap 'exit 143' TERM
             normal_status=0
             if [[ "$TEST_SUITE" == "outfits" ]]; then
               bash client-ios/scripts/test-simulator.sh || normal_status=$?
-              if (( normal_status >= 128 )); then exit "$normal_status"; fi
+              exit "$normal_status"
             fi
             large_status=0
             SAINT_LOOK_UI_CONTENT_SIZE=accessibility-extra-extra-extra-large \
@@ -254,18 +218,14 @@ jobs:
           SaintLookUITests/WardrobeFlowTests/testOpeningPhotoKeepsItemContextThroughEditingAndBackToCollection"
           fi
           bash client-ios/scripts/test-simulator.sh
-          if [[ "$TEST_SUITE" == "wardrobe" ]]; then
-          # Exercise the explicit XCTest manifest using one existing local test.
-          # This validates the runner path; it is not a remote deployment demonstration.
-          SAINT_LOOK_REMOTE_SMOKE=1 \
-          SAINT_LOOK_REMOTE_URL=https://example.invalid \
-          SAINT_LOOK_REMOTE_TOKEN="$SAINT_LOOK_UI_TEST_TOKEN" \
-          SAINT_LOOK_REMOTE_REVISION="$(git rev-parse HEAD)" \
-          SAINT_LOOK_REMOTE_DEPLOYMENT_ID=local-harness-validation \
-          SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/WardrobeFlowTests/testPhotoBecomesReadyThroughBackendAndSurvivesOfflineRelaunch \
-          SAINT_LOOK_RECORD_VIDEO=0 \
-          bash client-ios/scripts/test-simulator.sh
-          fi
+      - name: Upload per-test timing and watchdog verdict
+        if: always() && matrix.suite != 'benchmark'
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-timings-${{ matrix.label }}
+          path: client-ios/build/*-timings.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Upload Simulator screencast
         if: always()
         uses: actions/upload-artifact@v4
@@ -331,35 +291,15 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  deploy-policy:
-    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && !(github.event_name == 'workflow_dispatch' && inputs.ios_suite == 'benchmark')
-    needs: changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - run: node --test scripts/deploy/*.test.mjs
 
-  container:
-    if: (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true') && !(github.event_name == 'workflow_dispatch' && inputs.ios_suite == 'benchmark')
-    needs: changes
+  ios-acceptance:
+    if: always() && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    needs: [changes, ios]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 2
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Build the checked source and verify persistent storage
-        run: |
-          revision="$(git rev-parse HEAD)"
-          printf '%s\n' "$revision" > backend/REVISION
-          docker build -f backend/Dockerfile -t saint-look-ci .
-          node backend/test/container-smoke.mjs saint-look-ci "$revision"
+      - name: Require every selected native check
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          IOS_RESULT: ${{ needs.ios.result }}
+        run: test "$CHANGES_RESULT" = success && test "$IOS_RESULT" = success

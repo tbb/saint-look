@@ -31,13 +31,16 @@ try {
   if (git('rev-parse', '--verify', `${sha}^{commit}`) !== sha) throw new Error('Selected commit is unavailable.');
   try { git('merge-base', '--is-ancestor', sha, 'refs/remotes/origin/main'); }
   catch { throw new Error('Selected commit is not part of main.'); }
-  const result = await github(`/repos/${repository}/actions/workflows/ci.yml/runs?head_sha=${sha}&branch=main&status=success&per_page=100`);
-  const run = result.workflow_runs?.find(run => run.head_sha === sha && run.head_branch === 'main' && run.event === 'push'
-    && run.path === '.github/workflows/ci.yml' && run.status === 'completed' && run.conclusion === 'success'
+  // Historical rollback retains the checks that existed in that source revision.
+  const splitCI = git('ls-tree', '--name-only', sha, '.github/workflows/backend-ci.yml') !== '';
+  const workflow = splitCI ? 'backend-ci.yml' : 'ci.yml';
+  const result = await github(`/repos/${repository}/actions/workflows/${workflow}/runs?head_sha=${sha}&branch=main&status=success&per_page=100`);
+  const run = result.workflow_runs?.find(run => run.head_sha === sha && run.head_branch === 'main' && (run.event === 'push' || (splitCI && run.event === 'workflow_dispatch'))
+    && run.path === `.github/workflows/${workflow}` && run.status === 'completed' && run.conclusion === 'success'
     && run.head_repository?.full_name === repository && Number.isSafeInteger(run.id));
   if (!run) throw new Error('No successful main CI for the selected commit.');
   const checked = await github(`/repos/${repository}/actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
-  for (const name of ['changes', 'backend', 'ios', 'container', 'deploy-policy']) {
+  for (const name of (splitCI ? ['backend', 'container', 'deploy-policy'] : ['changes', 'backend', 'ios', 'container', 'deploy-policy'])) {
     const matches = checked.jobs?.filter(job => job.name === name) || [];
     if (!matches.length || matches.some(job => job.status !== 'completed' || job.conclusion !== 'success')) {
       throw new Error(`Required CI job did not pass: ${name}.`);
@@ -57,7 +60,7 @@ try {
   if (profile === 'live' && manifest.providerConfig !== 'photoroom-jev-1.14.0-taxonomy-1') {
     throw new Error('Selected release has an incompatible provider configuration.');
   }
-  if (manifest.dataVersion >= 4) {
+  if (!splitCI && manifest.dataVersion >= 4) {
     for (const name of ['ios-outfits', 'ios-visual-iphone-light', 'ios-visual-iphone-dark', 'ios-visual-iphone-max-text', 'ios-visual-ipad-light']) {
       const matches = checked.jobs?.filter(job => job.name === name) || [];
       if (!matches.length || matches.some(job => job.status !== 'completed' || job.conclusion !== 'success')) {

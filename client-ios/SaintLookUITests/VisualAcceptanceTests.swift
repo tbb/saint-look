@@ -99,11 +99,14 @@ final class VisualAcceptanceTests: XCTestCase {
         // Each AX property read is a remote snapshot. Re-reading frames consumed
         // the full wait deadline on iPad even when the control was already hittable.
         let viewport = app.frame
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        let predicate = NSPredicate { _, _ in
             guard element.exists else { return false }
             let frame = element.frame
             return element.isHittable && !frame.isEmpty && viewport.intersects(frame)
-        }, object: element)
+        }
+        // Avoid a polling interval when the full readiness condition already holds.
+        if predicate.evaluate(with: element) { return }
+        let ready = XCTNSPredicateExpectation(predicate: predicate, object: element)
         guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
             diagnose("unavailable-native-control", app: app, detail: element.debugDescription)
             try require(false, "The intended native control is not visible and hittable")
@@ -126,10 +129,12 @@ final class VisualAcceptanceTests: XCTestCase {
 
     @MainActor
     private func hasReachableNavigationControl(_ bar: XCUIElement, in app: XCUIApplication) -> Bool {
-        guard bar.exists, !bar.frame.intersection(app.frame).isEmpty else { return false }
+        guard bar.exists else { return false }
+        let visibleFrame = bar.frame.intersection(app.frame)
+        guard !visibleFrame.isEmpty else { return false }
         // Background bars remain in AX under sheets. Their native actions are not hittable.
         return bar.buttons.allElementsBoundByIndex.contains {
-            $0.exists && $0.isHittable && !$0.frame.intersection(bar.frame.intersection(app.frame)).isEmpty
+            $0.exists && $0.isHittable && !$0.frame.intersection(visibleFrame).isEmpty
         }
     }
 
@@ -150,10 +155,12 @@ final class VisualAcceptanceTests: XCTestCase {
     @MainActor
     private func waitNavigation(_ title: String, in app: XCUIApplication) throws {
         let bar = app.navigationBars[title]
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        let predicate = NSPredicate { _, _ in
             // Error destinations may intentionally offer no toolbar actions.
             bar.exists && bar.identifier == title && !bar.frame.intersection(app.frame).isEmpty
-        }, object: bar)
+        }
+        if predicate.evaluate(with: bar) { return }
+        let ready = XCTNSPredicateExpectation(predicate: predicate, object: bar)
         // A Simulator accessibility snapshot can itself take several seconds.
         // Allow a second observation after the transition; keep the same destination checks.
         guard XCTWaiter.wait(for: [ready], timeout: 30) == .completed else {
@@ -324,17 +331,21 @@ final class VisualAcceptanceTests: XCTestCase {
         }
         // A native Form's CollectionView is a layout/scroll surface, not a tappable control.
         // Its visible child buttons can be hittable even when the container itself is not.
-        let visible = query.allElementsBoundByIndex.filter {
-            let frame = $0.frame
-            return $0.exists && !frame.intersection(app.frame).isEmpty
-                && frame.minX < bar.frame.maxX && frame.maxX > bar.frame.minX
-                && frame.maxY > bar.frame.maxY
+        let appFrame = app.frame
+        let barFrame = bar.frame
+        let visible = query.allElementsBoundByIndex.compactMap { element -> (element: XCUIElement, frame: CGRect)? in
+            guard element.exists else { return nil }
+            let frame = element.frame
+            guard !frame.intersection(appFrame).isEmpty,
+                  frame.minX < barFrame.maxX, frame.maxX > barFrame.minX,
+                  frame.maxY > barFrame.maxY else { return nil }
+            return (element, frame)
         }
         guard let surface = visible.min(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
             diagnose("missing-scroll-surface", app: app, detail: "Foreground navigation: \(bar.identifier)")
             throw JourneyFailure.failed
         }
-        return surface
+        return surface.element
     }
 
     @MainActor
@@ -345,33 +356,45 @@ final class VisualAcceptanceTests: XCTestCase {
         let container = try scrollSurface(in: app, bar: bar)
         var last = ""
         for attempt in 0...7 {
-            var viewport = container.frame.intersection(app.frame)
-            if bar.frame.intersects(viewport) { viewport.origin.y = max(viewport.minY, bar.frame.maxY); viewport.size.height = max(0, container.frame.intersection(app.frame).maxY - viewport.minY) }
+            // Read geometry once per observation, never across gestures.
+            let appFrame = app.frame
+            let bounds = container.frame
+            let barFrame = bar.frame
+            let navigationTitle = bar.identifier
+            var viewport = bounds.intersection(appFrame)
+            if barFrame.intersects(viewport) {
+                let bottom = viewport.maxY
+                viewport.origin.y = max(viewport.minY, barFrame.maxY)
+                viewport.size.height = max(0, bottom - viewport.minY)
+            }
             let blockers = app.tabBars.allElementsBoundByIndex + app.keyboards.allElementsBoundByIndex
                 + app.staticTexts.matching(identifier: "color-selection-requirement").allElementsBoundByIndex
-            for blocker in blockers where blocker.isHittable && blocker.frame.intersects(viewport) && blocker.frame.midY > viewport.midY {
-                viewport.size.height = max(0, blocker.frame.minY - viewport.minY)
+            for blocker in blockers where blocker.isHittable {
+                let blockerFrame = blocker.frame
+                if blockerFrame.intersects(viewport) && blockerFrame.midY > viewport.midY {
+                    viewport.size.height = max(0, blockerFrame.minY - viewport.minY)
+                }
             }
             viewport = viewport.insetBy(dx: 8, dy: 8)
             try require(viewport.width > 40 && viewport.height > 60, "The foreground content viewport must be usable")
-            let frame = element.exists ? element.frame : .zero
-            last = "target=\(frame), container=\(container.frame), viewport=\(viewport), navigation=\(bar.identifier)"
+            let present = element.exists
+            let frame = present ? element.frame : .zero
+            last = "target=\(frame), container=\(bounds), viewport=\(viewport), navigation=\(navigationTitle)"
             // A partly visible card can report hittable while its native tap center is under a bar.
             // Requiring the center also works for content taller than the safe viewport.
             let tapCenter = CGPoint(x: frame.midX, y: frame.midY)
-            if element.exists && element.isHittable && viewport.contains(tapCenter) { return }
+            if present && element.isHittable && viewport.contains(tapCenter) { return }
             // Inspect the result of the final bounded drag before declaring it unreachable.
             if attempt == 7 { break }
-            let direction: CGFloat = element.exists ? (frame.midY < viewport.midY ? 1 : -1) : (towardTop ? 1 : -1)
+            let direction: CGFloat = present ? (frame.midY < viewport.midY ? 1 : -1) : (towardTop ? 1 : -1)
             // ScrollView's AX frame includes the sheet's bottom safe area. Starting
             // 12pt from that edge can hit Home's gesture region instead of scrolling.
             // Keep both endpoints inside content, including at maximum Dynamic Type.
             let gestureInset = min(80, viewport.height * 0.2)
             let distance = min(viewport.height - 2 * gestureInset,
-                               min(viewport.height * 0.65, element.exists ? max(40, abs(viewport.midY - frame.midY)) : viewport.height * 0.65))
+                               min(viewport.height * 0.65, present ? max(40, abs(viewport.midY - frame.midY)) : viewport.height * 0.65))
             let y = direction < 0 ? viewport.maxY - gestureInset : viewport.minY + gestureInset
-            let bounds = container.frame
-            let isConstructor = ["Собрать лук", "Изменить лук"].contains(bar.identifier)
+            let isConstructor = ["Собрать лук", "Изменить лук"].contains(navigationTitle)
             // Constructor controls have 16pt horizontal padding. A centre drag
             // can select a fitting zone and remove the layer we are revealing.
             // Use the same 8pt ScrollView gutter as the outfit-flow checks.
@@ -379,7 +402,7 @@ final class VisualAcceptanceTests: XCTestCase {
             if isConstructor {
                 let origin = CGPoint(x: x, y: y)
                 let destination = CGPoint(x: x, y: y + direction * distance)
-                guard [bounds, viewport, app.frame].allSatisfy({ $0.contains(origin) && $0.contains(destination) }) else {
+                guard [bounds, viewport, appFrame].allSatisfy({ $0.contains(origin) && $0.contains(destination) }) else {
                     diagnose("invalid-constructor-scroll-path", app: app, detail: last)
                     throw JourneyFailure.failed
                 }
@@ -416,14 +439,21 @@ final class VisualAcceptanceTests: XCTestCase {
         // inside the application frame: a clipped popup can still hide that row.
         // Confirmation dialogs also expose nested Other containers on this runtime.
         for attempt in 0...4 {
+            let appFrame = app.frame
             let ancestors = app.otherElements.containing(.button, identifier: identifier).allElementsBoundByIndex
-                .filter { $0.exists && !$0.frame.intersection(app.frame).isEmpty }
-            guard let popup = ancestors.min(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
+                .compactMap { element -> (element: XCUIElement, frame: CGRect)? in
+                    guard element.exists else { return nil }
+                    let frame = element.frame
+                    return frame.intersection(appFrame).isEmpty ? nil : (element, frame)
+                }
+            guard let selected = ancestors.min(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
                 diagnose("missing-native-menu-viewport", app: app)
                 try require(false, "The exact action must have a visible native menu ancestor")
                 return
             }
-            let viewport = popup.frame.intersection(app.frame)
+            let popup = selected.element
+            let popupFrame = selected.frame
+            let viewport = popupFrame.intersection(appFrame)
             try require(viewport.width > 80 && viewport.height > 80, "Native menu viewport must allow scrolling")
             let actionFrame = action.exists ? action.frame : .zero
             if !actionFrame.isEmpty && viewport.contains(actionFrame) {
@@ -440,8 +470,8 @@ final class VisualAcceptanceTests: XCTestCase {
             let gestureInset = min(80, viewport.height * 0.2)
             let distance = min(viewport.height * 0.6, viewport.height - 2 * gestureInset)
             let start = popup.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: viewport.midX - popup.frame.minX,
-                                     dy: viewport.maxY - gestureInset - popup.frame.minY))
+                .withOffset(CGVector(dx: viewport.midX - popupFrame.minX,
+                                     dy: viewport.maxY - gestureInset - popupFrame.minY))
             let end = start.withOffset(CGVector(dx: 0, dy: -distance))
             let failures = testRun?.failureCount ?? 0
             start.press(forDuration: 0.05, thenDragTo: end)
@@ -453,6 +483,7 @@ final class VisualAcceptanceTests: XCTestCase {
 
     @MainActor
     private func expectGone(_ element: XCUIElement, _ message: String, timeout: TimeInterval = 5) throws {
+        if !element.exists { return }
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
         let result = XCTWaiter.wait(for: [gone], timeout: timeout)
         if result != .completed { try capture("dismissal-timeout") }
