@@ -32,7 +32,7 @@ jobs:
         TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         GARMENT_QUALITY_TRIAL_KEY: ${{ secrets.GARMENT_QUALITY_TRIAL_KEY }}
-      run: node ${{ inputs.item == 'qa-only' && 'scripts/fitting/diagnostics/garment-fidelity-check.mjs' || 'scripts/fitting/diagnostics/garment-quality-trial.mjs'
+      run: node ${{ inputs.item == 'fashion-baseline' && 'scripts/fitting/diagnostics/fashion-baseline.mjs' || inputs.item == 'qa-only' && 'scripts/fitting/diagnostics/garment-fidelity-check.mjs' || 'scripts/fitting/diagnostics/garment-quality-trial.mjs'
         }}
     - uses: actions/upload-artifact@v4
       if: always()
@@ -230,4 +230,5 @@ jobs:
         - polo
         - checks-only
         - qa-only
+        - fashion-baseline
         - native-only
