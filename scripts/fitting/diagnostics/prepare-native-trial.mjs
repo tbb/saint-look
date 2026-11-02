@@ -10,5 +10,5 @@ for(const [name,b64]of Object.entries(bundle.nativeAssets)){
 }
 writeFileSync(root+'prepared-manifest.json',JSON.stringify(manifest,null,2));
 const file='client-ios/SaintLook/VisualFixtures.swift';
-writeFileSync(file,readFileSync(file,'utf8').replaceAll('category-front-anchors-v3','category-front-anchors-v4').replaceAll('fitting-anchors-1024-v3','fitting-anchors-1024-v4').replace('("trial-tee", "t_shirt", "white")','("trial-tee", "t_shirt", "black")').replace('("trial-hoodie", "hoodie", "beige")','("trial-hoodie", "hoodie", "black")'));
+writeFileSync(file,readFileSync(file,'utf8').replaceAll('category-front-anchors-v3','category-front-anchors-v5').replaceAll('fitting-anchors-1024-v3','fitting-anchors-1024-v5').replace('("trial-tee", "t_shirt", "white")','("trial-tee", "t_shirt", "black")').replace('("trial-hoodie", "hoodie", "beige")','("trial-hoodie", "hoodie", "black")'));
 console.log('Loaded three encrypted DEBUG render examples; representations remain isolated controlled fixtures.');
