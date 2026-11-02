@@ -106,10 +106,10 @@ export function createIllustrationProvider(env) {
       // earlier detail references, never an instruction to redraw the back.
       const references=edit?[...photos.filter(photo=>photo!==front),front]:photos;
       const template=savedReceipt||edit?null:await layoutGuide(features);
-      const sourceFrontOnly=false;
+      const sourceFrontOnly=edit && garmentLayout(features).group==='hooded';
       const pose=savedReceipt||edit?null:await layoutPoseGuide(features);
       const proportions=edit?await measureTopProportions(front.prepared,features):null;
-      const editPose=null;
+      const editPose=edit?await editPoseGuide(features,proportions):null;
       const prompt=savedReceipt?null:
         (editPose ? measuredPoseInstructions(features,proportions)
         : (edit?garmentEditInstructions(features,proportions):layoutInstructions(features)))
