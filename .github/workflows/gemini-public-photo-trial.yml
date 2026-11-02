@@ -6,7 +6,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   compare:
-    if: inputs.item != 'checks-only' && inputs.item != 'native-only' && github.ref == 'refs/heads/codex/garment-fit-quality'
+    if: inputs.item != 'checks-only' && inputs.item != 'native-only' && github.ref == 'refs/heads/codex/garment-quality-trial'
       && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -42,7 +42,7 @@ jobs:
         retention-days: 2
         if-no-files-found: ignore
   image-presentation:
-    if: inputs.item == 'checks-only' && github.ref == 'refs/heads/codex/garment-fit-quality' && (github.event.repository.visibility
+    if: inputs.item == 'checks-only' && github.ref == 'refs/heads/codex/garment-quality-trial' && (github.event.repository.visibility
       == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
     runs-on: macos-26
     timeout-minutes: 20
@@ -62,7 +62,7 @@ jobs:
         \n"
   native:
     name: Actual garment render
-    if: inputs.item == 'native-only' && github.ref == 'refs/heads/codex/garment-fit-quality' && github.event.repository.visibility
+    if: inputs.item == 'native-only' && github.ref == 'refs/heads/codex/garment-quality-trial' && github.event.repository.visibility
       == 'public'
     runs-on: macos-26
     timeout-minutes: 30
