@@ -1,3 +1,4 @@
+// THROWAWAY fixed 13-degree wider mannequin arm pose. Not production.
 import sharp from 'sharp';
 import { readFileSync } from 'node:fs';
 import { ProviderError } from './providers.mjs';
@@ -11,7 +12,7 @@ export const templateVersion = 'category-front-anchors-v4';
 // never masks used to cut off parts of a garment. A single uniform scale and
 // translation register the full segmented canvas to the garment-only template.
 const layouts = {
-  upper: { bounds: [82, 120, 196, 210], path: 'M164 130 Q180 145 196 130 L225 148 L245 181 L264 300 L247 307 L216 206 L220 297 L139 297 L143 206 L113 307 L94 300 L116 181 L135 147 Z', anchors: { neck: [180, 132], leftShoulder: [135, 147], rightShoulder: [225, 148], waist: [180, 264], leftWrist: [103, 306], rightWrist: [257, 306] } },
+  upper: { bounds: [45, 120, 270, 210], path: 'M164 130 Q180 145 196 130 L225 148 L245 181 L264 300 L247 307 L216 206 L220 297 L139 297 L143 206 L113 307 L94 300 L116 181 L135 147 Z', anchors: { neck: [180, 132], leftShoulder: [135, 147], rightShoulder: [225, 148], waist: [180, 264], leftWrist: [68, 295], rightWrist: [292, 295] } },
   shortUpper: { bounds: [95, 120, 170, 210], path: 'M164 130 Q180 145 196 130 L225 148 L244 181 L251 212 L228 220 L216 206 L220 297 L139 297 L143 206 L132 220 L109 212 L116 181 L135 147 Z', anchors: { neck: [180, 132], leftShoulder: [135, 147], rightShoulder: [225, 148], waist: [180, 264] } },
   sleeveless: { bounds: [122, 120, 116, 210], path: 'M155 137 Q180 158 205 137 L225 148 L216 206 L220 297 L139 297 L143 206 L135 147 Z', anchors: { leftShoulder: [145, 142], rightShoulder: [215, 142], waist: [180, 264] } },
   trousers: { bounds: [100, 248, 160, 260], path: 'M139 264 L220 264 L225 316 L216 494 L195 497 L183 330 L178 330 L164 497 L145 494 L135 316 Z', anchors: { leftWaist: [139, 264], rightWaist: [220, 264], crotch: [180, 330], leftAnkle: [155, 494], rightAnkle: [205, 494] }, legs: true },
@@ -22,11 +23,11 @@ const layouts = {
   head: { bounds: [135, 25, 90, 110], path: 'M154 76 Q150 40 180 40 Q210 40 206 76 L218 83 L142 83 Z', anchors: { crown: [180, 44], forehead: [180, 76] } },
   scarf: { bounds: [125, 120, 110, 195], path: 'M156 130 Q180 147 204 130 L210 158 L202 290 L183 290 L184 164 L154 155 Z', anchors: { neck: [180, 132], chest: [180, 175] } },
   belt: { bounds: [125, 248, 110, 40], path: 'M137 260 L222 260 L222 279 L137 279 Z', anchors: { leftWaist: [139, 264], rightWaist: [220, 264] } },
-  gloves: { bounds: [80, 270, 200, 65], path: 'M95 288 L112 293 L110 325 L94 325 Z M248 293 L265 288 L267 325 L250 325 Z', anchors: { leftWrist: [103, 306], rightWrist: [257, 306] } },
+  gloves: { bounds: [80, 270, 200, 65], path: 'M95 288 L112 293 L110 325 L94 325 Z M248 293 L265 288 L267 325 L250 325 Z', anchors: { leftWrist: [68, 295], rightWrist: [292, 295] } },
   socks: { bounds: [130, 380, 100, 140], path: 'M146 402 L165 402 L166 506 L136 510 L145 490 Z M195 402 L215 402 L215 490 L225 510 L196 506 Z', anchors: { leftAnkle: [155, 494], rightAnkle: [205, 494] } },
   bag: { bounds: [210, 160, 110, 200], path: 'M245 215 L245 190 Q263 163 282 190 L282 215 M230 214 L300 214 L304 320 L226 320 Z', anchors: { handle: [263, 180], bagCentre: [265, 270] } },
 };
-layouts.hooded = { ...layouts.upper, bounds: [65, 90, 230, 240],
+layouts.hooded = { ...layouts.upper, bounds: [45, 90, 270, 240],
   path: 'M157 132 Q146 106 163 96 Q180 88 197 96 Q214 106 203 132 L225 148 L245 181 L264 300 L247 307 L216 206 L220 297 L139 297 L143 206 L113 307 L94 300 L116 181 L135 147 Z',
   anchors: { ...layouts.upper.anchors, hoodTop: [180, 94] } };
 const groups = {
@@ -154,7 +155,7 @@ function requiresWristPose(layout, features) {
 
 function cuffExtents(data, width, layout, features) {
   if(!['upper','hooded'].includes(layout.group) || !requiresWristPose(layout, features)) return [];
-  return [[333,420],[604,691]].map(([left,right])=>{
+  return [[263,351],[673,761]].map(([left,right])=>{
     let bottom=-1;
     for(let y=400;y<650;y++) {
       let count=0; for(let x=left;x<=right;x++) if(data[(y*width+x)*4+3]>=224) count++;
@@ -163,7 +164,7 @@ function cuffExtents(data, width, layout, features) {
     return bottom;
   });
 }
-const minimumCuffY=point([180,306])[1]-8;
+const minimumCuffY=point([180,295])[1]-8;
 
 function wristsContactCuffs(data,width,layout,features) {
   if(!['upper','hooded'].includes(layout.group)||!requiresWristPose(layout,features))return true;

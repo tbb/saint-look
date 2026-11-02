@@ -126,9 +126,17 @@ export function createIllustrationProvider(env) {
         {type:'text',text:`Image prepared_${photo.role}.`},
         {type:'image',mime_type:'image/png',data:photo.prepared.toString('base64')},
       ]);
+      const detailImages=[];
+      if(editPose){
+        const meta=await sharp(front.source).metadata();
+        for(const [name,x,y,w,h] of [['front artwork',.2,.28,.6,.42],['left sleeve',.05,.35,.4,.55],['right sleeve',.55,.35,.4,.55]]){
+          const crop=await sharp(front.source).extract({left:Math.floor(meta.width*x),top:Math.floor(meta.height*y),width:Math.floor(meta.width*w),height:Math.floor(meta.height*h)}).png().toBuffer();
+          detailImages.push({type:'text',text:'Magnified '+name+' detail only; preserve visible shapes and ink, not source arm pose.'},{type:'image',mime_type:'image/png',data:crop.toString('base64')});
+        }
+      }
       const payload=savedReceipt?null:{model:illustrationVersions.modelVersion,store:true,
         generation_config:{max_output_tokens:8192},
-        input:[...sourceImages,...(editPose?[{type:'text',text:'Arm centre-line pose reference only. Edit the original garment photo; do not draw these lines.'},{type:'image',mime_type:'image/png',data:editPose.toString('base64')}]:[]),
+        input:[...sourceImages,...detailImages,...(editPose?[{type:'text',text:'Unfolded A-pose guide only. Preserve the actual source garment and closeup details.'},{type:'image',mime_type:'image/png',data:editPose.toString('base64')}]:[]),
           ...(pose?[{type:'text',text:'Enlarged pose guide only: front view and relative stance, not garment design or final canvas size.'},
             {type:'image',mime_type:'image/png',data:pose.toString('base64')}]:[]),
           ...(!edit?[{type:'image',mime_type:'image/png',data:template.toString('base64')}]:[]),
