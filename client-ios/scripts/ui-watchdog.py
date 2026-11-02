@@ -11,7 +11,11 @@ import subprocess
 import sys
 import time
 
-LAUNCH_FAILURE = re.compile(r": error: .*Failed to get launch progress .*Simulator device failed to launch com\.saintlook\.dev\.")
+LAUNCH_FAILURE = re.compile(
+    r": error: .*(?:Failed to get launch progress .*Simulator device failed to launch com\.saintlook\.dev\."
+    r"|Failed to launch <XCUIApplicationImpl: [^>]* com\.saintlook\.dev at [^>]*> via Xcode: "
+    r"Timed out while launching application via Xcode\.)"
+)
 CASE = re.compile(r"Test Case '([^']+)' (started|passed|failed|skipped)(?: \(([0-9.]+) seconds\))?")
 
 
