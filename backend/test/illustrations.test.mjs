@@ -546,7 +546,9 @@ test('source editing puts the primary front last even when the back is supplied 
   const images = fixture.calls.generation[0].interaction.input.filter(value => value.type === 'image');
   assert.equal(images.length, 4, 'Apparel edits must not receive a competing filled garment template');
   assert.equal(images[0].data, back.toString('base64'));
-  assert.equal(images.at(-1).data, front.toString('base64'));
+  const primary=Buffer.from(images.at(-1).data,'base64');
+  assert.deepEqual(await sharp(primary).raw().toBuffer(),await sharp(front).flatten({background:'#ffffff'}).raw().toBuffer());
+  assert.equal((await sharp(primary).metadata()).hasAlpha,false,'The generator must see an unambiguous matte behind the source');
 });
 
 test('restart from a finalized candidate reuses its durable PNG before the unstarted fidelity check',async t=>{

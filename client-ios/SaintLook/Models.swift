@@ -404,7 +404,7 @@ extension WardrobeItem {
 
     var hasFittingGeometry: Bool {
         guard let result = displayedIllustration else { return false }
-        return ["fitting-anchors-1024-v2", IllustrationContract.currentGeometryVersion].contains(result.response.geometryVersion)
+        return ["fitting-anchors-1024-v2", "fitting-anchors-1024-v3", IllustrationContract.currentGeometryVersion].contains(result.response.geometryVersion)
     }
 
     var needsFittingUpdate: Bool {
