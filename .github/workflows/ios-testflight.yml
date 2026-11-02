@@ -17,8 +17,8 @@ permissions:
 
 concurrency:
   group: testflight-${{ github.event.pull_request.number || github.ref }}
-  # Never interrupt a certificate creation or an uncertain Apple upload.
-  cancel-in-progress: false
+  # Superseded PR checks have no Apple access. Never interrupt manual signing/upload.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   policy:
