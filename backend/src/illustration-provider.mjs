@@ -123,7 +123,7 @@ export function createIllustrationProvider(env) {
         && !['short','sleeveless','not_applicable'].includes(features?.traits?.sleeves);
       const pose=savedReceipt||edit?null:await layoutPoseGuide(features);
       const proportions=edit?await measureTopProportions(front.prepared,features):null;
-      const editPose=edit?await editPoseGuide(features,proportions):null;
+      const editPose=edit && garmentLayout(features).group!=='hooded'?await editPoseGuide(features,proportions):null;
       const prompt=savedReceipt?null:
         (editPose ? measuredPoseInstructions(features,proportions)
         : (edit?garmentEditInstructions(features,proportions):layoutInstructions(features)))
