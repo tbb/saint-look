@@ -1056,7 +1056,7 @@ struct OutfitCoreChecks {
             precondition(oldOnly.acceptsFittingPose(of: previousFit, in: [previousFit]))
             // Different items: an old lower layer must not acquire v5 sleeve geometry.
             var other = WardrobeItem(id: UUID(), operationID: UUID(), photoVersionID: UUID())
-            other.status = .ready; other.type = "Футболка"
+            other.status = .ready; other.type = "Футболка"; other.resultFilename = "controlled-cutout.png"
             other = try preparedFixture(other)
             let mixed = Outfit(slots: [OutfitSlot(zone: .body, itemID: previousFit.id), OutfitSlot(zone: .body, itemID: other.id)])
             precondition(mixed.fittingArmPose(in: [previousFit, other]) == .wide)
