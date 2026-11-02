@@ -6,8 +6,9 @@ import {garmentLayout, armPoint} from './illustration-layout.mjs';
 // independently: ease may move the side seams, never the wearer's shoulders.
 export function measuredGuideSVG(features, proportions) {
   const layout=garmentLayout(features), {group}=layout;
-  if(!proportions || !['shortUpper','upper','hooded'].includes(group))return null;
-  const hooded=group==='hooded', long=features?.traits?.sleeves==='long'||hooded;
+  if(!proportions || !['shortUpper','upper','hooded'].includes(group)
+    ||!['short','long'].includes(features?.traits?.sleeves))return null;
+  const hooded=group==='hooded', long=features?.traits?.sleeves==='long';
   const hem=features?.traits?.body_length==='long'?340:features?.traits?.body_length==='cropped'?250:297;
   const top=hooded?147:132;
   const width=(hem-top)*proportions.bodyWidthToLength;
@@ -16,9 +17,14 @@ export function measuredGuideSVG(features, proportions) {
   const points=long?[[245,181],[264,304],[247,311],[216,206]]:[[244,181],[251,212],[228,220],[216,206]];
   const arm=(pts,side)=>pts.map(p=>'L'+armPoint(p,side).join(' ')).join(' ');
   const leftPoints=points.map(([x,y])=>[360-x,y]).reverse();
-  const path=`M164 132 Q180 145 196 132 L225 148 ${hooded&&right>225?`L${right} 148`:''} ${arm(points,'right')} L${right} 206 L${right} ${hem} L${left} ${hem} L${left} 206 ${arm(leftPoints,'left')} ${hooded&&left<135?`L${left} 147`:''} L135 147 Z`;
-  const hood=hooded?'<path d="M164 132 Q145 117 155 115 Q180 108 205 115 Q215 117 196 132 Q180 145 164 132 Z" fill="#ddd" stroke="#555" stroke-width="1"/>':'';
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-100 0 560 560"><path d="${path}" fill="#ddd" stroke="#555" stroke-width="1"/>${hood}</svg>`;
+  const torso=`M164 132 Q180 145 196 132 L225 148 ${hooded&&right>225?`L${right} 148`:''} L${right} 206 L${right} ${hem} L${left} ${hem} L${left} 206 ${hooded&&left<135?`L${left} 147`:''} L135 147 Z`;
+  // Union separate filled panels: moving a side seam must not create a
+  // self-intersecting underarm polygon or draw false seams inside the guide.
+  const rightSleeve=`M225 148 ${hooded&&right>225?`L${right} 148`:''} ${arm(points,'right')} L${right} 206 Z`;
+  const leftSleeve=`M135 147 L${left} 206 ${arm(leftPoints,'left')} ${hooded&&left<135?`L${left} 147`:''} Z`;
+  const hood=hooded?'<path d="M164 132 Q145 117 155 115 Q180 108 205 115 Q215 117 196 132 Q180 145 164 132 Z"/>':'';
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-100 0 560 560"><g fill="#ccc"><path d="${torso}"/><path d="${rightSleeve}"/><path d="${leftSleeve}"/>${hood}</g></svg>`;
+
 }
 
 export async function editPoseGuide(features, proportions) {
@@ -27,8 +33,8 @@ export async function editPoseGuide(features, proportions) {
   // Enlarge the same pose by ONE scale. The model gets enough detail; registration
   // later restores shared coordinates without changing width/height separately.
   const trimmed=await sharp(Buffer.from(svg)).trim().png().toBuffer();
-  return sharp(trimmed).resize(900,900,{fit:'inside'}).extend({top:62,bottom:62,left:62,right:62,
-    background:generationBackground(features)}).resize(1024,1024,{fit:'contain',background:generationBackground(features)})
+  const enlarged=await sharp(trimmed).resize(900,900,{fit:'inside'}).png().toBuffer();
+  return sharp(enlarged).resize(1024,1024,{fit:'contain',background:generationBackground(features)})
     .flatten({background:generationBackground(features)}).png().toBuffer();
 }
 
