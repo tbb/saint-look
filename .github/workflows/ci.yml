@@ -59,6 +59,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - run: python3 client-ios/scripts/tests/test-simulator-startup.py
       - run: python3 scripts/ci/test-ios-matrix.py
       - run: python3 client-ios/scripts/tests/test-testflight.py
       - id: paths
@@ -230,7 +231,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: simulator-timings-${{ matrix.label }}
-          path: client-ios/build/*-timings.json
+          path: |
+            client-ios/build/*-timings.json
+            client-ios/build/*-startup.json
           if-no-files-found: warn
           retention-days: 7
       - name: Upload Simulator screencast

@@ -202,8 +202,29 @@ PYTHON
     exit 1
   fi
 fi
-xcrun simctl boot "$simulator_id" 2>/dev/null || true
-xcrun simctl bootstatus "$simulator_id" -b
+mkdir -p build
+result_path="$(pwd)/build/UITests-$(date -u +%Y%m%dT%H%M%SZ).xcresult"
+build_options=(
+  -project SaintLook.xcodeproj
+  -scheme SaintLook
+  -configuration Debug
+  -destination "platform=iOS Simulator,id=$simulator_id"
+  -parallel-testing-enabled NO
+  -derivedDataPath build/DerivedData
+  CODE_SIGNING_ALLOWED=NO
+)
+local_parallel_startup=0
+if [[ "${SAINT_LOOK_REMOTE_SMOKE:-0}" != 1 && "${SAINT_LOOK_LIVE_TRIAL:-0}" != 1 && "${SAINT_LOOK_BENCHMARK:-0}" != 1 && "${SAINT_LOOK_LAUNCH_PAIR:-0}" != 1 ]]; then
+  # Compilation needs the selected destination, not a finished boot. UI profile
+  # configuration and XCTest still wait for both operations to succeed.
+  python3 scripts/prepare-simulator.py --udid "$simulator_id" \
+    --summary "${result_path%.xcresult}-startup.json" -- xcodebuild "${build_options[@]}" build-for-testing
+  local_parallel_startup=1
+else
+  # Preserve the original startup path for live/remote measurements and #98's reproducer.
+  xcrun simctl boot "$simulator_id" 2>/dev/null || true
+  xcrun simctl bootstatus "$simulator_id" -b
+fi
 if [[ -n "${SAINT_LOOK_UI_APPEARANCE:-}" ]]; then
   [[ "$SAINT_LOOK_UI_APPEARANCE" == light || "$SAINT_LOOK_UI_APPEARANCE" == dark ]]
   previous_appearance="$(xcrun simctl ui "$simulator_id" appearance)"
@@ -220,7 +241,6 @@ if [[ -n "${SAINT_LOOK_UI_CONTENT_SIZE:-}" ]]; then
   echo "Simulator Dynamic Type: $actual_content_size (previous: $previous_content_size)"
   [[ "$actual_content_size" == "$SAINT_LOOK_UI_CONTENT_SIZE" ]]
 fi
-mkdir -p build
 if [[ -n "${SAINT_LOOK_VISUAL_PROFILE:-}" ]]; then
   xcrun simctl list devices available --json > "build/${SAINT_LOOK_VISUAL_PROFILE}-devices.json"
   python3 - "$simulator_id" <<'VISUAL_EVIDENCE'
@@ -250,16 +270,6 @@ evidence = dict(profile=profile, simulatorUDID=sys.argv[1], model=selected[0][1]
 Path('build/' + profile + '-profile.json').write_text(json.dumps(evidence, indent=2) + '\n')
 VISUAL_EVIDENCE
 fi
-result_path="$(pwd)/build/UITests-$(date -u +%Y%m%dT%H%M%SZ).xcresult"
-build_options=(
-  -project SaintLook.xcodeproj
-  -scheme SaintLook
-  -configuration Debug
-  -destination "platform=iOS Simulator,id=$simulator_id"
-  -parallel-testing-enabled NO
-  -derivedDataPath build/DerivedData
-  CODE_SIGNING_ALLOWED=NO
-)
 if [[ "${SAINT_LOOK_LIVE_TRIAL:-0}" == '1' ]]; then
   # Validate the exact committed public inputs before any UI action can consume quota.
   python3 - <<'TRIAL_PHOTOS'
@@ -280,7 +290,9 @@ for photo in photos:
         raise SystemExit('Trial photo differs from the reviewed manifest.')
 TRIAL_PHOTOS
 fi
-xcodebuild "${build_options[@]}" build-for-testing
+if [[ "$local_parallel_startup" != 1 ]]; then
+  xcodebuild "${build_options[@]}" build-for-testing
+fi
 
 # XCTest runs in its own generated host, so the app's ATS settings do not apply
 # to the test's loopback control connection. Change only that generated host.
