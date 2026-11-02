@@ -13,7 +13,7 @@ if(key.length!==32)throw new Error('Missing diagnostic key');
 const raw=readFileSync('scripts/fitting/diagnostics/input.enc');
 const decipher=createDecipheriv('aes-256-gcm',key,raw.subarray(0,12));decipher.setAuthTag(raw.subarray(12,28));
 const bundle=JSON.parse(Buffer.concat([decipher.update(raw.subarray(28)),decipher.final()]));
-const input=process.env.TRIAL_ITEM==='polo'?{source:readFileSync('scripts/fitting/fixtures/polo.jpg').toString('base64')}:bundle.items[process.env.TRIAL_ITEM];
+const input=bundle.items[process.env.TRIAL_ITEM]||(process.env.TRIAL_ITEM==='polo'?{source:readFileSync('scripts/fitting/fixtures/polo.jpg').toString('base64')}:null);
 if(!input)throw new Error('Unknown item');
 const state={sourceHash:null,events:[],variants:{production:{}}};
 mkdirSync('garment-quality-output',{recursive:true});
@@ -35,6 +35,7 @@ try{
  const networkFetch=globalThis.fetch;
  globalThis.fetch=async(url,options)=>{
   const response=await networkFetch(url,options);
+  if(!response.ok)console.log(JSON.stringify({provider:new URL(url).hostname,status:response.status}));
   if(String(url).endsWith('/v1/segment') && options?.body?.get?.('image_file')?.name==='finalization.png' && response.ok){
    state.variants.production.cutout=Buffer.from(await response.clone().arrayBuffer()).toString('base64');save();
   }
