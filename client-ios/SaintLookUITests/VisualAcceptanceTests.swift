@@ -42,36 +42,6 @@ final class VisualAcceptanceTests: XCTestCase {
         try waitVisible(app.buttons["edit-outfit"], in: app)
         try reveal(try canvas(in: app), in: app, towardTop: true)
         try capture("real-fit-05-long-tee-below-hoodie")
-        try requireEqual(try await illustrationCounts(), before, "Viewing saved real outputs must not generate again")
-    }
-
-    @MainActor
-    func testRealGeneratedGarmentsInCatalogAndFitting() async throws {
-        let before = try await illustrationCounts()
-        let app = try launch("fitting-trial-ready")
-        try require(app.images.matching(identifier: "item-photo").firstMatch.waitForExistence(timeout: 5))
-        try capture("real-fit-01-catalog")
-        try selectTab("Луки", in: app)
-        try capture("real-fit-02-outfits")
-        let card = app.buttons["outfit-card-36000004-0000-0000-0000-000000000004"]
-        try require(card.waitForExistence(timeout: 5))
-        try tap(card, in: app)
-        try waitVisible(app.buttons["edit-outfit"], in: app)
-        try reveal(try canvas(in: app), in: app, towardTop: true)
-        try capture("real-fit-03-detail")
-        try nativeTap(app.buttons["edit-outfit"], in: app)
-        try waitVisible(app.buttons["cancel-outfit"], in: app)
-        try reveal(try canvas(in: app), in: app, towardTop: true)
-        try capture("real-fit-04-editor")
-        try nativeTap(app.buttons["cancel-outfit"], in: app)
-        // Wait for the destination screen. XCTest can retain the dismissed sheet's
-        // button in its snapshot even after the detail view is visible.
-        try waitVisible(app.buttons["edit-outfit"], in: app)
-        try back(app, to: "Луки")
-        try tap(app.buttons["outfit-card-36000004-0000-0000-0000-000000000005"], in: app)
-        try waitVisible(app.buttons["edit-outfit"], in: app)
-        try reveal(try canvas(in: app), in: app, towardTop: true)
-        try capture("real-fit-05-long-tee-below-hoodie")
         for (suffix, name) in [("000001", "real-fit-06-user-tee"), ("000002", "real-fit-07-user-hoodie")] {
             try back(app, to: "Луки")
             try tap(app.buttons["outfit-card-36000004-0000-0000-0000-000000" + suffix], in: app)
