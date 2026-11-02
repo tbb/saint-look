@@ -41,3 +41,5 @@ for(const [name,model] of [['hoodie','fal-ai/fashn/tryon/v1.6'],['tee','fal-ai/f
   v.generated=decoded.png.toString('base64');v.status='completed';save();console.log(JSON.stringify({label,status:v.status,width:decoded.width,height:decoded.height}));
  }catch(error){v.status='failed-or-unknown';v.error=error.message;save();console.log(JSON.stringify({label,status:v.status,error:v.error}));}
 }
+
+if(Object.values(state.variants).some(v=>v.status!=="completed"))process.exitCode=1;
