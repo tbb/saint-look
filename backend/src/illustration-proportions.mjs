@@ -1,9 +1,9 @@
 import sharp from 'sharp';
 import {garmentLayout} from './illustration-layout.mjs';
 
-// A conservative measurement for an unfolded, upright short-sleeve front.
-// This is not a size estimate: it records a dimensionless visible body ratio.
-// Folded/hooded/layered views need semantic landmarks, not a bounding-box guess.
+// A conservative dimensionless ratio for a visible, upright torso. A stable
+// lower-body outline is required; hooded items also need a shoulder transition.
+// Ambiguous, folded or layered outlines return no measurement, not a size guess.
 export async function measureTopProportions(bytes, features) {
   const {group}=garmentLayout(features);
   if(!['shortUpper','sleeveless','upper','hooded'].includes(group)) return null;

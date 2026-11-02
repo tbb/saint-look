@@ -64,7 +64,7 @@ test('single photo produces a separate transparent illustration with observed tr
   assert.equal(ready.observedFeatures.type, 'Футболка');
   assert.deepEqual(ready.effectiveFeatures.colors, ['Красный']);
   assert.equal(ready.effectiveFeatures.traits.silhouette, 'unknown');
-  assert.deepEqual(ready.processing, { preparation: 'done', attributes: 'done', generation: 'done', finalization: 'done' });
+  assert.deepEqual(ready.processing, { preparation: 'done', attributes: 'done', generation: 'done', finalization: 'done', fidelity: 'done' });
   const generation = fixture.calls.generation[0];
   assert.equal(generation.path, '/v1beta/interactions');
   assert.equal(generation.headers['x-goog-api-key'], 'fixture');

@@ -5,10 +5,10 @@ import { RequestError, uuid } from './upload.mjs';
 import { requireNotDeleted } from './deletion.mjs';
 import { ProviderError } from './providers.mjs';
 import { createIllustrationProvider, illustrationVersions, illustrationTaxonomy } from './illustration-provider.mjs';
-import {compareTopProportions} from './illustration-proportions.mjs';
+import {compareTopProportions,measureTopProportions} from './illustration-proportions.mjs';
 import { registerGarmentLayout, garmentLayout } from './illustration-layout.mjs';
 
-const stages = ['preparation', 'attributes', 'generation', 'finalization'];
+const stages = ['preparation', 'attributes', 'generation', 'finalization', 'fidelity'];
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const parse = value => value === null ? null : JSON.parse(value);
 const json = value => JSON.stringify(value ?? null);
@@ -247,7 +247,7 @@ export function createIllustrations(database, env, retention, budget) {
       stage = 'finalization';
       let result;
       if (generated.usableAlpha) {
-        result = await registerGarmentLayout(generated.png, effective); setStage(operationId, stage, 'skipped');
+        result = await registerGarmentLayout(generated.png, effective, await measureTopProportions(generated.png,effective)); setStage(operationId, stage, 'skipped');
       }
       else {
         setStage(operationId, stage, 'in_flight');
@@ -259,6 +259,12 @@ export function createIllustrations(database, env, retention, budget) {
       const front=photos.find(photo=>photo.role==='front')||photos[0];
       const proportions=await compareTopProportions(front.prepared,result,effective);
       if(proportions.measurable && !proportions.valid) throw new ProviderError('illustration_proportions_changed');
+      if(!live(operationId))return;
+      stage='fidelity';setStage(operationId,stage,'in_flight');
+      budget.reserve('jev',`${operationId}:illustration:fidelity:${row.photo_version_id}`);
+      await provider.fidelity(front.source,result,abort.signal);
+      if(!live(operationId))return;
+      setStage(operationId,stage,'done');
       if (live(operationId)) database.prepare("UPDATE illustrations SET result=?,result_digest=?,status='ready',error=NULL WHERE operation_id=?").run(result, digest(result), operationId);
     } catch (error) {
       if (!live(operationId)) return;

@@ -27,10 +27,6 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm --prefix backend ci --ignore-scripts
-      - name: Load deployed baseline
-        run: |
-          git show 68e4da3904235196af2d681e3b9a075530b68f41:backend/src/illustration-layout.mjs > backend/src/trial-baseline-layout.mjs
-          git show 68e4da3904235196af2d681e3b9a075530b68f41:backend/src/illustration-provider.mjs | sed 's@./illustration-layout.mjs@./trial-baseline-layout.mjs@' > backend/src/trial-baseline-provider.mjs
       - name: Validate one source-preserving generation
         env:
           TRIAL_ITEM: ${{ inputs.item }}

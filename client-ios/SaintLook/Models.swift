@@ -460,6 +460,7 @@ extension WardrobeItem {
 enum IllustrationFailure {
     static func message(for code: String) -> String {
         switch code {
+        case "illustration_identity_changed": return "Иллюстрация изменила детали вещи. Исходное фото сохранено. Можно повторить подготовку."
         case "illustration_proportions_changed": return "Не удалось сохранить пропорции вещи. Исходное фото сохранено. Можно повторить подготовку."
         case "illustration_geometry_invalid": return "Иллюстрация не совпала с посадкой на манекене. Исходное фото сохранено. Можно повторить подготовку."
         case "illustration_type_unsupported": return "Для посадки нужно уточнить тип вещи. Выберите его в карточке и повторите подготовку."
