@@ -13,7 +13,7 @@ if(key.length!==32)throw new Error('Missing diagnostic key');
 const raw=readFileSync('scripts/fitting/diagnostics/input.enc');
 const decipher=createDecipheriv('aes-256-gcm',key,raw.subarray(0,12));decipher.setAuthTag(raw.subarray(12,28));
 const bundle=JSON.parse(Buffer.concat([decipher.update(raw.subarray(28)),decipher.final()]));
-const input=bundle.items[process.env.TRIAL_ITEM];
+const input=process.env.TRIAL_ITEM==='polo'?{source:readFileSync('scripts/fitting/fixtures/polo.jpg').toString('base64')}:bundle.items[process.env.TRIAL_ITEM];
 if(!input)throw new Error('Unknown item');
 const state={sourceHash:null,events:[],variants:{production:{}}};
 mkdirSync('garment-quality-output',{recursive:true});

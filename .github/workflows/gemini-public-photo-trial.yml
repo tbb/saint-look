@@ -227,6 +227,7 @@ jobs:
         - hoodie
         - trousers
         - tee
+        - polo
         - checks-only
         - qa-only
         - native-only
