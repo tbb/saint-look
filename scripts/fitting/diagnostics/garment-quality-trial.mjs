@@ -57,16 +57,7 @@ try{
   const answer=JSON.parse(await exchange('https://generativelanguage.googleapis.com/v1beta/interactions/'+encodeURIComponent(input.receipt),{headers:{'x-goog-api-key':process.env.GEMINI_API_KEY}},signal,120000,14*1024*1024));
   state.recovery=answer;save();console.log(JSON.stringify({status:answer.status,model:answer.model,idMatches:answer.id===input.receipt,error:answer.error?.code,steps:answer.steps?.map(s=>({type:s.type,content:s.content?.map(c=>({type:c.type,hasData:!!c.data}))}))}));
  }
- const generated=input.correctionReceipt?await call('pose-correction',async()=>{
-  const payload={model:'gemini-3-pro-image',store:true,previous_interaction_id:input.correctionReceipt,
-   input:'The last result still has folded sleeves over the stomach. Correct ONLY that pose: straighten BOTH existing sleeves downward and outward, with both cuffs completely outside the body silhouette and visible air gaps. Replace the old folded sleeves, do not add extra arms. Keep exactly two sleeves, the same broad torso, the same gold cross and worn ink texture, and the skull on its original sleeve. Lower the hood behind the neckline. Preserve all other design details. One garment only, white background.',
-   generation_config:{max_output_tokens:2048},response_format:{type:'image',mime_type:'image/jpeg',aspect_ratio:'1:1',image_size:'1K'}};
-  const answer=JSON.parse(await exchange('https://generativelanguage.googleapis.com/v1beta/interactions',{method:'POST',headers:{'x-goog-api-key':process.env.GEMINI_API_KEY,'Content-Type':'application/json'},body:JSON.stringify(payload)},signal,120000,14*1024*1024));
-  state.receipt=answer.id;save();if(answer.status!=='completed')throw new Error('Correction incomplete');
-  const images=answer.steps?.flatMap(s=>s.type==='model_output'?s.content||[]:[]).filter(c=>c.type==='image'&&c.data);
-  if(images?.length!==1)throw new Error('Ambiguous correction output');
-  return {png:await sharp(Buffer.from(images[0].data,'base64')).png().toBuffer()};
- }):await call(input.receipt?'recovery':'generation',()=>provider.generate(photos,features,signal,id=>{state.receipt=id;save();},input.receipt));
+ const generated=input.correctionReceipt?await call('pose-correction',()=>provider.correctPose(input.correctionReceipt,features,signal,id=>{state.receipt=id;save();})):await call(input.receipt?'recovery':'generation',()=>provider.generate(photos,features,signal,id=>{state.receipt=id;save();},input.receipt));
  state.variants.production.generated=generated.png.toString('base64');save();
  const result=await call('finalization',()=>provider.prepare(generated.png,signal,'finalization',features));
  state.variants.production.registered=result.toString('base64');save();

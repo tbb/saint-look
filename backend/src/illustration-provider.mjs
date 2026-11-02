@@ -1,4 +1,4 @@
-import {editPoseGuide,measuredPoseInstructions} from './illustration-edit-pose.mjs';
+import {editPoseGuide,measuredPoseInstructions,poseCorrectionInstructions} from './illustration-edit-pose.mjs';
 import sharp from 'sharp';
 import { readFileSync } from 'node:fs';
 import { exchange, ProviderError } from './providers.mjs';
@@ -51,6 +51,40 @@ export function createIllustrationProvider(env) {
   async function json(url, options, signal, limit = 12 * 1024 * 1024) {
     const body = await exchange(url, options, signal, timeout, limit);
     try { return JSON.parse(body); } catch { throw new ProviderError('invalid_provider_response'); }
+  }
+  async function generateImage(payload,signal,recordReceipt,savedReceipt) {
+  if (Buffer.byteLength(JSON.stringify(payload)) > 32 * 1024 * 1024) throw new ProviderError('image_too_large');
+  let answer;
+  try {
+    const url = savedReceipt
+      ? `${geminiOrigin}/v1beta/interactions/${encodeURIComponent(savedReceipt)}`
+      : `${geminiOrigin}/v1beta/interactions`;
+    answer = await json(url, savedReceipt ? { headers: geminiHeaders } : {
+      method: 'POST', headers: geminiHeaders, body: JSON.stringify(payload),
+    }, signal);
+  } catch (error) {
+    // Once Google may have accepted a generation, only its durable interaction
+    // id can be replayed. Never submit a second POST after an unknown outcome.
+    if (savedReceipt || error.unknown || error.code === 'invalid_provider_response') throw new ProviderError('processing_unknown', true);
+    throw error;
+  }
+  const interactionId = answer.id;
+  if (answer.model !== illustrationVersions.modelVersion || (savedReceipt && interactionId !== savedReceipt)) {
+    throw new ProviderError('processing_unknown', true);
+  }
+  if (!savedReceipt) {
+    if (typeof interactionId !== 'string' || !/^v1_[a-zA-Z0-9_-]{1,180}$/.test(interactionId)) throw new ProviderError('processing_unknown', true);
+    recordReceipt(interactionId);
+  }
+  if (answer.status !== 'completed') throw new ProviderError('processing_unknown', true);
+  const image = answer.steps?.flatMap(step => step.type === 'model_output' ? step.content || [] : [])
+    .find(content => content.type === 'image')?.data;
+  if (typeof image !== 'string' || image.length > 14 * 1024 * 1024) throw new ProviderError('processing_unknown', true);
+  let generated;
+  try { generated = Buffer.from(image, 'base64'); if (generated.length > 10 * 1024 * 1024) throw new Error(); }
+  catch { throw new ProviderError('processing_unknown', true); }
+  const normalized = await sharp(generated, { limitInputPixels: 16_000_000, failOn: 'warning' }).png().toBuffer();
+  return decode(normalized, { width: 1024, height: 1024 });
   }
   function ensureConfigured() { if (!configured) throw new ProviderError('illustration_unavailable'); }
   return {
@@ -135,38 +169,15 @@ export function createIllustrationProvider(env) {
           ...(!edit?[{type:'image',mime_type:'image/png',data:template.toString('base64')}]:[]),
           {type:'text',text:prompt}],
         response_format:{type:'image',mime_type:'image/jpeg',aspect_ratio:'1:1',image_size:'1K'}};
-      if (Buffer.byteLength(JSON.stringify(payload)) > 32 * 1024 * 1024) throw new ProviderError('image_too_large');
-      let answer;
-      try {
-        const url = savedReceipt
-          ? `${geminiOrigin}/v1beta/interactions/${encodeURIComponent(savedReceipt)}`
-          : `${geminiOrigin}/v1beta/interactions`;
-        answer = await json(url, savedReceipt ? { headers: geminiHeaders } : {
-          method: 'POST', headers: geminiHeaders, body: JSON.stringify(payload),
-        }, signal);
-      } catch (error) {
-        // Once Google may have accepted a generation, only its durable interaction
-        // id can be replayed. Never submit a second POST after an unknown outcome.
-        if (savedReceipt || error.unknown || error.code === 'invalid_provider_response') throw new ProviderError('processing_unknown', true);
-        throw error;
-      }
-      const interactionId = answer.id;
-      if (answer.model !== illustrationVersions.modelVersion || (savedReceipt && interactionId !== savedReceipt)) {
-        throw new ProviderError('processing_unknown', true);
-      }
-      if (!savedReceipt) {
-        if (typeof interactionId !== 'string' || !/^v1_[a-zA-Z0-9_-]{1,180}$/.test(interactionId)) throw new ProviderError('processing_unknown', true);
-        recordReceipt(interactionId);
-      }
-      if (answer.status !== 'completed') throw new ProviderError('processing_unknown', true);
-      const image = answer.steps?.flatMap(step => step.type === 'model_output' ? step.content || [] : [])
-        .find(content => content.type === 'image')?.data;
-      if (typeof image !== 'string' || image.length > 14 * 1024 * 1024) throw new ProviderError('processing_unknown', true);
-      let generated;
-      try { generated = Buffer.from(image, 'base64'); if (generated.length > 10 * 1024 * 1024) throw new Error(); }
-      catch { throw new ProviderError('processing_unknown', true); }
-      const normalized = await sharp(generated, { limitInputPixels: 16_000_000, failOn: 'warning' }).png().toBuffer();
-      return decode(normalized, { width: 1024, height: 1024 });
+      return generateImage(payload,signal,recordReceipt,savedReceipt);
+    },
+    async correctPose(previousReceipt,features,signal,recordReceipt) {
+      ensureConfigured();
+      if(typeof previousReceipt!=='string'||!/^v1_[a-zA-Z0-9_-]{1,180}$/.test(previousReceipt))throw new ProviderError('invalid_provider_response');
+      return generateImage({model:illustrationVersions.modelVersion,store:true,previous_interaction_id:previousReceipt,
+        input:poseCorrectionInstructions(features),generation_config:{max_output_tokens:2048},
+        response_format:{type:'image',mime_type:'image/jpeg',aspect_ratio:'1:1',image_size:'1K'}},signal,recordReceipt);
+
     },
   };
 }
