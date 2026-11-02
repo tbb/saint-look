@@ -24,7 +24,13 @@ test('installed real checkpoint prepares a public photograph through HTTP and co
     for (const key of ['SAINT_LOOK_REAL_MODEL_PHOTO', 'SAINT_LOOK_MODEL_PYTHON', 'SAINT_LOOK_MODEL_ASSETS']) assert.ok(process.env[key], `${key} is required`);
     const source = await readFile(process.env.SAINT_LOOK_REAL_MODEL_PHOTO);
     const png = await sharp(source).rotate().resize({ width: 1024, height: 1024, fit: 'inside', withoutEnlargement: true }).png().toBuffer();
-    const fixture = await illustrationFixture(t, { modelDisabled: true, colors: {} });
+    // Both controlled image stages represent the same synthetic garment. The
+    // real public photograph remains the encoder input below; using its canvas
+    // aspect ratio as a fake cutout would violate the production proportion gate.
+    const fixture = await illustrationFixture(t, { modelDisabled: true, colors: {},
+      preparation: async (_request, response, { result }) => {
+        response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(result);
+      } });
     const env = await environment(t), server = await env.launch({ ...fixture.env, SAINT_LOOK_TEST_MODEL_ORIGIN: '',
       SAINT_LOOK_MODEL_PROFILE: 'outfit-transformer-labse-v1', SAINT_LOOK_MODEL_THREADS: '1' });
     const config = await waitForModelConfiguration(server, 120_000);
