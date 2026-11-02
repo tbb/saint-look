@@ -75,6 +75,23 @@ import ImageIO
         let translucent = mask([(340, 290, 90, 90, 128), (590, 290, 90, 90, 128)])
         precondition(!GarmentImagePresentation.armsCovered(sleeve, by: [translucent], shortSleeves: true),
                      "A translucent outer garment cannot hide the inner sleeve")
+        let inner = mask([(325, 280, 35, 35, 255), (664, 280, 35, 35, 255),
+                          (400, 245, 224, 20, 255), (450, 550, 124, 90, 255), (450, 320, 124, 150, 255)])
+        let closedOuter = mask([(400, 270, 224, 280, 255), (340, 320, 90, 230, 255), (594, 320, 90, 230, 255)])
+        let contained = GarmentImagePresentation.containShortSleeves(inner, under: [closedOuter])
+        let before = GarmentImagePresentation.rgba(inner)!, after = GarmentImagePresentation.rgba(contained)!
+        precondition(after[(290 * size + 340) * 4 + 3] == 0 && after[(290 * size + 680) * 4 + 3] == 0,
+                     "Inner sleeve corners cannot protrude outside the closed outer shoulder rows")
+        for (x, y) in [(410, 250), (512, 250), (512, 400), (512, 600)] {
+            precondition(after[(y * size + x) * 4 + 3] == before[(y * size + x) * 4 + 3],
+                         "Neckline, central torso and complete long hem remain visible")
+        }
+        precondition(GarmentImagePresentation.rgba(inner) == before, "Stored source pixels are untouched")
+        precondition(GarmentImagePresentation.rgba(GarmentImagePresentation.containShortSleeves(inner, under: [])) == before,
+                     "Standalone and semantically ineligible outer layers leave the image unchanged")
+        let sheerOuter = mask([(400, 270, 224, 280, 128), (340, 320, 90, 230, 128), (594, 320, 90, 230, 128)])
+        precondition(GarmentImagePresentation.rgba(GarmentImagePresentation.containShortSleeves(inner, under: [sheerOuter])) == before,
+                     "Transparent outer fabric cannot invent opaque sleeve containment")
         print("PASS: preview removes only transparent margins; fitting source stays square")
     }
 }

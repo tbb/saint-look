@@ -42,6 +42,50 @@ enum GarmentImagePresentation {
         return total > 32 && uncovered <= 8
     }
 
+    /// Composition-only containment of a short sleeve under a closed, opaque
+    /// long-sleeved top. Callers must establish garment/layer semantics first.
+    /// Preserve the whole neckline, central torso and lower hem. Only lateral
+    /// upper-sleeve pixels outside observed outer shoulder rows are hidden.
+    static func containShortSleeves(_ image: CGImage, under overlays: [CGImage]) -> CGImage {
+        guard image.width == 1024, image.height == 1024, !overlays.isEmpty,
+              let original = rgba(image) else { return image }
+        var pixels = original
+        for overlay in overlays {
+            guard overlay.width == 1024, overlay.height == 1024,
+                  let outer = rgba(overlay) else { continue }
+            var visible = 0, solid = 0, hem = -1
+            for y in 240..<650 {
+                var centre = 0
+                for x in 0..<1024 {
+                    let alpha = outer[(y * 1024 + x) * 4 + 3]
+                    if y < 430 && alpha > 1 { visible += 1; if alpha >= 250 { solid += 1 } }
+                    if (480..<544).contains(x) && alpha >= 250 { centre += 1 }
+                }
+                if centre >= 32 { hem = y }
+            }
+            // Antialiasing is allowed, translucent or ambiguous fabric is not.
+            guard solid > 256, visible > 0, Double(solid) / Double(visible) >= 0.98,
+                  hem >= 300 else { continue }
+            for y in 270..<min(430, hem) {
+                var left = 1024, right = -1, count = 0
+                for x in 0..<1024 where outer[(y * 1024 + x) * 4 + 3] >= 250 {
+                    left = min(left, x); right = max(right, x); count += 1
+                }
+                guard count >= 32, right - left >= 64 else { continue }
+                for x in 0..<1024 where (x < 430 || x > 594) && (x < left - 2 || x > right + 2) {
+                    let index = (y * 1024 + x) * 4
+                    for channel in 0..<4 { pixels[index + channel] = 0 }
+                }
+            }
+        }
+        guard pixels != original else { return image }
+        return CGImage(width: 1024, height: 1024, bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: 4096, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+            provider: CGDataProvider(data: Data(pixels) as CFData)!, decode: nil,
+            shouldInterpolate: true, intent: .defaultIntent) ?? image
+    }
+
     static func rgba(_ image: CGImage) -> [UInt8]? {
         var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
         let success = pixels.withUnsafeMutableBytes { buffer -> Bool in
@@ -99,6 +143,33 @@ enum FittingOcclusionCache {
         guard upper.count == overlays.count else { return false }
         let result = GarmentImagePresentation.armsCovered(image, by: upper, shortSleeves: shortSleeves)
         cache.setObject(NSNumber(value: result), forKey: key)
+        return result
+    }
+}
+// The stored garment and catalog preview remain intact; cache only a view copy.
+@MainActor
+enum FittingLayerImageCache {
+    private static let cache: NSCache<NSString, UIImage> = {
+        let value = NSCache<NSString, UIImage>()
+        value.totalCostLimit = 24 * 1024 * 1024; value.countLimit = 32
+        return value
+    }()
+    static func image(at url: URL, underClosedLongTops overlays: [URL]) -> UIImage? {
+        guard !overlays.isEmpty else { return UIImage(contentsOfFile: url.path) }
+        let files = [url] + overlays
+        let stamps = files.compactMap { file -> String? in
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: file.path) else { return nil }
+            return "\(file.path)|\(attributes[.modificationDate] ?? "")|\(attributes[.size] ?? "")"
+        }
+        guard stamps.count == files.count else { return UIImage(contentsOfFile: url.path) }
+        let key = stamps.joined(separator: "\n") as NSString
+        if let result = cache.object(forKey: key) { return result }
+        guard let source = UIImage(contentsOfFile: url.path), let cg = source.cgImage else { return nil }
+        let masks = overlays.compactMap { UIImage(contentsOfFile: $0.path)?.cgImage }
+        guard masks.count == overlays.count else { return source }
+        let contained = GarmentImagePresentation.containShortSleeves(cg, under: masks)
+        let result = UIImage(cgImage: contained, scale: source.scale, orientation: source.imageOrientation)
+        cache.setObject(result, forKey: key, cost: contained.bytesPerRow * contained.height)
         return result
     }
 }

@@ -74,6 +74,7 @@ jobs:
       env:
         GARMENT_QUALITY_TRIAL_KEY: ${{ secrets.GARMENT_QUALITY_TRIAL_KEY }}
       run: node scripts/fitting/diagnostics/prepare-native-trial.mjs
+    - run: bash client-ios/scripts/test-image-presentation.sh
     - run: bash client-ios/scripts/test-outfit-core.sh
     - run: bash client-ios/scripts/test-visual-fixtures.sh
     - name: Check bounded visual diagnostic observer

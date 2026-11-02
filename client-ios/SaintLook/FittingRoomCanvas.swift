@@ -35,6 +35,21 @@ struct FittingRoomCanvas: View {
         return selected.isEmpty ? "Пустой манекен. Вещи не выбраны" : "Манекен. " + selected.joined(separator: ". ")
     }
 
+    private func layerImage(for item: WardrobeItem, slot: OutfitSlot, url: URL) -> UIImage? {
+        guard slot.zone == .body,
+              let inner = item.displayedIllustration?.response.effectiveFeatures ?? item.displayedIllustration?.response.observedFeatures,
+              let index = renderedSlots.firstIndex(where: { $0.id == slot.id }) else {
+            return UIImage(contentsOfFile: url.path)
+        }
+        let overlays = renderedSlots.dropFirst(index + 1).compactMap { upper -> URL? in
+            guard upper.zone == .body, let outer = store.items.first(where: { $0.id == upper.itemID }),
+                  let features = outer.displayedIllustration?.response.effectiveFeatures ?? outer.displayedIllustration?.response.observedFeatures,
+                  features.canContainShortSleeves(of: inner) else { return nil }
+            return store.fittingIllustrationURL(for: outer, in: outfit)
+        }
+        return FittingLayerImageCache.image(at: url, underClosedLongTops: overlays)
+    }
+
     private var mannequinMaterial: LinearGradient {
         LinearGradient(colors: [Color(uiColor: .systemGray4), Color(uiColor: .systemGray5), Color(uiColor: .systemGray4)],
                        startPoint: .leading, endPoint: .trailing)
@@ -48,7 +63,7 @@ struct FittingRoomCanvas: View {
             ForEach(renderedSlots) { slot in
                 if let item = store.items.first(where: { $0.id == slot.itemID }),
                    let url = store.fittingIllustrationURL(for: item, in: outfit),
-                   let image = UIImage(contentsOfFile: url.path) {
+                   let image = layerImage(for: item, slot: slot, url: url) {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
