@@ -11,7 +11,9 @@ for(const part of v.segmentation.parts){const points=part.polygon.map(p=>pt(p).j
 const report={name,angleDegrees:13,occludedTorso:v.segmentation.occluded_torso,parts:[]};
 for(const side of ['left','right']){
  const mask=masks[side+'_sleeve'];if(!mask)throw Error('Missing sleeve');
- const S=pt(landmarks[side+'_shoulder']),C=pt(landmarks[side+'_cuff']),E=landmarks[side+'_elbow']?pt(landmarks[side+'_elbow']):null;
+ const edge=landmarks[side+'_cuff_edge'];
+ const cuff=edge?[(edge[0][0]+edge[1][0])/2,(edge[0][1]+edge[1][1])/2]:landmarks[side+'_cuff'];
+ const S=pt(landmarks[side+'_shoulder']),C=pt(cuff),E=landmarks[side+'_elbow']?pt(landmarks[side+'_elbow']):null;
  const direct=len(sub(C,S)),bent=E&&len(sub(E,S))>.2*direct&&len(sub(C,E))>.2*direct&&(len(sub(E,S))+len(sub(C,E)))/direct>1.08;
  const source=bent?[S,E,C]:[S,C],target=[S],a=(side==='left'?103:77)*Math.PI/180,u=[Math.cos(a),Math.sin(a)];
  for(let i=1;i<source.length;i++){const length=len(sub(source[i],source[i-1])),p=target.at(-1);target.push([p[0]+u[0]*length,p[1]+u[1]*length]);}
@@ -24,10 +26,10 @@ for(const side of ['left','right']){
   const sx=Math.round(source[segment][0]+c*d[0]+s*d[1]),sy=Math.round(source[segment][1]-s*d[0]+c*d[1]);
   if(sx<0||sx>=w||sy<0||sy>=h)continue;const j=sy*w+sx;
   if(mask[j*4+3]<=128||data[j*4+3]===0)continue;
-  data.copy(canvas,(y*N+x)*4,j*4,j*4+4);used[j]=1;painted++;
+  data.copy(canvas,(y*N+x)*4,j*4,j*4+4);if(data[j*4+3]>128)used[j]=1;painted++;
  }
  report.parts.push({side,bent:Boolean(bent),sourceLandmarks:source,targetLandmarks:target,sourcePixels:total,retainedSourceFraction:used.reduce((a,b)=>a+b,0)/total,destinationPixels:painted});
 }
 // Keep all non-sleeve original pixels. Missing torso is deliberately left empty.
-for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4;if(masks.left_sleeve[i+3]>128||masks.right_sleeve[i+3]>128)continue;data.copy(canvas,((y+oy)*N+x+ox)*4,i,i+4);}
+for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=(y*w+x)*4;if(masks.left_sleeve[i+3]>128||masks.right_sleeve[i+3]>128||(!(masks.torso?.[i+3]>128)&&!(masks.hood?.[i+3]>128)))continue;data.copy(canvas,((y+oy)*N+x+ox)*4,i,i+4);}
 mkdirSync(out,{recursive:true});await sharp(canvas,{raw:{width:N,height:N,channels:4}}).png().toFile(out+'/'+name+'-articulated.png');writeFileSync(out+'/'+name+'-report.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));

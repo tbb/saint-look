@@ -33,7 +33,7 @@ jobs:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         FAL_KEY: ${{ secrets.FAL_KEY }}
         GARMENT_QUALITY_TRIAL_KEY: ${{ secrets.GARMENT_QUALITY_TRIAL_KEY }}
-      run: node ${{ (inputs.item == 'landmark-prototype' || inputs.item == 'landmark-recovery') && 'scripts/fitting/diagnostics/garment-landmarks-prototype.mjs' || inputs.item == 'fal-fashion' && 'scripts/fitting/diagnostics/fal-fashion-prototype.mjs' || inputs.item == 'fidelity-resolution' && 'scripts/fitting/diagnostics/fidelity-resolution-probe.mjs' || (inputs.item == 'fashion-baseline' || inputs.item == 'fashion-measured') && 'scripts/fitting/diagnostics/fashion-baseline.mjs' || inputs.item == 'qa-only' && 'scripts/fitting/diagnostics/garment-fidelity-check.mjs' || 'scripts/fitting/diagnostics/garment-quality-trial.mjs'
+      run: node ${{ inputs.item == 'mask-prototype' && 'scripts/fitting/diagnostics/garment-mask-prototype.mjs' || (inputs.item == 'landmark-prototype' || inputs.item == 'landmark-recovery') && 'scripts/fitting/diagnostics/garment-landmarks-prototype.mjs' || inputs.item == 'fal-fashion' && 'scripts/fitting/diagnostics/fal-fashion-prototype.mjs' || inputs.item == 'fidelity-resolution' && 'scripts/fitting/diagnostics/fidelity-resolution-probe.mjs' || (inputs.item == 'fashion-baseline' || inputs.item == 'fashion-measured') && 'scripts/fitting/diagnostics/fashion-baseline.mjs' || inputs.item == 'qa-only' && 'scripts/fitting/diagnostics/garment-fidelity-check.mjs' || 'scripts/fitting/diagnostics/garment-quality-trial.mjs'
         }}
     - uses: actions/upload-artifact@v4
       if: always()
@@ -231,6 +231,7 @@ jobs:
         - polo
         - checks-only
         - qa-only
+        - mask-prototype
         - landmark-recovery
         - landmark-prototype
         - fal-fashion
