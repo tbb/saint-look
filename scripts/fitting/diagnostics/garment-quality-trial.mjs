@@ -34,6 +34,10 @@ try{
  if(quota.availableImages<2)throw new Error('Insufficient production cutouts');
  const networkFetch=globalThis.fetch;
  globalThis.fetch=async(url,options)=>{
+  if(String(url).endsWith('/v1beta/interactions')&&options?.body){
+   const request=JSON.parse(options.body);
+   state.generationRequest={model:request.model,input:request.input?.map(c=>c.type==='text'?{type:c.type,text:c.text}:{type:c.type,hash:createHash('sha256').update(Buffer.from(c.data||'','base64')).digest('hex')})};save();
+  }
   const response=await networkFetch(url,options);
   if(String(url).endsWith('/v1beta/interactions')&&response.ok){
    const answer=await response.clone().json();
