@@ -1,18 +1,17 @@
-// THROWAWAY fixed 13-degree wider mannequin arm pose. Not production.
 import sharp from 'sharp';
 import { readFileSync } from 'node:fs';
 import { ProviderError } from './providers.mjs';
 
 const taxonomy = JSON.parse(readFileSync(new URL('../../shared/wardrobe-taxonomy.json', import.meta.url)));
-export const layoutVersion = 'fitting-anchors-1024-v4';
-export const templateVersion = 'category-front-anchors-v4';
+export const layoutVersion = 'fitting-anchors-1024-v5';
+export const templateVersion = 'category-front-anchors-v5';
 // Coordinates are in the existing 360×560 mannequin frame, letterboxed into
 // a 560×560 square. The client draws this same frame without independently
 // cropping/scaling a garment. Bounds include ease; they are validation envelopes,
 // never masks used to cut off parts of a garment. A single uniform scale and
 // translation register the full segmented canvas to the garment-only template.
 const layouts = {
-  upper: { bounds: [45, 120, 270, 210], path: 'M164 130 Q180 145 196 130 L225 148 L245 181 L264 300 L247 307 L216 206 L220 297 L139 297 L143 206 L113 307 L94 300 L116 181 L135 147 Z', anchors: { neck: [180, 132], leftShoulder: [135, 147], rightShoulder: [225, 148], waist: [180, 264], leftWrist: [68, 295], rightWrist: [292, 295] } },
+  upper: { bounds: [82, 120, 196, 210], path: 'M164 130 Q180 145 196 130 L225 148 L245 181 L264 300 L247 307 L216 206 L220 297 L139 297 L143 206 L113 307 L94 300 L116 181 L135 147 Z', anchors: { neck: [180, 132], leftShoulder: [135, 147], rightShoulder: [225, 148], waist: [180, 264], leftWrist: [103, 306], rightWrist: [257, 306] } },
   shortUpper: { bounds: [95, 120, 170, 210], path: 'M164 130 Q180 145 196 130 L225 148 L244 181 L251 212 L228 220 L216 206 L220 297 L139 297 L143 206 L132 220 L109 212 L116 181 L135 147 Z', anchors: { neck: [180, 132], leftShoulder: [135, 147], rightShoulder: [225, 148], waist: [180, 264] } },
   sleeveless: { bounds: [122, 120, 116, 210], path: 'M155 137 Q180 158 205 137 L225 148 L216 206 L220 297 L139 297 L143 206 L135 147 Z', anchors: { leftShoulder: [145, 142], rightShoulder: [215, 142], waist: [180, 264] } },
   trousers: { bounds: [100, 248, 160, 260], path: 'M139 264 L220 264 L225 316 L216 494 L195 497 L183 330 L178 330 L164 497 L145 494 L135 316 Z', anchors: { leftWaist: [139, 264], rightWaist: [220, 264], crotch: [180, 330], leftAnkle: [155, 494], rightAnkle: [205, 494] }, legs: true },
@@ -23,13 +22,42 @@ const layouts = {
   head: { bounds: [135, 25, 90, 110], path: 'M154 76 Q150 40 180 40 Q210 40 206 76 L218 83 L142 83 Z', anchors: { crown: [180, 44], forehead: [180, 76] } },
   scarf: { bounds: [125, 120, 110, 195], path: 'M156 130 Q180 147 204 130 L210 158 L202 290 L183 290 L184 164 L154 155 Z', anchors: { neck: [180, 132], chest: [180, 175] } },
   belt: { bounds: [125, 248, 110, 40], path: 'M137 260 L222 260 L222 279 L137 279 Z', anchors: { leftWaist: [139, 264], rightWaist: [220, 264] } },
-  gloves: { bounds: [80, 270, 200, 65], path: 'M95 288 L112 293 L110 325 L94 325 Z M248 293 L265 288 L267 325 L250 325 Z', anchors: { leftWrist: [68, 295], rightWrist: [292, 295] } },
+  gloves: { bounds: [80, 270, 200, 65], path: 'M95 288 L112 293 L110 325 L94 325 Z M248 293 L265 288 L267 325 L250 325 Z', anchors: { leftWrist: [103, 306], rightWrist: [257, 306] } },
   socks: { bounds: [130, 380, 100, 140], path: 'M146 402 L165 402 L166 506 L136 510 L145 490 Z M195 402 L215 402 L215 490 L225 510 L196 506 Z', anchors: { leftAnkle: [155, 494], rightAnkle: [205, 494] } },
   bag: { bounds: [210, 160, 110, 200], path: 'M245 215 L245 190 Q263 163 282 190 L282 215 M230 214 L300 214 L304 320 L226 320 Z', anchors: { handle: [263, 180], bagCentre: [265, 270] } },
 };
-layouts.hooded = { ...layouts.upper, bounds: [45, 90, 270, 240],
+layouts.hooded = { ...layouts.upper, bounds: [65, 90, 230, 240],
   path: 'M157 132 Q146 106 163 96 Q180 88 197 96 Q214 106 203 132 L225 148 L245 181 L264 300 L247 307 L216 206 L220 297 L139 297 L143 206 L113 307 L94 300 L116 181 L135 147 Z',
   anchors: { ...layouts.upper.anchors, hoodTop: [180, 94] } };
+// v5 fixes one pose: the v4 arms rotate outward by 13 degrees at the
+// shoulders. This is ~24 degrees from vertical, NOT 13 degrees from vertical.
+// Rotate sleeves and gloves as well as wrist anchors. Join the rotated armhole
+// back to the unchanged torso, so guides remain one connected garment.
+export function armPoint([x,y],side) {
+  const [cx,cy]=side==='left'?[135,147]:[225,148];
+  const angle=(side==='left'?13:-13)*Math.PI/180;
+  return [cx+(x-cx)*Math.cos(angle)-(y-cy)*Math.sin(angle),
+    cy+(x-cx)*Math.sin(angle)+(y-cy)*Math.cos(angle)].map(n=>Math.round(n*100)/100);
+}
+const armLines=(points,side)=>points.map(p=>'L'+armPoint(p,side).join(' ')).join(' ');
+for (const group of ['upper','hooded','full']) {
+  const layout=layouts[group];
+  layout.path=layout.path.replace('L245 181 L264 300 L247 307 L216 206',
+    armLines([[245,181],[264,300],[247,307],[216,206]],'right')+' L216 206')
+    .replace('L113 307 L94 300 L116 181',
+      armLines([[143,206],[113,307],[94,300],[116,181]],'left'));
+  layout.bounds=[45,layout.bounds[1],270,layout.bounds[3]];
+  layout.anchors={...layout.anchors,leftWrist:armPoint([103,306],'left'),rightWrist:armPoint([257,306],'right')};
+}
+layouts.shortUpper.path=layouts.shortUpper.path
+  .replace('L244 181 L251 212 L228 220 L216 206',armLines([[244,181],[251,212],[228,220],[216,206]],'right')+' L216 206')
+  .replace('L132 220 L109 212 L116 181',armLines([[143,206],[132,220],[109,212],[116,181]],'left'));
+layouts.shortUpper.bounds=[75,120,210,210];
+layouts.gloves={bounds:[45,260,270,80],
+  path: ['left','right'].map((side,i)=>{
+    const points=i===0?[[95,288],[112,293],[110,325],[94,325]]:[[248,293],[265,288],[267,325],[250,325]];
+    return 'M'+armPoint(points[0],side).join(' ')+armLines(points.slice(1),side)+' Z';
+  }).join(' '),anchors:{leftWrist:armPoint([103,306],'left'),rightWrist:armPoint([257,306],'right')}};
 const groups = {
   t_shirt: 'shortUpper', polo: 'shortUpper', shirt: 'upper', blouse: 'upper', top: 'sleeveless', sweater: 'upper',
   cardigan: 'upper', sweatshirt: 'upper', hoodie: 'hooded', vest: 'sleeveless', blazer: 'upper', jacket: 'upper',
@@ -154,7 +182,7 @@ function requiresWristPose(layout, features) {
 }
 
 function cuffExtents(data, width, layout, features) {
-  if(!['upper','hooded'].includes(layout.group) || !requiresWristPose(layout, features)) return [];
+  if(!['upper','hooded','full'].includes(layout.group) || !requiresWristPose(layout, features)) return [];
   return [[263,351],[673,761]].map(([left,right])=>{
     let bottom=-1;
     for(let y=400;y<650;y++) {
@@ -167,7 +195,7 @@ function cuffExtents(data, width, layout, features) {
 const minimumCuffY=point([180,295])[1]-8;
 
 function wristsContactCuffs(data,width,layout,features) {
-  if(!['upper','hooded'].includes(layout.group)||!requiresWristPose(layout,features))return true;
+  if(!['upper','hooded','full'].includes(layout.group)||!requiresWristPose(layout,features))return true;
   return [layout.anchors.leftWrist,layout.anchors.rightWrist].every(anchor=>{
     const [cx,cy]=point(anchor);let terminalColumns=0;
     for(let x=cx-8;x<=cx+8;x++){
@@ -180,7 +208,18 @@ function wristsContactCuffs(data,width,layout,features) {
           let edge=x;
           const inward=x<width/2?1:-1;
           while(edge!==width/2&&data[(y*width+edge)*4+3]>=224)edge+=inward;
-          if(edge!==width/2)contact=true;
+          if(edge!==width/2){
+            // An open zipper also splits the torso. The cuff must be in the
+            // outermost substantial run, not an inner jacket panel.
+            let outer=x;
+            while(outer>=0&&outer<width&&data[(y*width+outer)*4+3]>=224)outer-=inward;
+            let run=0,hasOuterRun=false;
+            for(let scan=outer;scan>=0&&scan<width;scan-=inward){
+              run=data[(y*width+scan)*4+3]>=224?run+1:0;
+              if(run>=5){hasOuterRun=true;break;}
+            }
+            if(!hasOuterRun)contact=true;
+          }
         }
       }
       if(contact&&bottom>=cy-8&&bottom<=cy+44)terminalColumns++;
@@ -190,7 +229,7 @@ function wristsContactCuffs(data,width,layout,features) {
 }
 
 function unfoldedSleeves(data, width, layout, features) {
-  if(!['upper','hooded'].includes(layout.group)||!requiresWristPose(layout,features)) return true;
+  if(!['upper','hooded','full'].includes(layout.group)||!requiresWristPose(layout,features)) return true;
   let separatedRows=0;
   for(let y=350;y<minimumCuffY;y+=10){
     const runs=[];let start=-1,last=-1;
@@ -340,7 +379,7 @@ export function layoutInstructions(features) {
   const [x,y,w,h] = layout.bounds, [left,top] = point([x,y]), [right,bottom] = point([x+w,y+h]);
   const footwearRule=layout.group==='shoes' ? ' FOOTWEAR: use the enlarged grey footwear pose guide for the front projection and relative spacing, and the LAST full-canvas guide for placement. Show TWO separate shoes in the standing pose of the template, with their ankle openings aligned to (466,903) and (558,903). Their centres must remain about 92 pixels apart, with a visible white gap; each shoe is roughly 50 to 65 pixels wide. Use an orthographic FRONT elevation at ankle height, not overhead, top-down or flat-lay product photography. The front toe walls and soles are visible; do not expose long insoles or an elongated top view. Both face forward with a slight outward angle. Do not keep the close, overlapping arrangement of the source photo, and do not place the pair together under the body centre. No feet, legs, socks or trousers inside the shoes.' : '';
   const torsoRule = ['shortUpper', 'sleeveless', 'upper', 'hooded'].includes(layout.group)
-    ? ` Fit the torso to the SAME wearer: the neckline is near (512,241), shoulders near (430,269) and (594,269), waist y=483. ${features?.traits?.body_length === 'cropped' ? 'This is deliberately cropped: preserve its short hem.' : features?.traits?.body_length === 'long' ? 'This is an elongated torso: preserve its extra length and torso-to-sleeve proportions, with the hem around y=585 to 625. It may extend below an ordinary hoodie or jacket; do not shorten or tuck it to match another layer.' : !['regular','cropped','long'].includes(features?.traits?.body_length) ? 'Body length is uncertain, NOT regular. Infer the torso-to-shoulder and torso-to-sleeve proportions from the original photo and preserve them. The grey torso hem is only a pose example: an observed long or curved hem may reach y=585 to 650 and extend below another layer. Do not shorten it to the grey hem or waist.' : ['jacket','blazer','cardigan'].includes(layout.type) ? 'Preserve its torso-to-sleeve proportions and jacket length; a hip-length hem may reach y=540 to 590.' : 'The torso hem must overlap the waist, normally y=510 to 545; do not make a regular top look cropped.'} Sleeves follow the template arm directions, not a flat-lay T pose. ${requiresWristPose(layout, features) ? 'Long sleeves reach the wrist anchors near y=560; unfold the source arm pose instead of turning them into short or three-quarter sleeves.' : ''} ${layout.group === 'hooded' ? 'Keep the hood lowered behind the neckline. The neckline stays near y=241 and shoulder seams near y=269. Do not draw a head inside the hood.' : ''}` : '';
+    ? ` Fit the torso to the SAME wearer: the neckline is near (512,241), shoulders near (430,269) and (594,269), waist y=483. ${features?.traits?.body_length === 'cropped' ? 'This is deliberately cropped: preserve its short hem.' : features?.traits?.body_length === 'long' ? 'This is an elongated torso: preserve its extra length and torso-to-sleeve proportions, with the hem around y=585 to 625. It may extend below an ordinary hoodie or jacket; do not shorten or tuck it to match another layer.' : !['regular','cropped','long'].includes(features?.traits?.body_length) ? 'Body length is uncertain, NOT regular. Infer the torso-to-shoulder and torso-to-sleeve proportions from the original photo and preserve them. The grey torso hem is only a pose example: an observed long or curved hem may reach y=585 to 650 and extend below another layer. Do not shorten it to the grey hem or waist.' : ['jacket','blazer','cardigan'].includes(layout.type) ? 'Preserve its torso-to-sleeve proportions and jacket length; a hip-length hem may reach y=540 to 590.' : 'The torso hem must overlap the waist, normally y=510 to 545; do not make a regular top look cropped.'} Sleeves follow the template arm directions, not a flat-lay T pose. ${requiresWristPose(layout, features) ? 'Long sleeves reach the wrist anchors near (307,539) and (716,539); unfold the source arm pose instead of turning them into short or three-quarter sleeves.' : ''} ${layout.group === 'hooded' ? 'Keep the hood lowered behind the neckline. The neckline stays near y=241 and shoulder seams near y=269. Do not draw a head inside the hood.' : ''}` : '';
   return `Edit the LAST image: it is the placement template for a ${layout.type}, on an EXACT 1024 by 1024 canvas. Replace ONLY its grey garment placeholder with a faithful editorial illustration of the referenced garment. Keep the template's small size, position and front-facing pose inside the full canvas. Most of the canvas MUST remain plain white. DO NOT zoom, crop, enlarge to fill the square, copy the photo's pose, or draw any human/mannequin body. Coordinates in output pixels, origin top-left: anchors ${JSON.stringify(anchors)}; garment must remain within [left=${left}, top=${top}, right=${right}, bottom=${bottom}]. The anchors describe the same invisible mannequin for every item.${torsoRule}${footwearRule} Preserve the garment DESIGN: construction, colours, actual sleeve and body length, and print placement. Preserve the original chest-width to torso-length ratio and hem width: a wide or boxy T-shirt must remain wide, never tailored into a slim waist. The guide gives pose, NOT mandatory side seams or a universal garment width. Preserve the source fabric texture, irregular stripe spacing and stripe thickness; do not replace woven stripes with a few clean schematic lines. Reconstruct its unfolded front as if worn by this invisible mannequin. Incidental wrinkles, crumpling, folded sleeve openings, tilted collars, camera perspective and hems made uneven only by folds are NOT design features: straighten them. Preserve intentional asymmetric construction and designed hem shapes. ${['shortUpper','sleeveless','upper','hooded','full'].includes(layout.group) ? 'Shoulders must be level and symmetrical, neckline centred, torso vertical, and both sleeves unfolded along the template arms.' : ''} Use restrained editorial shading with visible textile detail; do not trace or emphasize the source photo's random folds. The grey template defines the wearer pose, not a replacement garment design. White outside the item, inside necklines/openings and between separated limbs; no body, head, skin, stand, extra clothing, labels, guide lines or cast shadow.${layout.legs ? ' TROUSERS: front waistband horizontal at the two waist anchors, crotch centred at the crotch anchor, two distinct uncrossed untwisted leg tubes towards the left and right ankle anchors. Straighten the pose even if the source is twisted or folded. Preserve front pockets and seams on their correct sides. Do not draw the torso above the waistband, shoes below the hems, or join/cross the two legs.' : ''}`;
 }
 

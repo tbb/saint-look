@@ -9,7 +9,7 @@ jobs:
     if: inputs.item != 'checks-only' && inputs.item != 'native-only' && github.ref == 'refs/heads/codex/garment-quality-trial'
       && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 40
     steps:
     - uses: actions/checkout@v4
       with:
@@ -33,7 +33,7 @@ jobs:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         FAL_KEY: ${{ secrets.FAL_KEY }}
         GARMENT_QUALITY_TRIAL_KEY: ${{ secrets.GARMENT_QUALITY_TRIAL_KEY }}
-      run: node ${{ inputs.item == 'accepted-pose-repeatability' && 'scripts/fitting/diagnostics/accepted-pose-repeatability.mjs' || inputs.item == 'mask-prototype' && 'scripts/fitting/diagnostics/garment-mask-prototype.mjs' || (inputs.item == 'landmark-prototype' || inputs.item == 'landmark-recovery') && 'scripts/fitting/diagnostics/garment-landmarks-prototype.mjs' || inputs.item == 'fal-fashion' && 'scripts/fitting/diagnostics/fal-fashion-prototype.mjs' || inputs.item == 'fidelity-resolution' && 'scripts/fitting/diagnostics/fidelity-resolution-probe.mjs' || (inputs.item == 'fashion-baseline' || inputs.item == 'fashion-measured') && 'scripts/fitting/diagnostics/fashion-baseline.mjs' || inputs.item == 'qa-only' && 'scripts/fitting/diagnostics/garment-fidelity-check.mjs' || 'scripts/fitting/diagnostics/garment-quality-trial.mjs'
+      run: node ${{ inputs.item == 'fixed-pipeline-v5' && 'scripts/fitting/diagnostics/fixed-pipeline-v5.mjs' || inputs.item == 'accepted-pose-repeatability' && 'scripts/fitting/diagnostics/accepted-pose-repeatability.mjs' || inputs.item == 'mask-prototype' && 'scripts/fitting/diagnostics/garment-mask-prototype.mjs' || (inputs.item == 'landmark-prototype' || inputs.item == 'landmark-recovery') && 'scripts/fitting/diagnostics/garment-landmarks-prototype.mjs' || inputs.item == 'fal-fashion' && 'scripts/fitting/diagnostics/fal-fashion-prototype.mjs' || inputs.item == 'fidelity-resolution' && 'scripts/fitting/diagnostics/fidelity-resolution-probe.mjs' || (inputs.item == 'fashion-baseline' || inputs.item == 'fashion-measured') && 'scripts/fitting/diagnostics/fashion-baseline.mjs' || inputs.item == 'qa-only' && 'scripts/fitting/diagnostics/garment-fidelity-check.mjs' || 'scripts/fitting/diagnostics/garment-quality-trial.mjs'
         }}
     - uses: actions/upload-artifact@v4
       if: always()
@@ -232,6 +232,7 @@ jobs:
         - checks-only
         - qa-only
         - accepted-pose-repeatability
+        - fixed-pipeline-v5
         - mask-prototype
         - landmark-recovery
         - landmark-prototype
