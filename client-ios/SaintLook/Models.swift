@@ -292,6 +292,15 @@ struct IllustrationFeatures: Codable {
     let colors: [String]
     let traits: [String: String]
 
+    // Mirrors the v4 generator's hooded group, not every item with a hood.
+    var usesLoweredHoodPose: Bool {
+        if type == "Худи" { return true }
+        guard traits["hood"] == "yes" else { return false }
+        if ["Футболка", "Поло"].contains(type) { return traits["sleeves"] == "long" }
+        if ["Рубашка", "Блузка"].contains(type) { return traits["sleeves"] != "short" }
+        return ["Свитер", "Кардиган", "Свитшот", "Пиджак", "Куртка"].contains(type)
+    }
+
     var isValid: Bool {
         guard version == "fitting-observable-v2-photoroom-sandbox",
               WardrobeTaxonomy.shared.contains(type: type),

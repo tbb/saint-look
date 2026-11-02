@@ -1068,6 +1068,13 @@ struct OutfitCoreChecks {
                 templateVersion: versions.0, geometryVersion: versions.1)
             precondition(!cached.matchesPreparationContract(photoID: item.photoVersionID), "Incompatible preparation geometry cannot be reused")
         }
+        for (type, sleeves, expected) in [("Худи", "long", true), ("Куртка", "long", true),
+            ("Пальто", "long", false), ("Плащ", "long", false), ("Жилет", "sleeveless", false),
+            ("Футболка", "short", false), ("Футболка", "long", true), ("Рубашка", "short", false)] {
+            let features = IllustrationFeatures(version: "fitting-observable-v2-photoroom-sandbox", type: type,
+                colors: [], traits: ["hood": "yes", "sleeves": sleeves])
+            precondition(features.usesLoweredHoodPose == expected, "Head occlusion must match generator pose for \(type)")
+        }
         print("PASS: Gemini admission, legacy publication restart and same-source prepared cache compatibility")
     }
 

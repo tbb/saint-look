@@ -20,7 +20,7 @@ struct FittingRoomCanvas: View {
                   result.templateVersion == "category-front-anchors-v4",
                   result.geometryVersion == "fitting-anchors-1024-v4",
                   let features = result.effectiveFeatures ?? result.observedFeatures else { return false }
-            return features.type == "Худи" || features.traits["hood"] == "yes"
+            return features.usesLoweredHoodPose
         }
     }
 
