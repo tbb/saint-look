@@ -36,7 +36,9 @@ export async function measureTopProportions(bytes, features) {
   }
   if(widths.length<height*(hooded?.1:.2))return null;
   widths.sort((a,b)=>a-b);
-  const median=widths[Math.floor(widths.length/2)],low=widths[Math.floor(widths.length*.1)],high=widths[Math.floor(widths.length*.9)];
+  const median=widths[Math.floor(widths.length/2)],low=widths[Math.floor(widths.length*.1)],high=widths[Math.floor(widths.length*(hooded?.7:.9))];
+  // Wide upper outliers can be sleeve attachments. The lower 70% of the
+  // hoodie band still spans at least 10% of its height and must be stable.
   if((high-low)/median>.15)return null;
   let bodyTop=top;
   if(hooded){

@@ -44,3 +44,10 @@ test('lowering a hood preserves the same neck-to-hem body ratio',async()=>{
  assert.equal(checked.valid,true,'Lowered hood must not need 15% extra height above unchanged shoulders');
  assert.ok(checked.relativeError<.01);
 });
+
+test('upper sleeve attachments do not outweigh the stable lower hoodie torso',async()=>{
+ async function garment(attachedUntil){return sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M312 200 H712 V800 H312 Z M432 100 H592 V220 H432 Z M312 220 H220 V${attachedUntil} H312 Z M712 220 H804 V${attachedUntil} H712 Z" fill="#222"/></svg>`)).png().toBuffer();}
+ const checked=await compareTopProportions(await garment(500),await garment(650),{type:'hoodie',traits:{sleeves:'long'}});
+ assert.equal(checked.valid,true);
+ assert.ok(checked.relativeError<.01);
+});
