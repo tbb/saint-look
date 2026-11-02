@@ -692,8 +692,19 @@ test('specialized hoodie unfolding is retained across quality correction and era
  assert.equal(fixture.calls.unfolding.length,1);assert.equal(fixture.calls.generation.length,2);
  const request=JSON.parse(fixture.calls.generation[0].body);
  assert.ok(request.input.some(part=>part.type==='image'&&part.data===fixture.result.toString('base64')),'Generator uses the unfolded reference');
- assert.ok(request.input.some(part=>part.type==='image'&&part.data===photo.imageBase64),'Original artwork remains visible to the generator alongside the pose reference');
- assert.match(request.input.find(part=>part.type==='text'&&part.text.includes('original_front_identity')).text,/sole authority/);
+ const originalPixels=await sharp(Buffer.from(photo.imageBase64,'base64')).raw().toBuffer({resolveWithObject:true});
+ const covered=new Set();
+ for(const [panel,start]of [['left',0],['centre',.25],['right',.55]]) {
+  const index=request.input.findIndex(part=>part.type==='text'&&part.text.startsWith('Original '+panel+' detail panel'));
+  assert.ok(index>=0,'Every original panel, including both sleeve graphics, is supplied');
+  const actual=await sharp(Buffer.from(request.input[index+1].data,'base64')).raw().toBuffer({resolveWithObject:true});
+  const left=Math.floor(originalPixels.info.width*start);
+  const expected=await sharp(Buffer.from(photo.imageBase64,'base64')).extract({left,top:0,width:actual.info.width,height:actual.info.height}).raw().toBuffer();
+  assert.deepEqual(actual.data,expected,'Reference panels retain exact original pixels');
+  for(let x=left;x<left+actual.info.width;x++)covered.add(x);
+  assert.equal(actual.info.height,originalPixels.info.height);
+ }
+ assert.equal(covered.size,originalPixels.info.width,'Overlapping panels retain the entire original');
  const check=JSON.parse(fixture.calls.fidelity[0].body);
  const {jevRequest}=await import('../src/jev.mjs');
  const original=await jevRequest(Buffer.from(photo.imageBase64,'base64'));

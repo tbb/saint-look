@@ -203,3 +203,19 @@ test('v5 clothing guides share the rotated wrists, including coats and gloves',a
     }
   }
 });
+
+test('display ease enlarges a narrow long torso uniformly without relabelling its length',async()=>{
+  const {measureTopProportions,compareTopProportions}=await import('../src/illustration-proportions.mjs');
+  const source=await sharp(Buffer.from(shortTee.replace('L585 450','L585 540'))).png().toBuffer();
+  const features={type:'t_shirt',traits:{body_length:'regular',silhouette:'straight'}};
+  const before=await measureTopProportions(source,features);
+  const result=await registerGarmentLayout(source,features,before);
+  const after=await measureTopProportions(result,features);
+  assert.ok(after.bodyWidth>=190,'A non-fitted torso must clear the mannequin plus display ease');
+  assert.ok(after.bodyTop+after.visibleLength>560,'Extra length remains below an ordinary hoodie');
+  assert.equal((await compareTopProportions(source,result,features)).valid,true);
+  assert.equal(features.traits.body_length,'regular','Display normalization does not invent a long classification');
+  const cropped={...features,traits:{...features.traits,body_length:'cropped'}};
+  const short=await sharp(Buffer.from(shortTee)).png().toBuffer();
+  assert.deepEqual(await registerGarmentLayout(short,cropped,await measureTopProportions(short,cropped)),short);
+});

@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import {minimumDisplayTorsoWidth} from './illustration-display.mjs';
 import {generationBackground} from './illustration-edit.mjs';
 import {garmentLayout, armPoint} from './illustration-layout.mjs';
 
@@ -10,9 +11,13 @@ export function measuredGuideSVG(features, proportions) {
     ||!['short','long'].includes(features?.traits?.sleeves)
     ||!['regular','long','cropped'].includes(features?.traits?.body_length))return null;
   const hooded=group==='hooded', long=features?.traits?.sleeves==='long';
-  const hem=features?.traits?.body_length==='long'?340:features?.traits?.body_length==='cropped'?250:297;
+  let hem=features?.traits?.body_length==='long'?340:features?.traits?.body_length==='cropped'?250:297;
   const top=hooded?147:132;
-  const width=(hem-top)*proportions.bodyWidthToLength;
+  const naturalWidth=(hem-top)*proportions.bodyWidthToLength;
+  const width=group==='shortUpper'?Math.max(naturalWidth,minimumDisplayTorsoWidth(features)):naturalWidth;
+  // Preserve aspect ratio when the display floor increases the torso: its hem
+  // follows the same scale instead of squeezing a long shirt to a regular hem.
+  if(width>naturalWidth)hem=top+width/proportions.bodyWidthToLength;
   if(width<65||width>180)return null;
   const left=180-width/2,right=180+width/2;
   const points=long?[[255,174],[272,306],[240,316],[214,206]]:[[244,181],[251,212],[228,220],[216,206]];
@@ -40,5 +45,5 @@ export async function editPoseGuide(features, proportions) {
 }
 
 export function measuredPoseInstructions(features,proportions) {
-  return (garmentLayout(features).group==='hooded' ? 'Reconstruct the garment with the hood DOWN: a low collapsed ring behind the neckline, never the upright triangle from the source photo. Remove BOTH folded sleeves from the stomach before placing the TWO existing sleeves along the guide arms. The sleeve artwork moves WITH its original sleeve onto the outer sleeve; do not leave that sleeve or cuff on the stomach. No third or fourth sleeve. ' : '')+'Edit the LAST image, the grey garment pose guide. Dress its exact silhouette in the design of the earlier original garment. Keep the guide neckline, sloped shoulders, sleeve directions and cuff endpoints. The source defines all fabric, colour, artwork, lettering, pockets, seams and the torso contour; the guide defines only the unfolded pose. Preserve the actual sleeve length. Exactly TWO sleeves: replace folded sleeves, never retain them and append another pair. Arms must run along the sleeve centre and emerge through cuff openings, never through the underarm or side seam. The hood, if present, stays lowered behind the neck. Preserve the original roomy or fitted cut, designed taper and hem shape. Keep every print on its original panel and preserve distressed ink texture, not a clean replacement logo. No added labels, guide lines, person or mannequin. Subtle editorial finish, with fidelity to the real garment taking priority over stylization. One complete garment, entirely visible on a plain '+generationBackground(features)+' background. Measured torso width / '+proportions.lengthReference+' length = '+proportions.bodyWidthToLength+'. Do not change this ratio to fit a stock body.';
+  return (garmentLayout(features).group==='shortUpper' ? 'The original FRONT neckline depth, shape, ribbing and any existing inside neck label are construction details: preserve them; do not replace the front collar with the shallow back neckline. The guide neck marks its centre only, never a replacement collar shape. ' : '')+(garmentLayout(features).group==='hooded' ? 'Reconstruct the garment with the hood DOWN: a low collapsed ring behind the neckline, never the upright triangle from the source photo. Remove BOTH folded sleeves from the stomach before placing the TWO existing sleeves along the guide arms. The sleeve artwork moves WITH its original sleeve onto the outer sleeve; do not leave that sleeve or cuff on the stomach. No third or fourth sleeve. ' : '')+'Edit the LAST image, the grey garment pose guide. Dress its exact silhouette in the design of the earlier original garment. Keep the guide neckline, sloped shoulders, sleeve directions and cuff endpoints. The source defines all fabric, colour, artwork, lettering, pockets, seams and the torso contour; the guide defines only the unfolded pose. Preserve the actual sleeve length. Exactly TWO sleeves: replace folded sleeves, never retain them and append another pair. Arms must run along the sleeve centre and emerge through cuff openings, never through the underarm or side seam. The hood, if present, stays lowered behind the neck. Preserve the original roomy or fitted cut, designed taper and hem shape. Keep every print on its original panel and preserve distressed ink texture, not a clean replacement logo. No added labels, guide lines, person or mannequin. Subtle editorial finish, with fidelity to the real garment taking priority over stylization. One complete garment, entirely visible on a plain '+generationBackground(features)+' background. Measured torso width / '+proportions.lengthReference+' length = '+proportions.bodyWidthToLength+'. Do not change this ratio to fit a stock body.';
 }
