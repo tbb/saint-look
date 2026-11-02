@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import {minimumDisplayTorsoWidth} from './illustration-display.mjs';
 import {generationBackground} from './illustration-edit.mjs';
 import {garmentLayout, armPoint} from './illustration-layout.mjs';
 
@@ -10,9 +11,13 @@ export function measuredGuideSVG(features, proportions) {
     ||!['short','long'].includes(features?.traits?.sleeves)
     ||!['regular','long','cropped'].includes(features?.traits?.body_length))return null;
   const hooded=group==='hooded', long=features?.traits?.sleeves==='long';
-  const hem=features?.traits?.body_length==='long'?340:features?.traits?.body_length==='cropped'?250:297;
+  let hem=features?.traits?.body_length==='long'?340:features?.traits?.body_length==='cropped'?250:297;
   const top=hooded?147:132;
-  const width=(hem-top)*proportions.bodyWidthToLength;
+  const naturalWidth=(hem-top)*proportions.bodyWidthToLength;
+  const width=group==='shortUpper'?Math.max(naturalWidth,minimumDisplayTorsoWidth(features)):naturalWidth;
+  // Preserve aspect ratio when the display floor increases the torso: its hem
+  // follows the same scale instead of squeezing a long shirt to a regular hem.
+  if(width>naturalWidth)hem=top+width/proportions.bodyWidthToLength;
   if(width<65||width>180)return null;
   const left=180-width/2,right=180+width/2;
   const points=long?[[255,174],[272,306],[240,316],[214,206]]:[[244,181],[251,212],[228,220],[216,206]];

@@ -1,3 +1,4 @@
+import {minimumDisplayTorsoWidth} from './illustration-display.mjs';
 import sharp from 'sharp';
 import { readFileSync } from 'node:fs';
 import { ProviderError } from './providers.mjs';
@@ -408,9 +409,12 @@ export async function registerGarmentLayout(bytes, features, torsoMeasurement) {
     throw new ProviderError('illustration_geometry_invalid');
   }
   const existing=await checkGarmentLayout(bytes,features);
-  if(existing.valid) return bytes;
+  const torsoFloor=layout.group==='shortUpper' && torsoMeasurement
+    ?minimumDisplayTorsoWidth(features)*1024/560:0;
+  const minimumTorsoScale=torsoFloor && torsoMeasurement.bodyWidth>0?torsoFloor/torsoMeasurement.bodyWidth:0;
+  if(existing.valid && minimumTorsoScale<=1) return bytes;
   const shift=shoulderOffset(data,info.width,layout,features);
-  if(existing.baseValid && Number.isFinite(shift) && Math.abs(shift)<=24) {
+  if(minimumTorsoScale<=1 && existing.baseValid && Number.isFinite(shift) && Math.abs(shift)<=24) {
     const translated=await transformCanvas(bytes,1024,0,shift);
     if((await checkGarmentLayout(translated,features)).valid) return translated;
   }
@@ -424,7 +428,7 @@ export async function registerGarmentLayout(bytes, features, torsoMeasurement) {
   const measuredTorso=layout.group==='hooded' && torsoMeasurement && ['regular','long'].includes(features?.traits?.body_length);
   const torsoTop=point([180,147])[1]; // hood measurement excludes hood and starts at shoulders
   const torsoHeight=point([180,features?.traits?.body_length==='long'?340:297])[1]-torsoTop;
-  const scale=measuredTorso ? torsoHeight/torsoMeasurement.visibleLength : layout.legs ? target.height/source.height : Math.max(minimumBodyScale,
+  const scale=measuredTorso ? torsoHeight/torsoMeasurement.visibleLength : layout.legs ? target.height/source.height : Math.max(minimumBodyScale,minimumTorsoScale,
     uncertainLength ? target.width/source.width : Math.min(target.width/source.width,target.height/source.height));
   // One global similarity transform, never independent x/y stretch or per-leg warp.
   let size=Math.round(1024*scale);
