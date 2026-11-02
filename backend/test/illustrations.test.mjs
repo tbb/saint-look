@@ -728,3 +728,15 @@ test('crash during specialized unfolding stops without repeating the paid reques
  await requestIllustration(restarted,photo.itemId,input);
  assert.equal(fixture.calls.unfolding.length,1);assert.equal(fixture.calls.generation.length,0);
 });
+
+
+test('an unfolded hoodie without measured length keeps its whole pose as the last edit image',async t=>{
+ const fixture=await illustrationFixture(t),provider=createIllustrationProvider(fixture.env);
+ const photo=await photoRequest(),source=Buffer.from(photo.imageBase64,'base64');
+ const features={type:'Худи',colors:['Чёрный'],traits:{sleeves:'long',body_length:'unknown'}};
+ await provider.generate([{role:'front',source,prepared:source,generationReference:fixture.result}],features,new AbortController().signal,()=>{});
+ const request=JSON.parse(fixture.calls.generation[0].body);
+ const images=request.input.filter(part=>part.type==='image');
+ assert.equal(images.length,4,'Three original panels and the entire unfolded pose; no invented-length guide');
+ assert.equal(images.at(-1).data,fixture.result.toString('base64'),'Fallback edit-last instruction must target the complete garment');
+});
