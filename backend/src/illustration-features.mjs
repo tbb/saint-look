@@ -26,7 +26,7 @@ export async function featureRequest(photos, roles) {
   const questions = {
     suitability: { ...prepared[0].questions.suitability, instructions: `${guidance} Is this one standalone item, not worn by a human?` },
     item_type: { ...prepared[0].questions.item_type, instructions: `${guidance} Which item type?` },
-    ...Object.fromEntries(Object.entries(observableChoices).map(([name, criteria]) => [name, { type: 'choice', criteria, instructions: `${guidance} Describe ${name.replaceAll('_', ' ')}.` }])),
+    ...Object.fromEntries(Object.entries(observableChoices).map(([name, criteria]) => [name, { type: 'choice', criteria, instructions: `${guidance} Describe ${name.replaceAll('_', ' ')}. ${name === 'body_length' ? 'For a short-sleeved top, assess shoulder-to-hem length relative to the TORSO width below the sleeves, not the total sleeve-tip span. A visibly elongated torso extends much farther below the underarms than a regular top; do not default longline garments to regular just because the hem is straight. When apparent length could be explained only by unknown wearer size, choose unknown.' : ''}` }])),
     ...Object.fromEntries(Object.keys(prepared[0].questions).filter(k => k.startsWith('color_')).map(k => [k,
       { type: 'noul', instructions: `${guidance} Is ${k.slice(6)} a main color of the item itself?` }])),
   };
