@@ -144,8 +144,12 @@ export function createIllustrationProvider(env) {
         ...photo, prepared:edit?await sharp(photo.prepared).flatten({background:generationBackground(features)}).png().toBuffer():photo.prepared,
       })));
       const sourceImages=generationReferences.flatMap(photo=>sourceFrontOnly && photo.role===front.role ? [
-        {type:'text',text:`Image primary_front.`},
-        {type:'image',mime_type:'image/png',data:(photo.generationReference || photo.source).toString('base64')},
+        {type:'text',text:'Image original_front_identity: the sole authority for original artwork, material, colour and construction. Its folded sleeve arrangement is NOT the target pose.'},
+        {type:'image',mime_type:'image/png',data:photo.source.toString('base64')},
+        ...(photo.generationReference ? [
+          {type:'text',text:'Image unfolded_front_pose: use this unfolded sleeve arrangement, with exactly two sleeves. Restore any altered print/detail from original_front_identity. Never copy the folded sleeve position from the original. This is a pose reference, not a new garment identity.'},
+          {type:'image',mime_type:'image/png',data:photo.generationReference.toString('base64')},
+        ] : []),
       ] : [
         {type:'text',text:`Image original_${photo.role}.`},
         {type:'image',mime_type:'image/png',data:photo.source.toString('base64')},

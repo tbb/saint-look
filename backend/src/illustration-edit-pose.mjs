@@ -7,7 +7,8 @@ import {garmentLayout, armPoint} from './illustration-layout.mjs';
 export function measuredGuideSVG(features, proportions) {
   const layout=garmentLayout(features), {group}=layout;
   if(!proportions || !['shortUpper','upper','hooded'].includes(group)
-    ||!['short','long'].includes(features?.traits?.sleeves))return null;
+    ||!['short','long'].includes(features?.traits?.sleeves)
+    ||!['regular','long','cropped'].includes(features?.traits?.body_length))return null;
   const hooded=group==='hooded', long=features?.traits?.sleeves==='long';
   const hem=features?.traits?.body_length==='long'?340:features?.traits?.body_length==='cropped'?250:297;
   const top=hooded?147:132;
