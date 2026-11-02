@@ -105,7 +105,7 @@ export function createIllustrationProvider(env) {
       // earlier detail references, never an instruction to redraw the back.
       const references=edit?[...photos.filter(photo=>photo!==front),front]:photos;
       const template=savedReceipt||edit?null:await layoutGuide(features);
-      const preparedFrontOnly=edit && garmentLayout(features).group==='hooded';
+      const sourceFrontOnly=edit && garmentLayout(features).group==='hooded';
       const pose=savedReceipt||edit?null:await layoutPoseGuide(features);
       const proportions=edit?await measureTopProportions(front.prepared,features):null;
       const prompt=savedReceipt?null:
@@ -114,9 +114,9 @@ export function createIllustrationProvider(env) {
       const generationReferences=await Promise.all(references.map(async photo=>({
         ...photo, prepared:edit?await sharp(photo.prepared).flatten({background:'#ffffff'}).png().toBuffer():photo.prepared,
       })));
-      const sourceImages=generationReferences.flatMap(photo=>preparedFrontOnly && photo.role===front.role ? [
+      const sourceImages=generationReferences.flatMap(photo=>sourceFrontOnly && photo.role===front.role ? [
         {type:'text',text:`Image primary_front.`},
-        {type:'image',mime_type:'image/png',data:(photoroom.mode==='production'?photo.prepared:photo.source).toString('base64')},
+        {type:'image',mime_type:'image/png',data:photo.source.toString('base64')},
       ] : [
         {type:'text',text:`Image original_${photo.role}.`},
         {type:'image',mime_type:'image/png',data:photo.source.toString('base64')},
