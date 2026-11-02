@@ -43,9 +43,9 @@ const armLines=(points,side)=>points.map(p=>'L'+armPoint(p,side).join(' ')).join
 for (const group of ['upper','hooded','full']) {
   const layout=layouts[group];
   layout.path=layout.path.replace('L245 181 L264 300 L247 307 L216 206',
-    armLines([[245,181],[264,300],[247,307],[216,206]],'right')+' L216 206')
+    armLines([[245,181],[264,304],[247,311],[216,206]],'right')+' L216 206')
     .replace('L113 307 L94 300 L116 181',
-      armLines([[143,206],[113,307],[94,300],[116,181]],'left'));
+      armLines([[143,206],[113,311],[94,304],[116,181]],'left'));
   layout.bounds=[45,layout.bounds[1],270,layout.bounds[3]];
   layout.anchors={...layout.anchors,leftWrist:armPoint([103,306],'left'),rightWrist:armPoint([257,306],'right')};
 }
@@ -53,7 +53,7 @@ layouts.shortUpper.path=layouts.shortUpper.path
   .replace('L244 181 L251 212 L228 220 L216 206',armLines([[244,181],[251,212],[228,220],[216,206]],'right')+' L216 206')
   .replace('L132 220 L109 212 L116 181',armLines([[143,206],[132,220],[109,212],[116,181]],'left'));
 layouts.shortUpper.bounds=[75,120,210,210];
-layouts.gloves={bounds:[45,260,270,80],
+layouts.gloves={bounds:[45,270,270,50],
   path: ['left','right'].map((side,i)=>{
     const points=i===0?[[95,288],[112,293],[110,325],[94,325]]:[[248,293],[265,288],[267,325],[250,325]];
     return 'M'+armPoint(points[0],side).join(' ')+armLines(points.slice(1),side)+' Z';
@@ -345,6 +345,7 @@ export async function registerGarmentLayout(bytes, features, torsoMeasurement) {
   // those coupled extents with bounded uniform fits, always resampling the original.
   // These are local image operations, never additional provider requests.
   const pivotY=point([180,147])[1];
+  let lastCheck=existing;
   for(let attempt=0;attempt<4;attempt++) {
     if(size<64 || size>2048) break;
     let result=await transformCanvas(bytes,size,offsetX,offsetY);
@@ -358,7 +359,8 @@ export async function registerGarmentLayout(bytes, features, torsoMeasurement) {
         pixels=await sharp(result).ensureAlpha().raw().toBuffer();
       }
     }
-    if((await checkGarmentLayout(result,features)).valid) return result;
+    lastCheck=await checkGarmentLayout(result,features);
+    if(lastCheck.valid) return result;
     const measuredBody=upperBody(pixels,1024,1024,inkBounds(pixels,1024,1024),layout,features);
     const extents=[...cuffExtents(pixels,1024,layout,features).map(observed=>[observed,minimumCuffY]),
       ...(measuredBody ? [[measuredBody.bottom,hemY]] : [])];
@@ -370,7 +372,10 @@ export async function registerGarmentLayout(bytes, features, torsoMeasurement) {
     offsetY=Math.round(pivotY-(pivotY-offsetY)*factor);
     size=nextSize;
   }
-  throw new ProviderError('illustration_geometry_invalid');
+  const defects=Object.entries({sleevesUnfolded:'folded_sleeves',wristsValid:'wrist_alignment',
+    shouldersValid:'shoulder_alignment',legsValid:'leg_pose',anchorsValid:'body_anchors'})
+    .filter(([name])=>lastCheck[name]===false).map(([,defect])=>defect);
+  throw Object.assign(new ProviderError('illustration_geometry_invalid'),{defects});
 }
 
 export function layoutInstructions(features) {

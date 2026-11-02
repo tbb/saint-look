@@ -13,7 +13,7 @@ export async function editPoseGuide(features, proportions) {
   // the wrists sideways; both sleeves still target the same fixed wearer.
   const scale=h/(297-132),cx=512+(68-180)*scale,cy=t+(295-132)*scale;
   const right=1024-cx;
-  return sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="1024" height="1024" fill="${generationBackground(features)}"/><path d="M450 ${t} Q512 300 574 ${t} L${r} ${t} L${r+35} 305 L${right+33} ${cy-12} L${right-33} ${cy+12} L${r+10} 420 L${r} ${b} H${l} L${l-10} 420 L${cx+33} ${cy+12} L${cx-33} ${cy-12} L${l-35} 305 Z" fill="#ddd" stroke="#444" stroke-width="3"/><path d="M450 ${t} Q400 205 450 210 Q512 190 574 210 Q624 205 574 ${t} Q512 300 450 ${t} Z" fill="#ddd" stroke="#444" stroke-width="3"/></svg>`)).png().toBuffer();
+  return sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="1024" height="1024" fill="${generationBackground(features)}"/><path d="M450 ${t} Q512 300 574 ${t} L${r} ${t} L${r+35} 305 L${right+33} ${cy-12} L${right-33} ${cy+12} L${r} 420 L${r} ${b} H${l} L${l} 420 L${cx+33} ${cy+12} L${cx-33} ${cy-12} L${l-35} 305 L${l} ${t} Z" fill="#ddd" stroke="#444" stroke-width="3"/><path d="M450 ${t} Q400 205 450 210 Q512 190 574 210 Q624 205 574 ${t} Q512 300 450 ${t} Z" fill="#ddd" stroke="#444" stroke-width="3"/></svg>`)).png().toBuffer();
 }
 
 export function measuredPoseInstructions(features,proportions) {

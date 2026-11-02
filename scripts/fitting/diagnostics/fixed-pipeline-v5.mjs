@@ -17,7 +17,7 @@ const state={versions:illustrationVersions,sha:process.env.GITHUB_SHA,variants:{
 mkdirSync('garment-quality-output',{recursive:true});
 function save(){const iv=randomBytes(12),c=createCipheriv('aes-256-gcm',key,iv),out=Buffer.concat([c.update(JSON.stringify(state)),c.final()]);writeFileSync('garment-quality-output/result.enc',Buffer.concat([iv,c.getAuthTag(),out]));}
 async function call(name,fn){if(state.events.some(e=>e.name===name))throw Error('Duplicate call');const e={name,status:'started'};state.events.push(e);save();try{const v=await fn();e.status='completed';save();return v;}catch(error){e.status='failed-or-unknown';e.code=error.code||error.name;save();throw error;}}
-const cases=[...['hoodie','tee','trousers'].map(name=>({name,input:bundle.items[name]})),
+const cases=process.env.TRIAL_ITEM==='fixed-pose-targets'?bundle.fixedPoseItems:[...['hoodie','tee','trousers'].map(name=>({name,input:bundle.items[name]})),
  ...['polo.jpg','printed-tee.jpg','white-tee.png','celine-hoodie.jpg','jeans.jpg','open-denim-jacket.jpg','ribbed-cardigan.jpg','trenchcoat.jpg','creepers.png'].map(file=>({name:file.split('.')[0],input:{source:readFileSync('scripts/fitting/fixtures/'+file).toString('base64')}}))];
 async function evaluate({name,input}) {
  const record=state.cases[name]={acceptedAttempt:null};
@@ -25,7 +25,7 @@ async function evaluate({name,input}) {
   const source=await sharp(Buffer.from(input.source,'base64')).png().toBuffer();
   const prepared=input.prepared?Buffer.from(input.prepared,'base64'):await call(name+':preparation',()=>provider.prepare(source,signal));
   const photos=[{source,prepared,role:'front'}];
-  const features=await call(name+':attributes',()=>provider.attributes(photos,signal));record.features=features;
+  const features=input.features||await call(name+':attributes',()=>provider.attributes(photos,signal));record.features=features;
   let correction;
   for(let attempt=1;attempt<=2;attempt++) {
    const label=name+'-'+attempt,v=state.variants[label]={source:source.toString('base64'),prepared:prepared.toString('base64'),features,correction};save();
