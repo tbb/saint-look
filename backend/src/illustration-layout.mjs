@@ -165,6 +165,40 @@ function cuffExtents(data, width, layout, features) {
 }
 const minimumCuffY=point([180,306])[1]-8;
 
+function wristsContactCuffs(data,width,layout,features) {
+  if(!['upper','hooded'].includes(layout.group)||!requiresWristPose(layout,features))return true;
+  return [layout.anchors.leftWrist,layout.anchors.rightWrist].every(anchor=>{
+    const [cx,cy]=point(anchor);let terminalColumns=0;
+    for(let x=cx-8;x<=cx+8;x++){
+      let bottom=-1,contact=false;
+      for(let y=400;y<650;y++)if(data[(y*width+x)*4+3]>=224){
+        bottom=y;
+        if(Math.abs(y-cy)<=12){
+          // A broad torso can reach the wrist columns too. Only a separated
+          // outer sleeve run may establish contact; never the central body.
+          let edge=x;
+          const inward=x<width/2?1:-1;
+          while(edge!==width/2&&data[(y*width+edge)*4+3]>=224)edge+=inward;
+          if(edge!==width/2){
+            // An open zipper also splits the torso. The cuff must be in the
+            // outermost substantial run, not an inner jacket panel.
+            let outer=x;
+            while(outer>=0&&outer<width&&data[(y*width+outer)*4+3]>=224)outer-=inward;
+            let run=0,hasOuterRun=false;
+            for(let scan=outer;scan>=0&&scan<width;scan-=inward){
+              run=data[(y*width+scan)*4+3]>=224?run+1:0;
+              if(run>=5){hasOuterRun=true;break;}
+            }
+            if(!hasOuterRun)contact=true;
+          }
+        }
+      }
+      if(contact&&bottom>=cy-8&&bottom<=cy+44)terminalColumns++;
+    }
+    return terminalColumns>=5;
+  });
+}
+
 function unfoldedSleeves(data, width, layout, features) {
   if(!['upper','hooded'].includes(layout.group)||!requiresWristPose(layout,features)) return true;
   let separatedRows=0;
@@ -348,6 +382,7 @@ export async function checkGarmentLayout(bytes, features) {
   const shouldersValid=shift===null || (Number.isFinite(shift) && Math.abs(shift)<=1);
   const cuffsValid=cuffExtents(data,info.width,layout,features).every(y=>y>=minimumCuffY);
   const sleevesUnfolded=unfoldedSleeves(data,info.width,layout,features);
-  return { valid: baseValid && shouldersValid && cuffsValid && sleevesUnfolded, baseValid, shouldersValid, cuffsValid, sleevesUnfolded,
+  const wristsValid=wristsContactCuffs(data,info.width,layout,features);
+  return { valid: baseValid && shouldersValid && cuffsValid && sleevesUnfolded && wristsValid, baseValid, shouldersValid, cuffsValid, sleevesUnfolded, wristsValid,
     outsideFraction, coverage, legsValid, anchorsValid, footAnchorsValid, bounds: { left,top,right,bottom } };
 }

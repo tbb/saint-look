@@ -49,3 +49,36 @@ test('measured hood pose does not impose long sleeves or cuff-level hems on othe
   if(sleeves==='short'||sleeves==='sleeveless')assert.doesNotMatch(garmentEditInstructions(features,proportions),/Exactly TWO sleeves and TWO cuffs|Long cuffs end/);
  }
 });
+
+test('unfolded sleeves beside the wrists do not qualify as aligned cuffs',async()=>{
+ const source=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M470 240 Q450 185 512 172 Q574 185 554 240 L610 270 L680 340 L710 565 L680 575 L640 390 L614 280 L614 540 H410 V280 L384 390 L344 575 L314 565 L344 340 L414 270 Z" fill="#222"/></svg>')).png().toBuffer();
+ const check=await checkGarmentLayout(source,{type:'hoodie',traits:{sleeves:'long',body_length:'regular'}});
+ assert.equal(check.valid,false,'Both sleeves can be long and unfolded while hands miss their cuffs');
+});
+
+test('measured hoodie pose keeps body ratios and reaches the same mannequin wrists',async()=>{
+ const {editPoseGuide}=await import('../src/illustration-edit-pose.mjs');
+ const {registerGarmentLayout}=await import('../src/illustration-layout.mjs');
+ const {measureTopProportions}=await import('../src/illustration-proportions.mjs');
+ const features={type:'hoodie',colors:['Чёрный'],traits:{sleeves:'long',body_length:'regular'}};
+ for(const ratio of [.55,.884]){
+  const {data,info}=await sharp(await editPoseGuide(features,{bodyWidthToLength:ratio})).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+  for(let i=0;i<data.length;i+=4)if(data[i]>250&&data[i+1]>250&&data[i+2]>250)data[i+3]=0;
+  const source=await sharp(data,{raw:info}).png().toBuffer(),measured=await measureTopProportions(source,features);
+  assert.ok(Math.abs(measured.bodyWidthToLength/ratio-1)<.02,'Guide must preserve the measured torso, including its neckline');
+  const result=await registerGarmentLayout(source,features,measured),check=await checkGarmentLayout(result,features);
+  assert.equal(check.wristsValid,true);assert.equal(check.valid,true);
+ }
+});
+
+ test('a broad torso hem cannot substitute for cuffs outside the wrists',async()=>{
+ const source=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><g fill="#222"><rect x="360" y="270" width="304" height="305"/><path d="M450 280 V240 Q430 172 512 172 Q594 172 574 240 V280Z"/><path d="M430 270 L344 320 L314 565 L344 575 L354 390 L410 300Z M594 270 L680 320 L710 565 L680 575 L670 390 L614 300Z"/></g></svg>')).png().toBuffer();
+ const check=await checkGarmentLayout(source,{type:'hoodie',traits:{sleeves:'long',body_length:'regular'}});
+ assert.equal(check.wristsValid,false);assert.equal(check.valid,false);
+});
+
+test('open jacket panels cannot substitute for cuffs outside the wrists',async()=>{
+ const source=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><g fill="#222"><path d="M360 270 H664 V575 H524 V300 H500 V575 H360Z"/><path d="M450 280 V240 Q430 172 512 172 Q594 172 574 240 V280Z"/><path d="M430 270 L344 320 L314 565 L344 575 L354 390 L410 300Z M594 270 L680 320 L710 565 L680 575 L670 390 L614 300Z"/></g></svg>')).png().toBuffer();
+ const check=await checkGarmentLayout(source,{type:'jacket',traits:{hood:'yes',sleeves:'long',body_length:'regular',fastening:'zip'}});
+ assert.equal(check.wristsValid,false);assert.equal(check.valid,false);
+});
