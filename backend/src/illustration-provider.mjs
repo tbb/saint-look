@@ -77,6 +77,17 @@ export function createIllustrationProvider(env) {
       const png = (await decode(bytes, { width, height, requireAlpha: true })).png;
       return stage === 'finalization' && features ? registerGarmentLayout(png, features, await measureTopProportions(png,features)) : png;
     },
+    async unfold(source, signal) {
+      ensureConfigured();
+      const body = new FormData();
+      body.set('imageFile', new Blob([source], { type: 'image/png' }), 'unfolding.png');
+      body.set('flatLay.mode', 'ai.auto');
+      body.set('flatLay.prompt', 'Exact original garment, front elevation, unfolded sleeves hanging down and 24 degrees outward from vertical. Preserve actual short or long sleeve length, original roomy torso width/length ratio and every printed detail. No sleeves crossing the body, no duplicated sleeves. Hood lowered behind collar. No person or mannequin.');
+      body.set('export.format', 'png'); body.set('outputSize', '1024x1024');
+      const bytes = await exchange(`${origin || 'https://image-api.photoroom.com'}/v2/edit`,
+        { method: 'POST', headers: { 'x-api-key': key }, body }, signal, timeout, 10 * 1024 * 1024);
+      return (await decode(bytes, { width: 1024, height: 1024 })).png;
+    },
     async attributes(photos, signal) {
       ensureConfigured();
       const request = await featureRequest(photos.flatMap(photo => [photo.prepared, photo.source]),
@@ -134,7 +145,7 @@ export function createIllustrationProvider(env) {
       })));
       const sourceImages=generationReferences.flatMap(photo=>sourceFrontOnly && photo.role===front.role ? [
         {type:'text',text:`Image primary_front.`},
-        {type:'image',mime_type:'image/png',data:photo.source.toString('base64')},
+        {type:'image',mime_type:'image/png',data:(photo.generationReference || photo.source).toString('base64')},
       ] : [
         {type:'text',text:`Image original_${photo.role}.`},
         {type:'image',mime_type:'image/png',data:photo.source.toString('base64')},

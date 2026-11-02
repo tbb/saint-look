@@ -236,7 +236,7 @@ function shortSleeveOpenings(data,width,layout,features) {
 
 // Same native arm contour as FittingMannequin. Clip only the exposed hand and
 // shoulder joint before rotation; garment pixels are never cropped or changed.
-const armContour='M 135.0 147.0 C 124.499 144.905 119.838 163.974 117.312 182.868 L 107.758 224.958 Q 104.157 238.038 104.405 245.886 L 97.639 288.732 L 93.574 309.719 Q 92.282 319.661 99.225 322.045 Q 106.226 323.442 109.115 310.419 L 116.491 281.294 L 126.409 245.076 Q 130.663 232.926 133.015 216.997 L 140.798 180.953 Q 147.404 152.874 135.0 147.0 Z';
+const armContour='M 135.0 147.0 C 130 156 119.838 163.974 117.312 182.868 L 107.758 224.958 Q 104.157 238.038 104.405 245.886 L 97.639 288.732 L 93.574 309.719 Q 92.282 319.661 99.225 322.045 Q 106.226 323.442 109.115 310.419 L 116.491 281.294 L 126.409 245.076 Q 130.663 232.926 133.015 216.997 L 140.798 180.953 Q 147.404 152.874 135.0 147.0 Z';
 const armMasks=new Map();
 async function coveredArmMask(pose) {
   if(!armMasks.has(pose)) {

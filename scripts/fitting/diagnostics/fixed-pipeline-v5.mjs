@@ -4,7 +4,7 @@ import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {createCipheriv,createDecipheriv,randomBytes,createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {createIllustrationProvider,illustrationVersions} from '../../../backend/src/illustration-provider.mjs';
-import {registerGarmentForFitting} from '../../../backend/src/illustration-layout.mjs';
+import {registerGarmentForFitting,garmentLayout} from '../../../backend/src/illustration-layout.mjs';
 import {measureTopProportions,compareTopProportions} from '../../../backend/src/illustration-proportions.mjs';
 import {qualityCorrection} from '../../../backend/src/illustration-quality.mjs';
 import {ProviderError} from '../../../backend/src/providers.mjs';
@@ -27,6 +27,10 @@ async function evaluate({name,input}) {
   const prepared=input.prepared?Buffer.from(input.prepared,'base64'):await call(name+':preparation',()=>provider.prepare(source,signal));
   const photos=[{source:input.generationSource?Buffer.from(input.generationSource,'base64'):source,prepared,role:'front'}];
   const features=input.features||await call(name+':attributes',()=>provider.attributes(photos,signal));record.features=features;
+  if(garmentLayout(features).group==='hooded' && features.traits?.sleeves==='long'){
+   const unfolded=await call(name+':unfolding',()=>provider.unfold(source,signal));
+   record.unfolded=unfolded.toString('base64');photos[0].generationReference=unfolded;save();
+  }
   let correction;
   for(let attempt=1;attempt<=2;attempt++) {
    const label=name+'-'+attempt,v=state.variants[label]={source:source.toString('base64'),prepared:prepared.toString('base64'),features,correction};save();
