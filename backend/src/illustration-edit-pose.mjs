@@ -1,24 +1,37 @@
-import {readFileSync} from 'node:fs';
 import sharp from 'sharp';
 import {generationBackground} from './illustration-edit.mjs';
-import {garmentLayout} from './illustration-layout.mjs';
+import {garmentLayout, armPoint} from './illustration-layout.mjs';
 
-// Pose-only reference with a measured torso, never a stock slim placeholder.
+// The guide and the client share shoulder/arm coordinates. Body width is measured
+// independently: ease may move the side seams, never the wearer's shoulders.
+export function measuredGuideSVG(features, proportions) {
+  const layout=garmentLayout(features), {group}=layout;
+  if(!proportions || !['shortUpper','upper','hooded'].includes(group))return null;
+  const hooded=group==='hooded', long=features?.traits?.sleeves==='long'||hooded;
+  const hem=features?.traits?.body_length==='long'?340:features?.traits?.body_length==='cropped'?250:297;
+  const top=hooded?147:132;
+  const width=(hem-top)*proportions.bodyWidthToLength;
+  if(width<65||width>180)return null;
+  const left=180-width/2,right=180+width/2;
+  const points=long?[[245,181],[264,304],[247,311],[216,206]]:[[244,181],[251,212],[228,220],[216,206]];
+  const arm=(pts,side)=>pts.map(p=>'L'+armPoint(p,side).join(' ')).join(' ');
+  const leftPoints=points.map(([x,y])=>[360-x,y]).reverse();
+  const path=`M164 132 Q180 145 196 132 L225 148 ${hooded&&right>225?`L${right} 148`:''} ${arm(points,'right')} L${right} 206 L${right} ${hem} L${left} ${hem} L${left} 206 ${arm(leftPoints,'left')} ${hooded&&left<135?`L${left} 147`:''} L135 147 Z`;
+  const hood=hooded?'<path d="M164 132 Q145 117 155 115 Q180 108 205 115 Q215 117 196 132 Q180 145 164 132 Z" fill="#ddd" stroke="#555" stroke-width="1"/>':'';
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-100 0 560 560"><path d="${path}" fill="#ddd" stroke="#555" stroke-width="1"/>${hood}</svg>`;
+}
+
 export async function editPoseGuide(features, proportions) {
-  if(garmentLayout(features).group!=='hooded'||!proportions
-    ||features?.traits?.sleeves!=='long'||features?.traits?.body_length!=='regular')return null;
-  if(process.env.TRIAL_ITEM==='valid-silhouette')return readFileSync('/tmp/valid-silhouette.png');
-  const h=600,w=h*proportions.bodyWidthToLength,l=512-w/2,r=512+w/2,t=270,b=t+h;
-  if(w<240||w>600)return null;
-  // Project shared shoulder/wrist coordinates at the measured torso scale.
-  // Only the torso width comes from the original. A roomy torso must not pull
-  // the wrists sideways; both sleeves still target the same fixed wearer.
-  const scale=h/(297-132),cx=512+(68-180)*scale,cy=t+(295-132)*scale;
-  const right=1024-cx;
-  return sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="1024" height="1024" fill="${generationBackground(features)}"/><path d="M450 ${t} Q512 300 574 ${t} L${r} ${t} L${r+35} 305 L${right+33} ${cy-12} L${right-33} ${cy+12} L${r} 420 L${r} ${b} H${l} L${l} 420 L${cx+33} ${cy+12} L${cx-33} ${cy-12} L${l-35} 305 L${l} ${t} Z" fill="#ddd" stroke="#444" stroke-width="3"/><path d="M450 ${t} Q400 205 450 210 Q512 190 574 210 Q624 205 574 ${t} Q512 300 450 ${t} Z" fill="#ddd" stroke="#444" stroke-width="3"/></svg>`)).png().toBuffer();
+  const svg=measuredGuideSVG(features,proportions);
+  if(!svg)return null;
+  // Enlarge the same pose by ONE scale. The model gets enough detail; registration
+  // later restores shared coordinates without changing width/height separately.
+  const trimmed=await sharp(Buffer.from(svg)).trim().png().toBuffer();
+  return sharp(trimmed).resize(900,900,{fit:'inside'}).extend({top:62,bottom:62,left:62,right:62,
+    background:generationBackground(features)}).resize(1024,1024,{fit:'contain',background:generationBackground(features)})
+    .flatten({background:generationBackground(features)}).png().toBuffer();
 }
 
 export function measuredPoseInstructions(features,proportions) {
-  const text='Edit the LAST image, the grey unfolded garment. Replace its grey material with the exact garment design from the earlier source photo. The target already has the measured torso ratio, lowered hood and TWO unfolded sleeves ending at the shared wrist positions: keep the cuff positions and sleeve pose and lowered hood. The guide does not define torso side seams: preserve the source torso contour, designed taper, hem shape and construction. Do not copy the bent/folded source sleeves. Transfer each original sleeve print onto the SAME sleeve outside the torso. Keep every original print shape, placement, scale, lettering and distressed texture, plus fabric, pocket, cuffs and seams. Do not invent marks or copy the background. Faithful detailed editorial garment illustration on white, no person or mannequin, no guide lines. Use the measured torso width/shoulder-to-hem ratio '+proportions.bodyWidthToLength+'.';
-  return generationBackground(features)==='#ffffff'?text:text.replaceAll('on white','on uniform mid-grey (#808080)');
+  return 'Edit the LAST image, the grey garment pose guide. Dress its exact silhouette in the design of the earlier original garment. Keep the guide neckline, sloped shoulders, sleeve directions and cuff endpoints. The source defines all fabric, colour, artwork, lettering, pockets, seams and the torso contour; the guide defines only the unfolded pose. Preserve the actual sleeve length. Exactly TWO sleeves: replace folded sleeves, never retain them and append another pair. Arms must run along the sleeve centre and emerge through cuff openings, never through the underarm or side seam. The hood, if present, stays lowered behind the neck. Preserve the original roomy or fitted cut, designed taper and hem shape. Keep every print on its original panel and preserve distressed ink texture, not a clean replacement logo. No added labels, guide lines, person or mannequin. Subtle editorial finish, with fidelity to the real garment taking priority over stylization. One complete garment, entirely visible on a plain '+generationBackground(features)+' background. Measured torso width / '+proportions.lengthReference+' length = '+proportions.bodyWidthToLength+'. Do not change this ratio to fit a stock body.';
 }

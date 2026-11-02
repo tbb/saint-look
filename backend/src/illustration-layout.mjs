@@ -181,6 +181,48 @@ function requiresWristPose(layout, features) {
     && !['short', 'sleeveless', 'not_applicable'].includes(sleeves));
 }
 
+// Locate each short sleeve's outer tip and its return to the torso side seam.
+// The shared arm centreline must intersect that opening segment. Merely covering
+// a shoulder allows a flat-lay sleeve to expose the arm through the underarm.
+function shortSleeveOpenings(data,width,layout,features) {
+  if(layout.group!=='shortUpper'||features?.traits?.sleeves!=='short')return true;
+  const edge=(y,right)=>{
+    for(let x=0;x<width/2;x++){
+      const px=right?width-1-x:x;
+      if(data[(y*width+px)*4+3]>=224)return x;
+    }
+    return null;
+  };
+  return [false,true].every(right=>{
+    const body=[];
+    for(let y=400;y<450;y++){const x=edge(y,right);if(x!==null)body.push(x);}
+    if(body.length<20)return false;
+    body.sort((a,b)=>a-b);const seam=body[Math.floor(body.length/2)];
+    let tip=null;
+    for(let y=260;y<400;y++){
+      const x=edge(y,right);
+      if(x!==null&&x<seam-12&&(!tip||x<tip.x))tip={x,y};
+    }
+    if(!tip)return false;
+    let end=tip;
+    for(let y=tip.y+1;y<Math.min(450,tip.y+120);y++){
+      const x=edge(y,right);if(x===null)return false;
+      if(x-end.x>12)break;
+      end={x,y};if(x>=seam-4)break;
+    }
+    if(end.y-tip.y<6)return false;
+    const shoulder=point(right?[225,148]:[135,147]);
+    const wrist=point(armPoint(right?[257,306]:[103,306],right?'right':'left'));
+    const sx=right?width-1-shoulder[0]:shoulder[0],sy=shoulder[1];
+    const wx=right?width-1-wrist[0]:wrist[0],wy=wrist[1];
+    const ax=wx-sx,ay=wy-sy,bx=end.x-tip.x,by=end.y-tip.y;
+    const cross=ax*by-ay*bx;
+    if(Math.abs(cross)<1)return false;
+    const t=((tip.x-sx)*ay-(tip.y-sy)*ax)/cross;
+    return t>=-.15&&t<=1.15;
+  });
+}
+
 function cuffExtents(data, width, layout, features) {
   if(!['upper','hooded','full'].includes(layout.group) || !requiresWristPose(layout, features)) return [];
   return [[263,351],[673,761]].map(([left,right])=>{
@@ -332,7 +374,8 @@ export async function registerGarmentLayout(bytes, features, torsoMeasurement) {
   const uncertainLength=['shortUpper','sleeveless','upper','hooded'].includes(layout.group)
     && !['regular','cropped','long'].includes(features?.traits?.body_length);
   const measuredTorso=layout.group==='hooded' && torsoMeasurement && ['regular','long'].includes(features?.traits?.body_length);
-  const torsoHeight=point([180,features?.traits?.body_length==='long'?340:297])[1]-neckY;
+  const torsoTop=point([180,147])[1]; // hood measurement excludes hood and starts at shoulders
+  const torsoHeight=point([180,features?.traits?.body_length==='long'?340:297])[1]-torsoTop;
   const scale=measuredTorso ? torsoHeight/torsoMeasurement.visibleLength : layout.legs ? target.height/source.height : Math.max(minimumBodyScale,
     uncertainLength ? target.width/source.width : Math.min(target.width/source.width,target.height/source.height));
   // One global similarity transform, never independent x/y stretch or per-leg warp.
@@ -340,7 +383,7 @@ export async function registerGarmentLayout(bytes, features, torsoMeasurement) {
   if(size<64 || size>2048) throw new ProviderError('illustration_geometry_invalid');
   const actualScale=size/1024;
   let offsetX=Math.round(target.left+target.width/2-(source.left+source.width/2)*actualScale);
-  let offsetY=Math.round(measuredTorso ? neckY-torsoMeasurement.bodyTop*actualScale : body ? neckY-body.top*actualScale : target.top-source.top*actualScale);
+  let offsetY=Math.round(measuredTorso ? torsoTop-torsoMeasurement.bodyTop*actualScale : body ? neckY-body.top*actualScale : target.top-source.top*actualScale);
   // Shoulder alignment can expose a previously hidden short hem/cuff. Resolve
   // those coupled extents with bounded uniform fits, always resampling the original.
   // These are local image operations, never additional provider requests.
@@ -373,7 +416,7 @@ export async function registerGarmentLayout(bytes, features, torsoMeasurement) {
     size=nextSize;
   }
   const defects=Object.entries({sleevesUnfolded:'folded_sleeves',wristsValid:'wrist_alignment',
-    shouldersValid:'shoulder_alignment',legsValid:'leg_pose',anchorsValid:'body_anchors'})
+    sleeveOpeningsValid:'sleeve_opening',shouldersValid:'shoulder_alignment',legsValid:'leg_pose',anchorsValid:'body_anchors'})
     .filter(([name])=>lastCheck[name]===false).map(([,defect])=>defect);
   throw Object.assign(new ProviderError('illustration_geometry_invalid'),{defects});
 }
@@ -417,6 +460,7 @@ export async function checkGarmentLayout(bytes, features) {
   const cuffsValid=cuffExtents(data,info.width,layout,features).every(y=>y>=minimumCuffY);
   const sleevesUnfolded=unfoldedSleeves(data,info.width,layout,features);
   const wristsValid=wristsContactCuffs(data,info.width,layout,features);
-  return { valid: baseValid && shouldersValid && cuffsValid && sleevesUnfolded && wristsValid, baseValid, shouldersValid, cuffsValid, sleevesUnfolded, wristsValid,
+  const sleeveOpeningsValid=shortSleeveOpenings(data,info.width,layout,features);
+  return { valid: baseValid && shouldersValid && cuffsValid && sleevesUnfolded && wristsValid && sleeveOpeningsValid, sleeveOpeningsValid, baseValid, shouldersValid, cuffsValid, sleevesUnfolded, wristsValid,
     outsideFraction, coverage, legsValid, anchorsValid, footAnchorsValid, bounds: { left,top,right,bottom } };
 }
