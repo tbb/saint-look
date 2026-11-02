@@ -172,7 +172,15 @@ function wristsContactCuffs(data,width,layout,features) {
     for(let x=cx-8;x<=cx+8;x++){
       let bottom=-1,contact=false;
       for(let y=400;y<650;y++)if(data[(y*width+x)*4+3]>=224){
-        bottom=y;if(Math.abs(y-cy)<=12)contact=true;
+        bottom=y;
+        if(Math.abs(y-cy)<=12){
+          // A broad torso can reach the wrist columns too. Only a separated
+          // outer sleeve run may establish contact; never the central body.
+          let edge=x;
+          const inward=x<width/2?1:-1;
+          while(edge!==width/2&&data[(y*width+edge)*4+3]>=224)edge+=inward;
+          if(edge!==width/2)contact=true;
+        }
       }
       if(contact&&bottom>=cy-8&&bottom<=cy+44)terminalColumns++;
     }
