@@ -5,7 +5,7 @@ on:
       item:
         type: choice
         default: hoodie
-        options: [hoodie, trousers, tee, checks-only]
+        options: [hoodie, trousers, tee, checks-only, qa-only]
 permissions:
   contents: read
 concurrency:
@@ -42,7 +42,7 @@ jobs:
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GARMENT_QUALITY_TRIAL_KEY: ${{ secrets.GARMENT_QUALITY_TRIAL_KEY }}
-        run: node scripts/fitting/diagnostics/garment-quality-trial.mjs
+        run: node ${{ inputs.item == 'qa-only' && 'scripts/fitting/diagnostics/garment-fidelity-check.mjs' || 'scripts/fitting/diagnostics/garment-quality-trial.mjs' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
