@@ -1342,7 +1342,7 @@ final class WardrobeFlowTests: XCTestCase {
                 }
                 // Native press computes its own hittable point after geometry settles.
                 let failures = testRun?.failureCount ?? 0
-                // A 100 ms event can leave the native menu open on a busy runner.
+                // A 100 ms press has left the native menu open in CI.
                 // Send one longer press, then require activation before the caller continues.
                 action.press(forDuration: 0.25)
                 guard (testRun?.failureCount ?? 0) == failures else {
