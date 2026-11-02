@@ -1069,17 +1069,26 @@ struct OutfitCoreChecks {
                          "Previous anchored publication stays visible until explicit fitting refresh")
             precondition(previousFit.displayedIllustration?.filename == currentFit.displayedIllustration?.filename)
             let oldOnly = Outfit(slots: [OutfitSlot(zone: .body, itemID: previousFit.id)])
-            precondition(oldOnly.fittingArmPose(in: [previousFit]) == .legacy)
-            precondition(oldOnly.acceptsFittingPose(of: previousFit, in: [previousFit]))
+            precondition(oldOnly.fittingComposition(in: [previousFit]).pose == .legacy)
+            precondition(oldOnly.fittingComposition(in: [previousFit]).renderedIDs.contains(previousFit.id))
             // Different items: an old lower layer must not acquire v5 sleeve geometry.
             var other = WardrobeItem(id: UUID(), operationID: UUID(), photoVersionID: UUID())
             other.status = .ready; other.type = "Футболка"; other.resultFilename = "controlled-cutout.png"
             other = try preparedFixture(other)
             let mixed = Outfit(slots: [OutfitSlot(zone: .body, itemID: previousFit.id), OutfitSlot(zone: .body, itemID: other.id)])
-            precondition(mixed.fittingArmPose(in: [previousFit, other]) == .wide)
-            precondition(!mixed.acceptsFittingPose(of: previousFit, in: [previousFit, other]))
-            precondition(mixed.acceptsFittingPose(of: other, in: [previousFit, other]))
-            precondition(mixed.hasMixedFittingPoses(in: [previousFit, other]))
+            precondition(mixed.fittingComposition(in: [previousFit, other]).pose == .wide)
+            precondition(!mixed.fittingComposition(in: [previousFit, other]).renderedIDs.contains(previousFit.id))
+            precondition(mixed.fittingComposition(in: [previousFit, other]).renderedIDs.contains(other.id))
+            precondition(mixed.fittingComposition(in: [previousFit, other]).renderedIDs.count == 1)
+            let covered = mixed.fittingComposition(in: [previousFit, other], covered: { candidate, overlays in
+                candidate.id == previousFit.id && overlays.map(\.id) == [other.id]
+            })
+            precondition(covered.pose == .wide && covered.renderedIDs == Set([previousFit.id, other.id]),
+                         "Only already rendered outer layers may release the inner sleeve constraint")
+            let missingOuter = mixed.fittingComposition(in: [previousFit, other], available: { $0.id != other.id })
+            precondition(missingOuter.pose == .legacy && missingOuter.renderedIDs == [previousFit.id],
+                         "An unavailable outer image cannot choose the pose or occlude another layer")
+
             precondition(previousFit.illustrationStatusMessage?.contains("Пока используется") == true)
             precondition(IllustrationContract.accepts(modelVersion: "gemini-3-pro-image", templateVersion: "category-front-anchors-\(version)", geometryVersion: "fitting-anchors-1024-\(version)"))
         }

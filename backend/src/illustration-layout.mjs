@@ -104,6 +104,11 @@ export function garmentLayout(features) {
     // inventing a long design in the guide or shrinking it during registration.
     layout.bounds=[...layout.bounds]; layout.bounds[3]=365-layout.bounds[1];
   }
+  // A classifier's regular label must not clip an observed long torso after
+  // uniform display sizing. Shoulder and sleeve gates remain unchanged.
+  if(group==='shortUpper' && features?.traits?.body_length!=='cropped') {
+    layout.bounds=[...layout.bounds];layout.bounds[3]=365-layout.bounds[1];
+  }
   return layout;
 }
 

@@ -154,11 +154,10 @@ export function createIllustrationProvider(env) {
       })));
       const sourceImages=generationReferences.flatMap(photo=>sourceFrontOnly && photo.role===front.role ? [
         ...(photo.generationReference ? [
-          {type:'text',text:'Image unfolded_front_pose: use this unfolded sleeve arrangement, with exactly two sleeves. Restore any altered print/detail from original_front_identity. Never copy the folded sleeve position from the original. This is a pose reference, not a new garment identity.'},
+          {type:'text',text:'Image unfolded_front_pose: use this unfolded sleeve arrangement, with exactly two sleeves. Restore any altered print/detail from the original detail panels. Never copy the folded sleeve position from the original. This is a pose reference, not a new garment identity.'},
           {type:'image',mime_type:'image/png',data:photo.generationReference.toString('base64')},
         ] : []),
         ...(identityPanels.length ? identityPanels : [{type:'text',text:'Original identity reference.'},{type:'image',mime_type:'image/png',data:photo.source.toString('base64')}]),
-
       ] : [
         {type:'text',text:`Image original_${photo.role}.`},
         {type:'image',mime_type:'image/png',data:photo.source.toString('base64')},
