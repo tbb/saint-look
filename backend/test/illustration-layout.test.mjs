@@ -54,7 +54,8 @@ test('registration never crops visible sandbox watermark pixels outside the garm
 
 test('wide full-length trousers cannot pass by shrinking their hems above the ankles', async () => {
   const source = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M250 100 H750 V900 H550 L525 350 H475 L450 900 H250 Z" fill="#222"/></svg>')).png().toBuffer();
-  await assert.rejects(registerGarmentLayout(source, {type:'trousers'}), {code:'illustration_geometry_invalid'});
+  const registered=await registerGarmentLayout(source,{type:'trousers'});
+  assert.equal((await checkGarmentLayout(registered,{type:'trousers'})).valid,true, 'Wide legs must keep their width and full ankle-reaching length');
   const shortened = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M430 483 H590 V746 H530 L520 570 H500 L490 746 H430 Z" fill="#222"/></svg>')).png().toBuffer();
   assert.equal((await checkGarmentLayout(shortened,{type:'trousers'})).valid, false);
 });

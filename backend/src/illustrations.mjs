@@ -5,9 +5,10 @@ import { RequestError, uuid } from './upload.mjs';
 import { requireNotDeleted } from './deletion.mjs';
 import { ProviderError } from './providers.mjs';
 import { createIllustrationProvider, illustrationVersions, illustrationTaxonomy } from './illustration-provider.mjs';
+import {compareTopProportions,measureTopProportions} from './illustration-proportions.mjs';
 import { registerGarmentLayout, garmentLayout } from './illustration-layout.mjs';
 
-const stages = ['preparation', 'attributes', 'generation', 'finalization'];
+const stages = ['preparation', 'attributes', 'generation', 'finalization', 'fidelity'];
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const parse = value => value === null ? null : JSON.parse(value);
 const json = value => JSON.stringify(value ?? null);
@@ -19,6 +20,7 @@ function compatiblePreparedVersions(serialized) {
   // Switching renderers preserves segmentation; its billing mode is checked separately.
   return versions && ['fal-ai/nano-banana-pro/edit', illustrationVersions.modelVersion].includes(versions.modelVersion)
     && ((versions.templateVersion === illustrationVersions.templateVersion && versions.geometryVersion === illustrationVersions.geometryVersion)
+      || (versions.modelVersion === 'gemini-3-pro-image' && versions.templateVersion === 'category-front-anchors-v3' && versions.geometryVersion === 'fitting-anchors-1024-v3')
       || (versions.modelVersion === 'gemini-3-pro-image' && versions.templateVersion === 'category-front-anchors-v2' && versions.geometryVersion === 'fitting-anchors-1024-v2')
       || (versions.templateVersion === 'front-360x560-proposed-v1' && versions.geometryVersion === 'fitting-square-1024-v1'));
 }
@@ -243,18 +245,35 @@ export function createIllustrations(database, env, retention, budget) {
         setStage(operationId, stage, 'done');
       }
       stage = 'finalization';
-      let result;
-      if (generated.usableAlpha) {
-        result = await registerGarmentLayout(generated.png, effective); setStage(operationId, stage, 'skipped');
+      let result = row.result && Buffer.from(row.result);
+      if (!result) {
+        let finalizationState;
+        if (generated.usableAlpha) {
+          result = await registerGarmentLayout(generated.png, effective, await measureTopProportions(generated.png, effective));
+          finalizationState = 'skipped';
+        } else {
+          setStage(operationId, stage, 'in_flight');
+          budget.reserve('photoroom', `${operationId}:finalization:${row.photo_version_id}`);
+          result = await provider.prepare(generated.png, abort.signal, stage, effective);
+          finalizationState = 'done';
+        }
+        const active = live(operationId); if (!active) return;
+        // Persist the paid output and its completed stage together. It remains
+        // private while pending; restart must not pay for finalization again.
+        const processing = { ...parse(active.processing), finalization: finalizationState };
+        database.prepare('UPDATE illustrations SET result=?,result_digest=?,processing=? WHERE operation_id=?')
+          .run(result, digest(result), json(processing), operationId);
       }
-      else {
-        setStage(operationId, stage, 'in_flight');
-        budget.reserve('photoroom', `${operationId}:finalization:${row.photo_version_id}`);
-        result = await provider.prepare(generated.png, abort.signal, stage, effective);
-        if (!live(operationId)) return;
-        setStage(operationId, stage, 'done');
-      }
-      if (live(operationId)) database.prepare("UPDATE illustrations SET result=?,result_digest=?,status='ready',error=NULL WHERE operation_id=?").run(result, digest(result), operationId);
+      const front=photos.find(photo=>photo.role==='front')||photos[0];
+      const proportions=await compareTopProportions(front.prepared,result,effective);
+      if(proportions.measurable && !proportions.valid) throw new ProviderError('illustration_proportions_changed');
+      if(!live(operationId))return;
+      stage='fidelity';setStage(operationId,stage,'in_flight');
+      budget.reserve('jev',`${operationId}:illustration:fidelity:${row.photo_version_id}`);
+      await provider.fidelity(front.source,result,abort.signal);
+      const checked = live(operationId); if (!checked) return;
+      database.prepare("UPDATE illustrations SET processing=?,status='ready',error=NULL WHERE operation_id=?")
+        .run(json({ ...parse(checked.processing), fidelity: 'done' }), operationId);
     } catch (error) {
       if (!live(operationId)) return;
       const unknown = !(error instanceof ProviderError) || error.unknown;

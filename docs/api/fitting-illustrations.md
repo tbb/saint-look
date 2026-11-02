@@ -51,12 +51,12 @@
   "itemId": "UUID", "operationId": "UUID", "photoVersionId": "UUID",
   "sourceSetVersionId": "UUID", "revision": 1,
   "status": "pending", "mode": "live",
-  "processing": {"preparation":"pending", "attributes":"pending", "generation":"pending", "finalization":"pending"},
+  "processing": {"preparation":"pending", "attributes":"pending", "generation":"pending", "finalization":"pending", "fidelity":"pending"},
   "observedFeatures": null, "effectiveFeatures": null,
   "manualType": null, "manualColors": null,
   "modelVersion": "gemini-3-pro-image",
-  "templateVersion": "front-360x560-proposed-v1",
-  "geometryVersion": "fitting-square-1024-v1",
+  "templateVersion": "category-front-anchors-v4",
+  "geometryVersion": "fitting-anchors-1024-v4",
   "preparedSources": [], "resultPath": null, "error": null
 }
 ```
@@ -129,7 +129,7 @@ unknown.
 ключа отключает доступность, без fallback. Этот документ сам по себе не включает
 обработку. Цепочка: выбранный Photoroom → JEV → Gemini Nano Banana Pro → тот же Photoroom
 для снятия фона у непрозрачного JPEG. Оригинал и подготовленный ракурс идут
-отдельными подписанными референсами; манекен передаётся только генератору.
+отдельными подписанными референсами. Правила подачи референсов v4 описаны ниже.
 
 По разрешению владельца от 1 ноября 2026 `SAINT_LOOK_API_BUDGET_MODE=provider-quota`
 в production отменяет внутренние пробные ограничения и ежедневное истечение
@@ -167,10 +167,11 @@ HTTP. Внешний адрес или отсутствие test-origin при N
 
 ### Gemini trial accounting and recovery
 
-The trial reserves $0.40 before each Gemini POST. This is a conservative ceiling,
-not the observed unit price: the request caps combined output/thinking at 2048
-tokens; the 65,536 input-token model limit at $2/M plus 2048 output tokens priced
-entirely at the higher $120/M image rate totals $0.376832. No grounding tools are
+The historical trial reserves $0.40 before each Gemini POST. This is an accounting
+estimate, not a provider billing guarantee. The request sets max_output_tokens=2048;
+diagnostics in #109 observed an incomplete multi-image response reporting more
+output tokens than that setting. The production provider-quota policy relies on
+actual provider balance rather than treating this estimate as a hard ceiling. No grounding tools are
 enabled. The owner's total API ceiling is $10: the prepared server lifetime cap
 is $8.80, leaving $1.20 for three earlier standalone Google probes outside this
 ledger. The same-ID $4.50 → $8.80 policy migration preserves every reservation;
@@ -213,3 +214,42 @@ v2. Старый результат доступен в карточке; «Об
 временную недоступность провайдера, замену неудачного первого снимка и сохранение дополнительных ракурсов до первой готовности. Если предыдущая генерация ещё идёт, новая операция ждёт её завершения; `processing_in_progress` не отменяет обязательную подготовку.
 
 Ограниченная проверка на двух публичных фото: [результаты и границы проверки](../research/fitting-anchors-v2.md).
+
+## Сохранение вещи и посадка — v4
+
+`category-front-anchors-v4` / `fitting-anchors-1024-v4` сохраняют квадрат 1024×1024.
+Для одежды генератор редактирует исходную вещь, а не заполняет универсальный
+силуэт. Основной фронтальный ракурс идёт последним; остальные служат источниками
+деталей. Для худи используется оригинальный фронтальный снимок: исходные складки
+помогают реконструировать рукава. Подготовленная копия используется для измерений. В инструкцию редактирования передаются тип, цвета и измеренные пропорции;
+распознанные ярлыки кроя не заменяют видимую форму. Для белой/бежевой ткани фон
+генерации серый, чтобы сохранить непрозрачность при финальной вырезке.
+Обувь и аксессуары сохраняют свои проверенные шаблоны. Регистрация остаётся равномерным масштабом и переносом.
+
+Для устойчиво видимого корпуса верхней одежды измеряется отношение ширины к
+длине; манжеты ниже центрального подола и высота капюшона в длину корпуса не
+входят. Отклонение более 8% или неоднозначный результат при измеримом исходнике
+даёт `illustration_proportions_changed`. Если исходник нельзя уверенно измерить,
+численная проверка пропускается: это не утверждение о сохранении его пропорций.
+Раздельные рукава и связанные части силуэта дополнительно проверяются локально.
+Граница для широких брюк расширена; длина от пояса до щиколоток остаётся обязательной.
+
+Новая стадия `fidelity` после финализации сравнивает исходный фронтальный снимок
+и результат через JEV: крой, принты, материал/рисунок и конструкцию. Уверенное
+изменение (confidence ≥ 0.85) даёт `illustration_identity_changed`. Неуверенный
+ответ не считается доказательством изменения; эта проверка не гарантирует
+попиксельную точность надписей и принтов. Вызов учитывается отдельно в журнале JEV.
+Ошибки качества не запускают повторную генерацию автоматически и не заменяют
+последнюю полностью подготовленную версию вещи.
+
+Финализированный PNG и завершённая стадия сохраняются атомарно до проверки
+качества. HTTP-результат недоступен до полной готовности. Рестарт до начала
+`fidelity` использует сохранённый PNG; неизвестный исход уже начатого внешнего
+запроса сохраняет запрет автоматического повтора. Признаки и подготовленные
+копии v3 остаются совместимыми; смена шаблона не тратит Photoroom повторно.
+
+В v4 худи генерируется с опущенным капюшоном. Клиент рисует голову перед ним,
+а головной убор — перед головой. Для сохранённых v2/v3 остаётся прежнее наложение;
+они доступны в луках до явного «Обновить посадку». Требуется обновление клиента
+для приёма новых v4 результатов. Каталог отдельно обрезает прозрачные поля:
+пиксели alpha=1 вне вещи не расширяют миниатюру; холст примерочной не обрезается.

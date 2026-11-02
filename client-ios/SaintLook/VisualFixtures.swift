@@ -350,8 +350,9 @@ enum VisualFixtures {
                 photoVersionId: item.photoVersionID, sourceSetVersionId: item.sourceSetVersionID,
                 revision: 1, status: .ready, mode: "test", processing: [:], observedFeatures: features,
                 effectiveFeatures: features, manualType: nil, manualColors: nil,
-                modelVersion: IllustrationContract.currentModelVersion, templateVersion: IllustrationContract.currentTemplateVersion,
-                geometryVersion: IllustrationContract.currentGeometryVersion,
+                modelVersion: IllustrationContract.currentModelVersion,
+                templateVersion: trial ? "category-front-anchors-v3" : IllustrationContract.currentTemplateVersion,
+                geometryVersion: trial ? "fitting-anchors-1024-v3" : IllustrationContract.currentGeometryVersion,
                 resultPath: "/v1/items/\(item.id.uuidString.lowercased())/illustrations/\(operation.uuidString.lowercased())/result", error: nil)
             item.illustrationResult = IllustrationResult(filename: filename, response: response)
             // This isolated scenario depicts an already committed test publication,

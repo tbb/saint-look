@@ -92,11 +92,11 @@ const server = createServer(async (request, response) => {
     }
     if (request.url === '/v1/systemone') {
       const payload = JSON.parse(body);
-      if (payload.questions?.silhouette) {
-        illustrationAttributesCalls++;
+      if (payload.questions?.silhouette || payload.questions?.artwork) {
+        if (payload.questions?.silhouette) illustrationAttributesCalls++;
         const answers = Object.fromEntries(Object.entries(payload.questions).map(([name, q]) => {
           if (q.type === 'noul') return [name, { type: 'noul', noul: name === 'color_blue' ? 0.99 : 0.01 }];
-          const selected = name === 'suitability' ? 'suitable' : name === 'item_type' ? 't_shirt' : 'unknown';
+          const selected = payload.questions.artwork ? 'preserved' : name === 'suitability' ? 'suitable' : name === 'item_type' ? 't_shirt' : 'unknown';
           return [name, { type: 'choice', choice: selected, confidence: 1,
             probabilities: Object.fromEntries(Object.keys(q.criteria).map(key => [key, key === selected ? 1 : 0])) }];
         }));

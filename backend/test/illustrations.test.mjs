@@ -28,10 +28,11 @@ async function until(check) {
   throw new Error('Expected external request did not arrive');
 }
 async function waitForIllustration(server, itemId, operationId, status = 'ready') {
+  const expected=Array.isArray(status)?status:[status];
   for (let i = 0; i < 150; i++) {
     const response = await server.request(`/v1/items/${itemId}/illustrations/${operationId}`);
     const value = await response.json();
-    if (value.status === status) return value;
+    if (expected.includes(value.status)) return value;
     if (value.status === 'failed') throw new Error(JSON.stringify(value));
     await new Promise(resolve => setTimeout(resolve, 25));
   }
@@ -63,7 +64,7 @@ test('single photo produces a separate transparent illustration with observed tr
   assert.equal(ready.observedFeatures.type, 'Футболка');
   assert.deepEqual(ready.effectiveFeatures.colors, ['Красный']);
   assert.equal(ready.effectiveFeatures.traits.silhouette, 'unknown');
-  assert.deepEqual(ready.processing, { preparation: 'done', attributes: 'done', generation: 'done', finalization: 'done' });
+  assert.deepEqual(ready.processing, { preparation: 'done', attributes: 'done', generation: 'done', finalization: 'done', fidelity: 'done' });
   const generation = fixture.calls.generation[0];
   assert.equal(generation.path, '/v1beta/interactions');
   assert.equal(generation.headers['x-goog-api-key'], 'fixture');
@@ -456,4 +457,127 @@ for (const versions of [
   server = await env.launch(fixture.env);
   assert.equal((await requestIllustration(server, photo.itemId, { ...refresh, operationId: randomUUID(), revision: 3 })).status, 409);
   assert.equal(fixture.calls.preparation.length, 1);
+});
+
+
+test('a geometrically valid slim redraw cannot be published for a wide source with unknown silhouette', async t => {
+  const fixture=await illustrationFixture(t,{traits:{sleeves:'short'}});
+  const env=await environment(t),server=await env.launch(fixture.env);
+  const photo=await photoRequest();
+  photo.imageBase64=(await sharp({create:{width:668,height:858,channels:3,background:'#222'}}).png().toBuffer()).toString('base64');
+  await upload(server,photo);await waitForItem(server,photo.itemId);
+  const input=illustration(photo);await requestIllustration(server,photo.itemId,input);
+  const result=await waitForIllustration(server,photo.itemId,input.operationId,['ready','failed']);
+  assert.equal(result.status,'failed');
+  assert.equal(result.error,'illustration_proportions_changed');
+  assert.equal(result.resultPath,null);
+  assert.equal(fixture.calls.generation.length,1,'Quality rejection must not silently submit another paid generation');
+  assert.equal(fixture.calls.finalization.length,1);
+});
+
+function fidelityReply(response, body, choice = 'preserved', confidence = 1) {
+  const payload = JSON.parse(body);
+  const answers = Object.fromEntries(Object.entries(payload.questions).map(([name, q]) => {
+    const selected = name === 'artwork' ? choice : 'preserved';
+    const certainty = name === 'artwork' ? confidence : 1;
+    return [name, { type: 'choice', choice: selected, confidence: certainty,
+      probabilities: Object.fromEntries(Object.keys(q.criteria).map(key =>
+        [key, key === selected ? certainty : (1 - certainty) / (Object.keys(q.criteria).length - 1)])) }];
+  }));
+  response.writeHead(200, { 'Content-Type': 'application/json' });
+  response.end(JSON.stringify({ model: payload.model, answers, usage: { input_tokens: 1000 } }));
+}
+
+test('a changed crest fails publication without silently retrying; uncertain identity is not a confident mismatch', async t => {
+  let choice = 'changed';
+  const fixture = await illustrationFixture(t, { fidelity: async (_request, response, { body }) => fidelityReply(response, body, choice, .96) });
+  const env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  const failed = await waitForIllustration(server, photo.itemId, input.operationId, ['ready', 'failed']);
+  assert.equal(failed.error, 'illustration_identity_changed');
+  assert.equal(failed.processing.fidelity, 'failed');
+  assert.equal((await server.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}/result`)).status, 409);
+  await requestIllustration(server, photo.itemId, input);
+  assert.equal(fixture.calls.generation.length, 1); assert.equal(fixture.calls.fidelity.length, 1);
+  choice = 'uncertain';
+  const retry = { ...input, operationId: randomUUID(), revision: 2 };
+  await requestIllustration(server, photo.itemId, retry);
+  assert.equal((await waitForIllustration(server, photo.itemId, retry.operationId)).status, 'ready');
+});
+
+test('crash during fidelity preserves its uncertain outcome without a second paid check or generation', async t => {
+  const fixture = await illustrationFixture(t, { fidelity: async () => {} });
+  const env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  await until(() => fixture.calls.fidelity.length === 1);
+  await server.stop('SIGKILL'); const restarted = await env.launch(fixture.env);
+  const failed = await waitForIllustration(restarted, photo.itemId, input.operationId, 'failed');
+  assert.equal(failed.processing.fidelity, 'unknown'); assert.equal(failed.error, 'processing_unknown');
+  assert.equal((await requestIllustration(restarted, photo.itemId, input)).status, 200);
+  assert.equal((await requestIllustration(restarted, photo.itemId, { ...input, operationId: randomUUID(), revision: 2 })).status, 409);
+  assert.equal(fixture.calls.generation.length, 1); assert.equal(fixture.calls.fidelity.length, 1);
+});
+
+test('deleting an item during fidelity rejects the late result and its replay', async t => {
+  let release;
+  const fixture = await illustrationFixture(t, { fidelity: async (_request, response, { body }) => {
+    await new Promise(resolve => { release = resolve; }); fidelityReply(response, body);
+  } });
+  const env = await environment(t), server = await env.launch(fixture.env);
+  const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
+  const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
+  await until(() => release);
+  assert.equal((await server.request(`/v1/items/${photo.itemId}`, { method: 'DELETE' })).status, 204);
+  release();
+  assert.equal((await requestIllustration(server, photo.itemId, input)).status, 410);
+  assert.equal((await server.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}/result`)).status, 410);
+  assert.equal(fixture.calls.fidelity.length, 1);
+});
+
+test('source editing puts the primary front last even when the back is supplied later', async t => {
+  const fixture = await illustrationFixture(t);
+  const provider = createIllustrationProvider(fixture.env);
+  const front = await sharp({ create: { width: 64, height: 64, channels: 4, background: '#ff0000' } }).png().toBuffer();
+  const back = await sharp({ create: { width: 64, height: 64, channels: 4, background: '#0000ff' } }).png().toBuffer();
+  await provider.generate([{ role: 'front', source: front, prepared: front }, { role: 'back', source: back, prepared: back }],
+    { type: 'Футболка', traits: {} }, new AbortController().signal, () => {});
+  const images = fixture.calls.generation[0].interaction.input.filter(value => value.type === 'image');
+  assert.equal(images.length, 4, 'Apparel edits must not receive a competing filled garment template');
+  assert.equal(images[0].data, back.toString('base64'));
+  const primary=Buffer.from(images.at(-1).data,'base64');
+  assert.deepEqual(await sharp(primary).raw().toBuffer(),await sharp(front).flatten({background:'#ffffff'}).raw().toBuffer());
+  assert.equal((await sharp(primary).metadata()).hasAlpha,false,'The generator must see an unambiguous matte behind the source');
+});
+
+test('restart from a finalized candidate reuses its durable PNG before the unstarted fidelity check',async t=>{
+ const fixture=await illustrationFixture(t),env=await environment(t),server=await env.launch(fixture.env);
+ const photo=await photoRequest();await upload(server,photo);await waitForItem(server,photo.itemId);
+ const input=illustration(photo);await requestIllustration(server,photo.itemId,input);
+ const ready=await waitForIllustration(server,photo.itemId,input.operationId);
+ const original=Buffer.from(await(await server.request(ready.resultPath)).arrayBuffer());
+ await server.stop();
+ // Reconstruct the durable boundary immediately before fidelity admission.
+ const db=new DatabaseSync(join(env.directory,'wardrobe.sqlite'));
+ const processing={...ready.processing,fidelity:'pending'};
+ db.prepare("UPDATE illustrations SET status='pending',processing=? WHERE operation_id=?").run(JSON.stringify(processing),input.operationId);db.close();
+ const restarted=await env.launch(fixture.env);
+ const resumed=await waitForIllustration(restarted,photo.itemId,input.operationId);
+ assert.deepEqual(Buffer.from(await(await restarted.request(resumed.resultPath)).arrayBuffer()),original);
+ assert.equal(fixture.calls.finalization.length,1,'Completed cutout must survive the finalization/fidelity boundary');
+ assert.equal(fixture.calls.generation.length,1);
+});
+
+test('a light garment keeps its pixels against a contrasting generator matte',async t=>{
+ const fixture=await illustrationFixture(t),provider=createIllustrationProvider(fixture.env);
+ const prepared=await sharp({create:{width:64,height:64,channels:4,background:'#00000000'}})
+  .composite([{input:await sharp({create:{width:30,height:50,channels:4,background:'#ffffff'}}).png().toBuffer(),left:17,top:7}]).png().toBuffer();
+ await provider.generate([{role:'front',source:prepared,prepared}],{type:'Футболка',colors:['Белый'],traits:{}},new AbortController().signal,()=>{});
+ const request=fixture.calls.generation[0].interaction;
+ const primary=Buffer.from(request.input.filter(v=>v.type==='image').at(-1).data,'base64');
+ const pixels=await sharp(primary).raw().toBuffer();
+ assert.deepEqual([...pixels.subarray(0,3)],[128,128,128]);
+ assert.deepEqual([...pixels.subarray((30*64+30)*3,(30*64+30)*3+3)],[255,255,255]);
+ assert.match(request.input.at(-1).text,/#808080/);
 });
