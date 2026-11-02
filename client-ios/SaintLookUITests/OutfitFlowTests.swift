@@ -1106,7 +1106,17 @@ final class OutfitFlowTests: XCTestCase {
         performSlotAction("remove-body-layer", slotID: secondID, in: app)
         let firstSlotID = firstID.replacingOccurrences(of: "outfit-slot-body-", with: "")
         performSlotAction("clear-slot", slotID: firstSlotID, in: app)
-        XCTAssertTrue(app.buttons[firstID].label.contains("Выбрать вещь"))
+        let clearedRow = app.buttons[firstID]
+        // The native dialog can finish its tap before SwiftUI publishes the row label.
+        if !clearedRow.label.contains("Выбрать вещь") {
+            let cleared = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label CONTAINS %@", "Выбрать вещь"), object: clearedRow)
+            guard XCTWaiter.wait(for: [cleared], timeout: 5) == .completed else {
+                capture("outfit-clear-row-timeout")
+                XCTFail("Clearing the addressed body row must show its empty label")
+                return
+            }
+        }
         performSlotAction("remove-body-layer", slotID: firstSlotID, in: app)
         XCTAssertTrue(app.buttons[firstID].exists, "Removing the last body row keeps an empty row")
         XCTAssertFalse(app.buttons["save-outfit"].isEnabled)

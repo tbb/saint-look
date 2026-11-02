@@ -39,6 +39,29 @@ time.sleep(60)
         self.assertEqual(summary['activeTest'], '-[Tests testCreate]')
         self.assertLess(summary['elapsedSeconds'], 3)
 
+    def test_recorded_fatal_launch_error_stops_without_waiting_for_a_stall(self):
+        result, summary = self.run_child("""
+import time
+print("Test Case '-[Tests testCreate]' started.")
+print('/work/OutfitFlowTests.swift:250: error: -[Tests testCreate] : Failed to get launch progress for <XCUIApplicationImpl com.saintlook.dev>: Simulator device failed to launch com.saintlook.dev. No such process.')
+while True:
+ print('Wait for com.saintlook.dev to idle')
+ time.sleep(0.02)
+""", '--case-seconds', '1')
+        self.assertEqual(result.returncode, 65)
+        self.assertEqual(summary['reason'], 'app-launch-failed')
+        self.assertEqual(summary['activeTest'], '-[Tests testCreate]')
+        self.assertLess(summary['elapsedSeconds'], 3)
+
+    def test_platform_warning_alone_does_not_abort_acceptance(self):
+        result, summary = self.run_child("""
+print("Test Case '-[Tests testOne]' started.")
+print('warning: Simulator device failed to launch com.saintlook.dev. No such process.')
+print("Test Case '-[Tests testOne]' passed (1.5 seconds).")
+""")
+        self.assertEqual(result.returncode, 0)
+        self.assertIsNone(summary['reason'])
+
     def test_chatty_stuck_case_is_bounded_too(self):
         result, summary = self.run_child('''
 import time

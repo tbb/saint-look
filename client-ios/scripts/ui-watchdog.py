@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 
+LAUNCH_FAILURE = re.compile(r": error: .*Failed to get launch progress .*Simulator device failed to launch com\.saintlook\.dev\.")
 CASE = re.compile(r"Test Case '([^']+)' (started|passed|failed|skipped)(?: \(([0-9.]+) seconds\))?")
 
 
@@ -55,7 +56,11 @@ def run(command, summary, idle_seconds=180, case_seconds=600, startup_seconds=30
                 buffer += chunk
                 while b'\n' in buffer:
                     line, buffer = buffer.split(b'\n', 1)
-                    match = CASE.search(line.decode('utf-8', errors='replace'))
+                    decoded = line.decode('utf-8', errors='replace')
+                    if active and LAUNCH_FAILURE.search(decoded):
+                        reason = 'app-launch-failed'
+                        break
+                    match = CASE.search(decoded)
                     if match:
                         name, state, duration = match.groups()
                         if state == 'started':
@@ -65,6 +70,8 @@ def run(command, summary, idle_seconds=180, case_seconds=600, startup_seconds=30
                             active, case_started = None, None
                 # A child emitting an unbroken line must not grow memory without bound.
                 buffer = buffer[-65536:]
+            if reason:
+                break
             if process.poll() is not None and not poller.get_map():
                 break
         if reason:
@@ -83,7 +90,7 @@ def run(command, summary, idle_seconds=180, case_seconds=600, startup_seconds=30
             except ProcessLookupError:
                 pass
             process.wait()
-        code = (128 + interrupted) if interrupted else (124 if reason else process.returncode)
+        code = (128 + interrupted) if interrupted else (65 if reason == 'app-launch-failed' else 124 if reason else process.returncode)
         if code < 0:
             code = 128 - code
         if code == 0 and not completed:
