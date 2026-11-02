@@ -1,3 +1,4 @@
+import {contrastDetails} from '../../scripts/fitting/diagnostics/contrast-details.mjs';
 import {editPoseGuide,measuredPoseInstructions} from './illustration-edit-pose.mjs';
 import sharp from 'sharp';
 import { readFileSync } from 'node:fs';
@@ -128,11 +129,8 @@ export function createIllustrationProvider(env) {
       ]);
       const detailImages=[];
       if(editPose){
-        const meta=await sharp(front.source).metadata();
-        for(const [name,x,y,w,h] of [['front artwork',.2,.28,.6,.42],['left sleeve',.05,.35,.4,.55],['right sleeve',.55,.35,.4,.55]]){
-          const crop=await sharp(front.source).extract({left:Math.floor(meta.width*x),top:Math.floor(meta.height*y),width:Math.floor(meta.width*w),height:Math.floor(meta.height*h)}).png().toBuffer();
-          detailImages.push({type:'text',text:'Magnified '+name+' detail only; preserve visible shapes and ink, not source arm pose.'},{type:'image',mime_type:'image/png',data:crop.toString('base64')});
-        }
+        const details=await contrastDetails(front.source,front.prepared);
+        for(const detail of details)detailImages.push({type:'text',text:'Magnified original marking, shape and ink reference only. Keep its orientation relative to the original garment panel when unfolding, never mirror it.'},{type:'image',mime_type:'image/png',data:detail.png.toString('base64')});
       }
       const payload=savedReceipt?null:{model:illustrationVersions.modelVersion,store:true,
         generation_config:{max_output_tokens:8192},
