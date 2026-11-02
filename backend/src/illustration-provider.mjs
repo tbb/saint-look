@@ -136,7 +136,7 @@ export function createIllustrationProvider(env) {
       const proportions=edit?await measureTopProportions(front.prepared,features):null;
       const editPose=edit && !front.generationReference?await editPoseGuide(features,proportions):null;
       const prompt=savedReceipt?null:
-        (editPose ? measuredPoseInstructions(features,proportions)
+        (front.generationReference ? 'Edit unfolded_front_pose (the LAST photograph). Keep its TWO unfolded sleeves and entire torso. Lower only the raised hood into a collapsed collar behind the neck. Keep the original fabric texture; very subtle editorial shading only. original_front_identity (FIRST photograph) is a detail reference: copy the exact artwork, distressed texture, pocket and construction from it, but NEVER its folded sleeve arrangement or raised hood. Keep prints on their existing garment panels and restore any detail lost during unfolding. Exactly one garment, exactly two sleeves, no person or mannequin, plain white background. Scale the whole garment to fit the square without changing width and length separately. '+(proportions?'Preserve torso width / shoulder-to-hem length '+proportions.bodyWidthToLength+'. ':'') : editPose ? measuredPoseInstructions(features,proportions)
         : (edit?garmentEditInstructions(features,proportions):layoutInstructions(features)))
         + (front.generationReference ? ' ORIGINAL_FRONT_IDENTITY alone defines the artwork, fabric and construction. Edit UNFOLDED_FRONT_POSE for its sleeve arrangement only. Restore any original details that Photoroom altered. The last photograph already has unfolded sleeves: preserve that pose, do not reintroduce the original folded sleeves. ' : '')
         + correctionInstructions(correction)
