@@ -243,5 +243,5 @@ jobs:
         - fashion-baseline
         - fidelity-resolution
         - photoroom-fashion
-    - pose-verification
+        - pose-verification
         - native-only
