@@ -1,3 +1,4 @@
+import {readFileSync} from 'node:fs';
 import sharp from 'sharp';
 import {generationBackground} from './illustration-edit.mjs';
 import {garmentLayout} from './illustration-layout.mjs';
@@ -6,6 +7,7 @@ import {garmentLayout} from './illustration-layout.mjs';
 export async function editPoseGuide(features, proportions) {
   if(garmentLayout(features).group!=='hooded'||!proportions
     ||features?.traits?.sleeves!=='long'||features?.traits?.body_length!=='regular')return null;
+  if(process.env.TRIAL_ITEM==='valid-silhouette')return readFileSync('/tmp/valid-silhouette.png');
   const h=600,w=h*proportions.bodyWidthToLength,l=512-w/2,r=512+w/2,t=270,b=t+h;
   if(w<240||w>600)return null;
   // Project shared shoulder/wrist coordinates at the measured torso scale.

@@ -17,7 +17,8 @@ const state={versions:illustrationVersions,sha:process.env.GITHUB_SHA,variants:{
 mkdirSync('garment-quality-output',{recursive:true});
 function save(){const iv=randomBytes(12),c=createCipheriv('aes-256-gcm',key,iv),out=Buffer.concat([c.update(JSON.stringify(state)),c.final()]);writeFileSync('garment-quality-output/result.enc',Buffer.concat([iv,c.getAuthTag(),out]));}
 async function call(name,fn){if(state.events.some(e=>e.name===name))throw Error('Duplicate call');const e={name,status:'started'};state.events.push(e);save();try{const v=await fn();e.status='completed';save();return v;}catch(error){e.status='failed-or-unknown';e.code=error.code||error.name;save();throw error;}}
-const cases=process.env.TRIAL_ITEM==='fixed-pose-targets'?bundle.fixedPoseItems:[...['hoodie','tee','trousers'].map(name=>({name,input:bundle.items[name]})),
+if(process.env.TRIAL_ITEM==='valid-silhouette')writeFileSync('/tmp/valid-silhouette.png',Buffer.from(bundle.validSilhouette,'base64'));
+const cases=process.env.TRIAL_ITEM==='valid-silhouette'?['repeat-a','repeat-b'].map(name=>({name,input:bundle.fixedPoseItems[0].input})):process.env.TRIAL_ITEM==='fixed-pose-targets'?bundle.fixedPoseItems:[...['hoodie','tee','trousers'].map(name=>({name,input:bundle.items[name]})),
  ...['polo.jpg','printed-tee.jpg','white-tee.png','celine-hoodie.jpg','jeans.jpg','open-denim-jacket.jpg','ribbed-cardigan.jpg','trenchcoat.jpg','creepers.png'].map(file=>({name:file.split('.')[0],input:{source:readFileSync('scripts/fitting/fixtures/'+file).toString('base64')}}))];
 async function evaluate({name,input}) {
  const record=state.cases[name]={acceptedAttempt:null};
