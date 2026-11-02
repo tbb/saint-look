@@ -692,6 +692,8 @@ test('specialized hoodie unfolding is retained across quality correction and era
  assert.equal(fixture.calls.unfolding.length,1);assert.equal(fixture.calls.generation.length,2);
  const request=JSON.parse(fixture.calls.generation[0].body);
  assert.ok(request.input.some(part=>part.type==='image'&&part.data===fixture.result.toString('base64')),'Generator uses the unfolded reference');
+ assert.ok(request.input.some(part=>part.type==='image'&&part.data===photo.imageBase64),'Original artwork remains visible to the generator alongside the pose reference');
+ assert.match(request.input.find(part=>part.type==='text'&&part.text.includes('original_front_identity')).text,/sole authority/);
  const check=JSON.parse(fixture.calls.fidelity[0].body);
  const {jevRequest}=await import('../src/jev.mjs');
  const original=await jevRequest(Buffer.from(photo.imageBase64,'base64'));

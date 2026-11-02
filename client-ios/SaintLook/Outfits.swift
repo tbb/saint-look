@@ -606,19 +606,26 @@ extension WardrobeItem {
 }
 
 extension Outfit {
-    func fittingArmPose(in items: [WardrobeItem]) -> FittingArmPose {
-        let constraints = slots.compactMap { slot in items.first { $0.id == slot.itemID }?.fittingArmPoses }
-        let common = constraints.reduce(Set(FittingArmPose.allCases)) { $0.intersection($1) }
-        let available = common.isEmpty ? constraints.last ?? Set(FittingArmPose.allCases) : common
-        return FittingArmPose.preference.first { available.contains($0) } ?? .wide
-    }
-
-    func acceptsFittingPose(of item: WardrobeItem, in items: [WardrobeItem]) -> Bool {
-        item.fittingArmPoses?.contains(fittingArmPose(in: items)) ?? true
-    }
-
-    func hasMixedFittingPoses(in items: [WardrobeItem]) -> Bool {
-        items.contains { selectedIDs.contains($0.id) && !acceptsFittingPose(of: $0, in: items) }
+    /// The same selection runs in the app and Foundation checks. Image access and
+    /// alpha coverage are injected; pose precedence belongs to the outfit.
+    func fittingComposition(in items: [WardrobeItem], available: (WardrobeItem) -> Bool = { _ in true },
+                            covered: (WardrobeItem, [WardrobeItem]) -> Bool = { _, _ in false }) -> FittingComposition {
+        let ordered = [OutfitZone.bottom, .shoes, .body, .head].flatMap { zone in
+            slots.filter { $0.zone == zone }.compactMap { slot in items.first { $0.id == slot.itemID } }
+        }.filter { $0.hasFittingGeometry && available($0) }
+        let outerPoses = ordered.reversed().compactMap(\.fittingArmPoses).first
+        let choices = FittingArmPose.preference.filter { outerPoses?.contains($0) ?? true }
+        var best = FittingComposition(pose: choices.first ?? .wide, renderedIDs: [])
+        for pose in choices {
+            var rendered = Set<UUID>(), overlays: [WardrobeItem] = []
+            for item in ordered.reversed() {
+                if (item.fittingArmPoses?.contains(pose) ?? true) || covered(item, overlays) {
+                    rendered.insert(item.id); overlays.append(item)
+                }
+            }
+            if rendered.count > best.renderedIDs.count { best = FittingComposition(pose: pose, renderedIDs: rendered) }
+        }
+        return best
     }
 }
 

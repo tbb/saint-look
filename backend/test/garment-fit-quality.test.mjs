@@ -43,6 +43,7 @@ test('a wide torso is not mistaken for two unfolded sleeves at the wrist bands',
 test('measured guides preserve sleeve lengths and distinct designed hem lengths',async()=>{
  const {measuredGuideSVG,editPoseGuide}=await import('../src/illustration-edit-pose.mjs');
  for(const sleeves of ['sleeveless','unknown'])assert.equal(await editPoseGuide({type:'hoodie',traits:{sleeves}},{bodyWidthToLength:.8}),null);
+ for(const body_length of ['unknown',undefined])assert.equal(await editPoseGuide({type:'t_shirt',traits:{sleeves:'short',body_length}},{bodyWidthToLength:.55}),null,'Uncertain long torso must not receive a regular-length target');
  const hem=[];
  for(const body_length of ['cropped','regular','long']) {
   const features={type:'hoodie',traits:{sleeves:'short',body_length}};
