@@ -56,7 +56,7 @@ export async function measureTopProportions(bytes, features) {
   }
   const length=bottom-bodyTop+1;
   return {bodyWidthToLength:Number((median/length).toFixed(3)),bodyWidth:median,visibleLength:length,
-    lengthReference:hooded?'neck-to-hem, excluding hood':'shoulder-to-hem',bodyTop};
+    lengthReference:hooded?'shoulder-to-hem, excluding hood':'shoulder-to-hem',bodyTop};
 }
 
 export async function compareTopProportions(reference, result, features) {
