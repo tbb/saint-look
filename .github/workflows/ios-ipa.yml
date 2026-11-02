@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   changes:
+    name: ipa-inputs
     if: github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 3
