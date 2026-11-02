@@ -39,7 +39,7 @@ try{
  const photos=[{source,prepared,role:'front'}];
  const features=input.features||await call('attributes',()=>provider.attributes(photos,signal));
  state.features=features;state.proportions=await measureTopProportions(prepared,features);save();
- const generated=await call('generation',()=>provider.generate(photos,features,signal,id=>{state.receipt=id;save();}));
+ const generated=await call(input.receipt?'recovery':'generation',()=>provider.generate(photos,features,signal,id=>{state.receipt=id;save();},input.receipt));
  state.variants.production.generated=generated.png.toString('base64');save();
  const result=await call('finalization',()=>provider.prepare(generated.png,signal,'finalization',features));
  state.variants.production.registered=result.toString('base64');save();
