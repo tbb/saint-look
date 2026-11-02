@@ -8,14 +8,14 @@ const{width:w,height:h}=info,N=Math.ceil(Math.max(w,h)*1.8),ox=Math.round((N-w)/
 const pt=p=>[p[0]*w/1000,p[1]*h/1000],sub=(a,b)=>[a[0]-b[0],a[1]-b[1]],len=a=>Math.hypot(...a),angle=a=>Math.atan2(a[1],a[0]);
 const masks={};
 for(const part of v.segmentation.parts){const points=part.polygon.map(p=>pt(p).join(',')).join(' '),{data:m}=await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><polygon points="${points}" fill="white"/></svg>`)).ensureAlpha().raw().toBuffer({resolveWithObject:true});masks[part.name]=m;}
-const report={name,angleDegrees:13,occludedTorso:v.segmentation.occluded_torso,parts:[]};
+const report={name,additionalMannequinArmRotationDegrees:13,occludedTorso:v.segmentation.occluded_torso,parts:[]};
 for(const side of ['left','right']){
  const mask=masks[side+'_sleeve'];if(!mask)throw Error('Missing sleeve');
  const edge=landmarks[side+'_cuff_edge'];
  const cuff=edge?[(edge[0][0]+edge[1][0])/2,(edge[0][1]+edge[1][1])/2]:landmarks[side+'_cuff'];
  const S=pt(landmarks[side+'_shoulder']),C=pt(cuff),E=landmarks[side+'_elbow']?pt(landmarks[side+'_elbow']):null;
  const direct=len(sub(C,S)),bent=E&&len(sub(E,S))>.2*direct&&len(sub(C,E))>.2*direct&&(len(sub(E,S))+len(sub(C,E)))/direct>1.08;
- const source=bent?[S,E,C]:[S,C],target=[S],a=(side==='left'?103:77)*Math.PI/180,u=[Math.cos(a),Math.sin(a)];
+ const source=bent?[S,E,C]:[S,C],target=[S],a=side==='left'?Math.atan2(295-147,68-135):Math.atan2(295-148,292-225),u=[Math.cos(a),Math.sin(a)];
  for(let i=1;i<source.length;i++){const length=len(sub(source[i],source[i-1])),p=target.at(-1);target.push([p[0]+u[0]*length,p[1]+u[1]*length]);}
  const used=new Uint8Array(w*h);let total=0,painted=0;
  for(let i=0;i<w*h;i++)if(mask[i*4+3]>128&&data[i*4+3]>128)total++;
