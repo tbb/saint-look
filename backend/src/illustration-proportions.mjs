@@ -45,12 +45,15 @@ export async function measureTopProportions(bytes, features) {
     // The hood above the neckline changes height when raised. Its crown must
     // not be counted as torso length or compensated by narrowing the body.
     bodyTop=-1;
+    const shoulderXs=[Math.round(centre-median*.475),Math.round(centre+median*.475)];
     for(let y=top;y<top+height*.5;y++){
-      let l=centre,r=centre;
-      if(data[(y*info.width+centre)*4+3]<224)continue;
-      while(l>0&&data[(y*info.width+l-1)*4+3]>=224)l--;
-      while(r<info.width-1&&data[(y*info.width+r+1)*4+3]>=224)r++;
-      if(r-l+1>=median*.95){bodyTop=y;break;}
+      // Shoulder height is independent of a transparent collar opening.
+      // Observe both body edges; the centre can be empty down to a deep V.
+      if(!shoulderXs.every(x=>data[(y*info.width+x)*4+3]>=224))continue;
+      let supported=0;
+      for(let x=shoulderXs[0];x<=shoulderXs[1];x++)if(data[(y*info.width+x)*4+3]>=224)supported++;
+      // A thin, open hood rim can reach both probes before the shoulders.
+      if(supported>=median*.5){bodyTop=y;break;}
     }
     if(bodyTop<top+height*.03||bodyTop>top+height*.45)return null;
   }

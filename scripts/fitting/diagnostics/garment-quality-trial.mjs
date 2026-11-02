@@ -42,6 +42,15 @@ try{
     request.input='Correct the last illustration. Its pose is now correct: keep both unfolded sleeves and their cuffs exactly where they are, keep the lowered hood, the design and all artwork. The torso is too long: measured width/length is '+q.resultRatio+' versus '+q.sourceRatio+' in the original. Keep the torso width and shorten ONLY its body length by '+Math.round((1-q.resultRatio/q.sourceRatio)*100)+' percent, raising the waistband hem. The bottom of the torso must be well above the sleeve cuffs, not almost level with them. Preserve the original print proportions and textile detail; relocate the pocket and hem with the corrected body length. Do not narrow or stretch any print. No other changes. White background, same 1024 square canvas.';
     options={...options,body:JSON.stringify(request)};
    }
+   if(input.poseCorrection){
+    delete request.previous_interaction_id;
+    request.input=[{type:'text',text:'Original garment identity reference'},
+     {type:'image',mime_type:'image/png',data:input.source},
+     {type:'text',text:'Candidate to edit; preserve its torso and all design'},
+     {type:'image',mime_type:'image/png',data:input.poseCorrection.image},
+     {type:'text',text:input.poseCorrection.prompt}];
+    options={...options,body:JSON.stringify(request)};
+   }
    state.generationRequest={model:request.model,input:(Array.isArray(request.input)?request.input:[{type:'text',text:request.input}]).map(c=>c.type==='text'?{type:c.type,text:c.text}:{type:c.type,hash:createHash('sha256').update(Buffer.from(c.data||'','base64')).digest('hex')})};save();
   }
   const response=await networkFetch(url,options);

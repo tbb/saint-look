@@ -13,7 +13,11 @@ export async function fidelityRequest(source,candidate) {
 }
 export function fidelityAnswer(payload,request) {
   const {evidence}=featureAnswer(payload,request);
-  // Conservative rejection of confident changes. Uncertainty is not a claim
-  // of pixel identity; the independent silhouette ratio check still applies.
-  return {valid:!Object.values(evidence).some(value=>value.choice==='changed'&&value.confidence>=.85),evidence};
+  // Use the same 0.7 evidence floor as observable garment attributes. This is
+  // an admission rule, not a calibrated probability of visual correctness.
+  const values=Object.values(evidence);
+  const changed=values.some(value=>value.choice==='changed'&&value.confidence>=.85);
+  const confirmed=values.every(value=>value.choice==='preserved'&&value.confidence>=.7);
+  return {valid:confirmed,error:changed?'illustration_identity_changed'
+    :confirmed?null:'illustration_identity_unconfirmed',evidence};
 }

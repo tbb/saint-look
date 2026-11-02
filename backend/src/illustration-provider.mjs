@@ -95,7 +95,7 @@ export function createIllustrationProvider(env) {
         Authorization:`Bearer ${env.TYPESAFE_API_KEY}`,'TypeSafe-Danger-Zone-Images':'true'},body:JSON.stringify(request)},signal);
       let checked;
       try{checked=fidelityAnswer(answer,request);}catch{throw new ProviderError('invalid_provider_response');}
-      if(!checked.valid)throw new ProviderError('illustration_identity_changed');
+      if(!checked.valid)throw new ProviderError(checked.error);
       return checked;
     },
     async generate(photos, features, signal, recordReceipt, savedReceipt) {
