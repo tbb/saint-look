@@ -47,7 +47,8 @@ export async function measureTopProportions(bytes, features) {
 
 export async function compareTopProportions(reference, result, features) {
   const source=await measureTopProportions(reference,features), actual=await measureTopProportions(result,features);
-  if(!source || !actual)return {measurable:false,reason:'ambiguous-body-outline'};
+  if(!source)return {measurable:false,reason:'ambiguous-source-outline'};
+  if(!actual)return {measurable:true,valid:false,sourceRatio:source.bodyWidthToLength,resultRatio:null,reason:'ambiguous-result-outline'};
   const relativeError=Math.abs(actual.bodyWidthToLength/source.bodyWidthToLength-1);
   return {measurable:true,valid:relativeError<=0.12,sourceRatio:source.bodyWidthToLength,
     resultRatio:actual.bodyWidthToLength,relativeError};

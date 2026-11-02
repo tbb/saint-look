@@ -49,13 +49,15 @@ jobs:
 
   image-presentation:
     if: inputs.item == 'checks-only' && github.ref == 'refs/heads/codex/garment-fit-quality' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
-    runs-on: macos-15
-    timeout-minutes: 5
+    runs-on: macos-26
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - run: bash client-ios/scripts/test-image-presentation.sh
+      - run: bash client-ios/scripts/test-outfit-core.sh
+      - run: bash client-ios/scripts/build-device.sh
       - name: Confirm the same noise fixture fails on the previous crop implementation
         run: |
           set -euo pipefail

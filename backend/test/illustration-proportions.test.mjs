@@ -24,3 +24,10 @@ test('a folded lower-body garment is not measured using a short-sleeve torso ass
  assert.equal(await measureTopProportions(await torso(500,800),{type:'trousers'}),null);
  assert.equal(await measureTopProportions(await torso(500,800),{type:'hoodie',traits:{sleeves:'long'}}),null);
 });
+test('an ambiguous generated outline cannot evade a measurable source proportion constraint',async()=>{
+ const source=await torso(660,850);
+ const output=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M400 30 H624 L950 950 H74 Z" fill="#222"/></svg>')).png().toBuffer();
+ const check=await compareTopProportions(source,output,features);
+ assert.equal(check.measurable,true);assert.equal(check.valid,false);
+ assert.equal(check.reason,'ambiguous-result-outline');
+});
