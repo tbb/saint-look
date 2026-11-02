@@ -3,6 +3,7 @@ import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {createCipheriv,createDecipheriv,randomBytes,createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 const sharp=createRequire(new URL('../../../backend/package.json',import.meta.url))('sharp');
+import {exchange} from '../../../backend/src/providers.mjs';
 import {createIllustrationProvider} from '../../../backend/src/illustration-provider.mjs';
 import {compareTopProportions,measureTopProportions} from '../../../backend/src/illustration-proportions.mjs';
 import {checkGarmentLayout} from '../../../backend/src/illustration-layout.mjs';
@@ -39,6 +40,10 @@ try{
  const photos=[{source,prepared,role:'front'}];
  const features=input.features||await call('attributes',()=>provider.attributes(photos,signal));
  state.features=features;state.proportions=await measureTopProportions(prepared,features);save();
+ if(input.receipt){
+  const answer=JSON.parse(await exchange('https://generativelanguage.googleapis.com/v1beta/interactions/'+encodeURIComponent(input.receipt),{headers:{'x-goog-api-key':process.env.GEMINI_API_KEY}},signal,120000,14*1024*1024));
+  state.recovery=answer;save();console.log(JSON.stringify({status:answer.status,model:answer.model,idMatches:answer.id===input.receipt,error:answer.error?.code,steps:answer.steps?.map(s=>({type:s.type,content:s.content?.map(c=>({type:c.type,hasData:!!c.data}))}))}));
+ }
  const generated=await call(input.receipt?'recovery':'generation',()=>provider.generate(photos,features,signal,id=>{state.receipt=id;save();},input.receipt));
  state.variants.production.generated=generated.png.toString('base64');save();
  const result=await call('finalization',()=>provider.prepare(generated.png,signal,'finalization',features));
