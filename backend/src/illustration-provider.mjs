@@ -152,12 +152,14 @@ export function createIllustrationProvider(env) {
       const generationReferences=await Promise.all(references.map(async photo=>({
         ...photo, prepared:edit?await sharp(photo.prepared).flatten({background:generationBackground(features)}).png().toBuffer():photo.prepared,
       })));
-      const sourceImages=generationReferences.flatMap(photo=>sourceFrontOnly && photo.role===front.role ? [
-        ...(photo.generationReference ? [
+      const unfoldedReference=front.generationReference ? [
           {type:'text',text:'Image unfolded_front_pose: use this unfolded sleeve arrangement, with exactly two sleeves. Restore any altered print/detail from the original detail panels. Never copy the folded sleeve position from the original. This is a pose reference, not a new garment identity.'},
-          {type:'image',mime_type:'image/png',data:photo.generationReference.toString('base64')},
-        ] : []),
+          {type:'image',mime_type:'image/png',data:front.generationReference.toString('base64')},
+      ] : [];
+      const sourceImages=generationReferences.flatMap(photo=>sourceFrontOnly && photo.role===front.role ? [
+        ...(editPose ? unfoldedReference : []),
         ...(identityPanels.length ? identityPanels : [{type:'text',text:'Original identity reference.'},{type:'image',mime_type:'image/png',data:photo.source.toString('base64')}]),
+        ...(!editPose ? unfoldedReference : []),
       ] : [
         {type:'text',text:`Image original_${photo.role}.`},
         {type:'image',mime_type:'image/png',data:photo.source.toString('base64')},
