@@ -4,12 +4,13 @@ import sharp from 'sharp';
 import { modelFixture } from './model.mjs';
 import { createHash } from 'node:crypto';
 import { garmentLayout } from '../../src/illustration-layout.mjs';
+import {measuredGuideSVG} from '../../src/illustration-edit-pose.mjs';
 
 // The fixture implements external HTTP boundaries, never production fallback.
 export async function illustrationFixture(t, handlers = {}) {
   const calls = { unfolding: [], structure: [], fidelity: [], preparation: [], attributes: [], generation: [], recovery: [], finalization: [], model: [], rank: [] };
   const result = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: '#00000000' } })
-    .composite([{ input: await sharp({ create: { width: 120, height: 270, channels: 4, background: '#dd3322ff' } }).png().toBuffer(), left: 452, top: 240 }]).png().toBuffer();
+    .composite([{ input: await sharp({ create: { width: 200, height: 270, channels: 4, background: '#dd3322ff' } }).png().toBuffer(), left: 412, top: 240 }]).png().toBuffer();
   const generated = await sharp(result).flatten({ background: '#ffffff' }).jpeg().toBuffer();
   const imageKey = async bytes => createHash('sha256').update(await sharp(bytes).ensureAlpha().raw().toBuffer()).digest('hex');
   const cutouts = new Map([[await imageKey(generated), result]]);
@@ -55,7 +56,8 @@ export async function illustrationFixture(t, handlers = {}) {
         let cutout = result;
         if (features.type !== 'Футболка' || features.traits?.sleeves==='short') {
           const layout = garmentLayout(features);
-          cutout = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-100 0 560 560"><path d="${layout.path}" fill="#dd3322"/></svg>`)).png().toBuffer();
+          const shortGuide=features.traits?.sleeves==='short' ? measuredGuideSVG({...features,traits:{...features.traits,body_length:'regular'}},{bodyWidthToLength:.64}) : null;
+          cutout = await sharp(Buffer.from(shortGuide || `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-100 0 560 560"><path d="${layout.path}" fill="#dd3322"/></svg>`)).png().toBuffer();
         }
         const jpeg = await sharp(cutout).flatten({ background: '#ffffff' }).jpeg().toBuffer();
         cutouts.set(await imageKey(jpeg), cutout);
