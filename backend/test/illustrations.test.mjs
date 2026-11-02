@@ -640,13 +640,39 @@ test('folded hoodie editing preserves source views and uses a measured pose targ
  assert.equal(images.length,4,'Back original/prepared, original front, then measured target');
  assert.equal(images[0].data,back.toString('base64'));
  assert.equal(images.at(-2).data,prepared.toString('base64'),'Original identity remains immediately before the pose target');
- const {data,info}=await sharp(Buffer.from(images.at(-1).data,'base64')).raw().toBuffer({resolveWithObject:true});
+ const {data,info}=await sharp(Buffer.from(images.at(-1).data,'base64')).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+ assert.deepEqual([info.width,info.height],[1024,1024]);
  assert.deepEqual([...data.subarray(0,3)],[128,128,128],'Light hoodies keep contrasting matte in their pose target');
- let left=512,right=512;
- const fill=x=>data[(700*info.width+x)*info.channels]>=200&&data[(700*info.width+x)*info.channels]<=230;
- while(fill(left-1))left--;while(fill(right+1))right++;
- assert.ok(Math.abs((right-left+1)/600-400/600)<.02,'Pose target preserves the source body ratio, not a default slim torso');
+ for(let i=0;i<data.length;i+=4)if(data[i]===128&&data[i+1]===128&&data[i+2]===128)data[i+3]=0;
+ const target=await sharp(data,{raw:info}).png().toBuffer();
+ const {measureTopProportions}=await import('../src/illustration-proportions.mjs');
+ const measured=await measureTopProportions(target,{type:'Худи'});
+ assert.ok(Math.abs(measured.bodyWidthToLength/(400/601)-1)<.02,'Pose target preserves the source body ratio, not a default slim torso');
  assert.match(request.input.at(-1).text,/#808080/);
  assert.ok(!request.input.at(-1).text.includes('"body_length"'),'Inferred fit labels must not override the visible source');
  assert.match(request.input.at(-1).text,/"sleeves":"long"/,'Observed sleeve length must not be lost when passing identity features');
+});
+
+test('four-sleeve structural defect gets one correction and never publishes the bad candidate',async t=>{
+ const fixture=await illustrationFixture(t,{structure:async(_request,response)=>{
+  response.writeHead(200,{'Content-Type':'application/json'});
+  response.end(JSON.stringify({id:'v1_four-sleeves',model:'gemini-3.8-flash',status:'completed',steps:[{type:'model_output',content:[{type:'text',text:JSON.stringify({sleeve_count:4,folded_sleeves:true,duplicated_parts:true,raised_hood:false,confidence:.99,evidence:'Two inner cuffs and two outer cuffs.'})}]}]}));
+ }});
+ const env=await environment(t),server=await env.launch(fixture.env),photo=await photoRequest();
+ await upload(server,photo);await waitForItem(server,photo.itemId);
+ const input=illustration(photo);await requestIllustration(server,photo.itemId,input);
+ const failed=await waitForIllustration(server,photo.itemId,input.operationId,'failed');
+ assert.equal(failed.error,'illustration_geometry_invalid');assert.equal(failed.resultPath,null);
+ assert.equal(fixture.calls.generation.length,2);assert.equal(fixture.calls.structure.length,2);assert.equal(fixture.calls.fidelity.length,0);
+ assert.match(JSON.parse(fixture.calls.generation[1].body).input.at(-1).text,/duplicated_parts/);
+});
+
+test('crash during structural inspection does not repeat either paid inspection',async t=>{
+ const fixture=await illustrationFixture(t,{structure:async()=>{}}),env=await environment(t),server=await env.launch(fixture.env);
+ const photo=await photoRequest();await upload(server,photo);await waitForItem(server,photo.itemId);
+ const input=illustration(photo);await requestIllustration(server,photo.itemId,input);await until(()=>fixture.calls.structure.length===1);
+ await server.stop('SIGKILL');const restarted=await env.launch(fixture.env);
+ assert.equal((await waitForIllustration(restarted,photo.itemId,input.operationId,'failed')).error,'processing_unknown');
+ await requestIllustration(restarted,photo.itemId,input);
+ assert.equal(fixture.calls.structure.length,1);assert.equal(fixture.calls.fidelity.length,0);assert.equal(fixture.calls.generation.length,1);
 });

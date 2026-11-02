@@ -40,14 +40,18 @@ test('a wide torso is not mistaken for two unfolded sleeves at the wrist bands',
   assert.equal(check.valid,false,'Torso pixels inside wrist bands are not evidence of unfolded sleeves');
 });
 
-test('measured hood pose does not impose long sleeves or cuff-level hems on other cuts',async()=>{
- const {editPoseGuide}=await import('../src/illustration-edit-pose.mjs');
- const {garmentEditInstructions}=await import('../src/illustration-edit.mjs');
- for(const [sleeves,body_length] of [['short','regular'],['sleeveless','regular'],['long','cropped'],['long','long'],['unknown','regular']]) {
-  const features={type:'hoodie',traits:{sleeves,body_length}},proportions={bodyWidthToLength:.8};
-  assert.equal(await editPoseGuide(features,proportions),null,`${sleeves}/${body_length} cannot use a regular long-sleeve pose`);
-  if(sleeves==='short'||sleeves==='sleeveless')assert.doesNotMatch(garmentEditInstructions(features,proportions),/Exactly TWO sleeves and TWO cuffs|Long cuffs end/);
+test('measured guides preserve sleeve lengths and distinct designed hem lengths',async()=>{
+ const {measuredGuideSVG,editPoseGuide}=await import('../src/illustration-edit-pose.mjs');
+ for(const sleeves of ['sleeveless','unknown'])assert.equal(await editPoseGuide({type:'hoodie',traits:{sleeves}},{bodyWidthToLength:.8}),null);
+ const hem=[];
+ for(const body_length of ['cropped','regular','long']) {
+  const features={type:'hoodie',traits:{sleeves:'short',body_length}};
+  const data=await sharp(Buffer.from(measuredGuideSVG(features,{bodyWidthToLength:.8}))).ensureAlpha().raw().toBuffer();
+  let last=0;for(let y=0;y<1024;y++)if(data[(y*1024+512)*4+3]>224)last=y;
+  hem.push(last);
+  assert.equal(data[(539*1024+307)*4+3],0,'Short sleeves cannot reach wrist anchors');
  }
+ assert.ok(hem[0]<hem[1]&&hem[1]<hem[2]);
 });
 
 test('unfolded sleeves beside the wrists do not qualify as aligned cuffs',async()=>{
@@ -81,4 +85,23 @@ test('open jacket panels cannot substitute for cuffs outside the wrists',async()
  const source=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><g fill="#222"><path d="M360 270 H664 V575 H524 V300 H500 V575 H360Z"/><path d="M450 280 V240 Q430 172 512 172 Q594 172 574 240 V280Z"/><path d="M430 270 L344 320 L314 565 L344 575 L354 390 L410 300Z M594 270 L680 320 L710 565 L680 575 L670 390 L614 300Z"/></g></svg>')).png().toBuffer();
  const check=await checkGarmentLayout(source,{type:'jacket',traits:{hood:'yes',sleeves:'long',body_length:'regular',fastening:'zip'}});
  assert.equal(check.wristsValid,false);assert.equal(check.valid,false);
+});
+
+test('an independent flat sleeve silhouette cannot admit an arm exiting through the underarm',async()=>{
+ const failed=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M480 240 Q512 260 544 240 L594 269 L694 300 L674 370 L610 340 V540 H414 V340 L350 370 L330 300 L430 269 Z" fill="#222"/></svg>')).png().toBuffer();
+ const features={type:'t_shirt',traits:{sleeves:'short',body_length:'regular',neckline:'round'}};
+ const check=await checkGarmentLayout(failed,features);
+ assert.equal(check.baseValid,true,'This regression passed the old torso/envelope checks');
+ assert.equal(check.sleeveOpeningsValid,false);assert.equal(check.valid,false);
+ const {measuredGuideSVG}=await import('../src/illustration-edit-pose.mjs');
+ const corrected=await sharp(Buffer.from(measuredGuideSVG(features,{bodyWidthToLength:.784}))).png().toBuffer();
+ assert.equal((await checkGarmentLayout(corrected,features)).sleeveOpeningsValid,true);
+});
+
+
+test('thin sleeves cannot hide exposed sides of the actual mannequin arms',async()=>{
+ const source=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><g fill="#333"><path d="M470 240 Q450 185 512 172 Q574 185 554 240 L610 270 L614 540 H410 L414 270 Z"/><path d="M430 269 L307 539 M594 270 L716 539" stroke="#333" stroke-width="15"/><path d="M297 522 L324 534 L311 562 L284 550Z M699 534 L726 522 L739 550 L712 562Z"/></g></svg>')).png().toBuffer();
+ const result=await checkGarmentLayout(source,{type:'hoodie',traits:{sleeves:'long',body_length:'regular'}});
+ assert.equal(result.armsContainedValid,false);
+ assert.equal(result.valid,false);
 });

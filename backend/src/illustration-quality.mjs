@@ -5,7 +5,7 @@ const corrections = {
   illustration_identity_changed: 'Restore the exact original garment identity. Do not invent, simplify, move or remove prints, lettering, seams, pockets, cuffs or fabric patterns.',
 };
 const dimensions = new Set(['cut','artwork','material','construction',
-  'folded_sleeves','wrist_alignment','shoulder_alignment','leg_pose','body_anchors']);
+  'duplicated_parts','raised_hood','sleeve_opening','folded_sleeves','wrist_alignment','shoulder_alignment','leg_pose','body_anchors']);
 export function qualityCorrection(error) {
   if (!Object.hasOwn(corrections,error.code)) return null;
   return {code:error.code,defects:(error.defects||[]).filter(name=>dimensions.has(name))};
@@ -13,5 +13,5 @@ export function qualityCorrection(error) {
 export function correctionInstructions(correction) {
   if (!correction || !Object.hasOwn(corrections,correction.code)) return '';
   const defects=(correction.defects||[]).filter(name=>dimensions.has(name));
-  return ` CORRECTION: The previous completed candidate failed ${correction.code}${defects.length?` (${defects.join(', ')})`:''}. ${corrections[correction.code]} ${defects.includes('wrist_alignment')?'Long cuffs must meet the guide wrists: do not stop sleeves above them or place cuffs outside the hands. ':''}${defects.includes('folded_sleeves')?'Remove the folded sleeve pose completely; exactly two unfolded sleeves, with no cuffs on the stomach. ':''}Use the original photos as the identity reference. The pose guide only controls pose. This is the single corrective attempt.`;
+  return ` CORRECTION: The previous completed candidate failed ${correction.code}${defects.length?` (${defects.join(', ')})`:''}. ${corrections[correction.code]} ${defects.includes('wrist_alignment')?'Long cuffs must meet the guide wrists: do not stop sleeves above them or place cuffs outside the hands. ':''}${defects.includes('sleeve_opening')?'Arrange the existing sleeves along the guide arms with enough width to contain the wearer; each arm must exit through its cuff opening, never the armpit or side seam. ':''}${defects.includes('raised_hood')?'Lower the existing hood behind the neck; do not keep the upright pointed hood. ':''}${defects.includes('duplicated_parts')?'Remove duplicated sleeves and cuffs; there must be exactly two sleeves total. ':''}${defects.includes('folded_sleeves')?'Remove the folded sleeve pose completely; exactly two unfolded sleeves, with no cuffs on the stomach. ':''}Use the original photos as the identity reference. The pose guide only controls pose. This is the single corrective attempt.`;
 }

@@ -7,7 +7,7 @@ import { requireNotDeleted } from './deletion.mjs';
 import { ProviderError } from './providers.mjs';
 import { createIllustrationProvider, illustrationVersions, illustrationTaxonomy } from './illustration-provider.mjs';
 import {compareTopProportions,measureTopProportions} from './illustration-proportions.mjs';
-import { registerGarmentLayout, garmentLayout } from './illustration-layout.mjs';
+import { registerGarmentForFitting, garmentLayout } from './illustration-layout.mjs';
 
 const stages = ['preparation', 'attributes', 'generation', 'finalization', 'fidelity'];
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -21,6 +21,7 @@ function compatiblePreparedVersions(serialized) {
   // Switching renderers preserves segmentation; its billing mode is checked separately.
   return versions && ['fal-ai/nano-banana-pro/edit', illustrationVersions.modelVersion].includes(versions.modelVersion)
     && ((versions.templateVersion === illustrationVersions.templateVersion && versions.geometryVersion === illustrationVersions.geometryVersion)
+      || (versions.modelVersion === 'gemini-3-pro-image' && versions.templateVersion === 'category-front-anchors-v5' && versions.geometryVersion === 'fitting-anchors-1024-v5')
       || (versions.modelVersion === 'gemini-3-pro-image' && versions.templateVersion === 'category-front-anchors-v4' && versions.geometryVersion === 'fitting-anchors-1024-v4')
       || (versions.modelVersion === 'gemini-3-pro-image' && versions.templateVersion === 'category-front-anchors-v3' && versions.geometryVersion === 'fitting-anchors-1024-v3')
       || (versions.modelVersion === 'gemini-3-pro-image' && versions.templateVersion === 'category-front-anchors-v2' && versions.geometryVersion === 'fitting-anchors-1024-v2')
@@ -97,6 +98,7 @@ export function createIllustrations(database, env, retention, budget) {
   const illustrationColumns = new Set(database.prepare('PRAGMA table_info(illustrations)').all().map(column => column.name));
   if (!illustrationColumns.has('photoroom_mode')) database.exec("ALTER TABLE illustrations ADD COLUMN photoroom_mode TEXT NOT NULL DEFAULT 'sandbox'");
   for (const column of ['result_digest', 'observed_digest', 'effective_digest']) if (!illustrationColumns.has(column)) database.exec(`ALTER TABLE illustrations ADD COLUMN ${column} TEXT`);
+  if (!illustrationColumns.has('fitting_poses')) database.exec('ALTER TABLE illustrations ADD COLUMN fitting_poses TEXT');
   if (!illustrationColumns.has('quality_attempt')) database.exec('ALTER TABLE illustrations ADD COLUMN quality_attempt INTEGER NOT NULL DEFAULT 0');
   if (!illustrationColumns.has('quality_history')) database.exec("ALTER TABLE illustrations ADD COLUMN quality_history TEXT NOT NULL DEFAULT '[]'");
   if (!illustrationColumns.has('cutout')) database.exec('ALTER TABLE illustrations ADD COLUMN cutout BLOB');
@@ -144,7 +146,7 @@ export function createIllustrations(database, env, retention, budget) {
     // Ordinary photo replacement is authoritative even when the illustration
     // worker is awaiting a provider. The old operation must not lock the item.
     database.prepare(`UPDATE illustrations SET status='failed',error='operation_superseded',retention_state='superseded',
-      generated=NULL,cutout=NULL,result=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL
+      generated=NULL,cutout=NULL,result=NULL,fitting_poses=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL
       WHERE retention_state='active' AND EXISTS (SELECT 1 FROM items
         WHERE items.item_id=illustrations.item_id AND items.photo_version_id<>illustrations.photo_version_id)`).run();
     for (const source of database.prepare('SELECT item_id,photo_id FROM illustration_sources WHERE source IS NOT NULL').all()) {
@@ -153,7 +155,7 @@ export function createIllustrations(database, env, retention, budget) {
       if (!referenced) database.prepare(`UPDATE illustration_sources SET ${cleared},state=CASE WHEN state='in_flight' THEN 'unknown' ELSE state END WHERE item_id=? AND photo_id=?`).run(source.item_id, source.photo_id);
     }
     database.prepare(`UPDATE illustrations SET status='failed',error='result_expired',retention_state='expired',
-      generated=NULL,cutout=NULL,result=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL,processing=?
+      generated=NULL,cutout=NULL,result=NULL,fitting_poses=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL,processing=?
       WHERE retention_state='active' AND expires_at<=?`).run(json(Object.fromEntries(stages.map(stage => [stage, 'cleared']))), now);
     database.prepare(`UPDATE illustration_sources SET ${cleared} WHERE expires_at<=?`).run(now);
   }
@@ -178,6 +180,7 @@ export function createIllustrations(database, env, retention, budget) {
         return { photoId: photo.id, sourceSHA256: photo.digest, preparedSHA256: source?.prepared_digest ?? null,
           versions: parse(source?.prepared_versions ?? null), preparedPath: `/v1/items/${row.item_id}/illustrations/${row.operation_id}/sources/${photo.id}/prepared` };
       }) : [],
+      fittingPoses: row.status === 'ready' ? parse(row.fitting_poses) : null,
       resultPath: row.status === 'ready' ? `/v1/items/${row.item_id}/illustrations/${row.operation_id}/result` : null, error: row.error };
   }
   function live(operationId) {
@@ -266,19 +269,21 @@ export function createIllustrations(database, env, retention, budget) {
           database.prepare('UPDATE illustrations SET cutout=?,processing=? WHERE operation_id=?')
             .run(cutout,json({...parse(active.processing),finalization:finalizationState}),operationId);
         }
-        result = await registerGarmentLayout(cutout,effective,await measureTopProportions(cutout,effective));
+        const fitting = await registerGarmentForFitting(cutout,effective,await measureTopProportions(cutout,effective));
+        result = fitting.png;
         const active = live(operationId); if (!active) return;
         // Persist the paid output and its completed stage together. It remains
         // private while pending; restart must not pay for finalization again.
         const processing = { ...parse(active.processing), finalization: finalizationState };
-        database.prepare('UPDATE illustrations SET result=?,result_digest=?,processing=? WHERE operation_id=?')
-          .run(result, digest(result), json(processing), operationId);
+        database.prepare('UPDATE illustrations SET result=?,result_digest=?,processing=?,fitting_poses=? WHERE operation_id=?')
+          .run(result, digest(result), json(processing), json(fitting.poses), operationId);
       }
       const front=photos.find(photo=>photo.role==='front')||photos[0];
       const proportions=await compareTopProportions(front.prepared,result,effective);
       if(proportions.measurable && !proportions.valid) throw new ProviderError('illustration_proportions_changed');
       if(!live(operationId))return;
       stage='fidelity';setStage(operationId,stage,'in_flight');
+      budget.reserve('gemini',`${operationId}:illustration:structure:${row.photo_version_id}:${row.quality_attempt}`);
       budget.reserve('jev',`${operationId}:illustration:fidelity:${row.photo_version_id}:${row.quality_attempt}`);
       await provider.fidelity(front.source,result,abort.signal);
       const checked = live(operationId); if (!checked) return;
@@ -449,7 +454,7 @@ export function createIllustrations(database, env, retention, budget) {
         // This is the publication commit: generated output alone never freezes photos.
         lockSources(row);
         database.prepare(`UPDATE illustrations SET retention_state='delivered',status='failed',error='result_delivered',
-          generated=NULL,cutout=NULL,result=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL,processing=? WHERE operation_id=?`)
+          generated=NULL,cutout=NULL,result=NULL,fitting_poses=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL,processing=? WHERE operation_id=?`)
           .run(json(Object.fromEntries(stages.map(stage => [stage, 'cleared']))), operationId);
         for (const photo of parse(row.photos)) {
           const used = database.prepare("SELECT photos FROM illustrations WHERE item_id=? AND retention_state='active'").all(itemId)

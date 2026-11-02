@@ -71,6 +71,7 @@ const server = createServer(async (request, response) => {
     const body = await bodyOf(request, 16 * 1024 * 1024);
     if (await modelFixture(request, response, body, {}, modelCalls, rankCalls)) return;
     if (request.url === '/v1beta/interactions') {
+      if(JSON.parse(body).model==='gemini-3.8-flash')return reply(response,200,{id:'v1_ui-structure',model:'gemini-3.8-flash',status:'completed',steps:[{type:'model_output',content:[{type:'text',text:JSON.stringify({sleeve_count:2,folded_sleeves:false,duplicated_parts:false,raised_hood:false,confidence:.99,evidence:'Controlled two-sleeve fixture.'})}]}]});
       illustrationGenerationCalls++;
       if (illustrationMode === 'held') await new Promise(resolve => heldGenerations.add(resolve));
       if (illustrationMode === 'unknown') { response.destroy(); return; }

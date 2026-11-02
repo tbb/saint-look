@@ -1,3 +1,4 @@
+import {structureRequest,structureAnswer} from './illustration-structure.mjs';
 import {correctionInstructions} from './illustration-quality.mjs';
 import {editPoseGuide,measuredPoseInstructions} from './illustration-edit-pose.mjs';
 import sharp from 'sharp';
@@ -91,13 +92,24 @@ export function createIllustrationProvider(env) {
     },
     async fidelity(source,result,signal) {
       ensureConfigured();
+      let structure;
+      try {
+        const request=await structureRequest(result);
+        const answer=await json(`${geminiOrigin}/v1beta/interactions`,{method:'POST',headers:geminiHeaders,
+          body:JSON.stringify(request)},signal,256*1024);
+        structure=structureAnswer(answer);
+      } catch(error) {
+        if(error instanceof ProviderError && !error.unknown && error.code!=='invalid_provider_response')throw error;
+        throw new ProviderError('processing_unknown',true);
+      }
+      if(!structure.valid)throw Object.assign(new ProviderError('illustration_geometry_invalid'),{defects:structure.defects});
       const request=await fidelityRequest(source,result);
       const answer=await json(jevURL,{method:'POST',headers:{'Content-Type':'application/json',
         Authorization:`Bearer ${env.TYPESAFE_API_KEY}`,'TypeSafe-Danger-Zone-Images':'true'},body:JSON.stringify(request)},signal);
       let checked;
       try{checked=fidelityAnswer(answer,request);}catch{throw new ProviderError('invalid_provider_response');}
       if(!checked.valid)throw Object.assign(new ProviderError(checked.error),{defects:checked.defects});
-      return checked;
+      return {...checked,structure};
     },
     async generate(photos, features, signal, recordReceipt, savedReceipt, correction) {
       ensureConfigured();

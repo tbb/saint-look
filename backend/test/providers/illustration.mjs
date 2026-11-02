@@ -7,7 +7,7 @@ import { garmentLayout } from '../../src/illustration-layout.mjs';
 
 // The fixture implements external HTTP boundaries, never production fallback.
 export async function illustrationFixture(t, handlers = {}) {
-  const calls = { fidelity: [], preparation: [], attributes: [], generation: [], recovery: [], finalization: [], model: [], rank: [] };
+  const calls = { structure: [], fidelity: [], preparation: [], attributes: [], generation: [], recovery: [], finalization: [], model: [], rank: [] };
   const result = await sharp({ create: { width: 1024, height: 1024, channels: 4, background: '#00000000' } })
     .composite([{ input: await sharp({ create: { width: 120, height: 270, channels: 4, background: '#dd3322ff' } }).png().toBuffer(), left: 452, top: 240 }]).png().toBuffer();
   const generated = await sharp(result).flatten({ background: '#ffffff' }).jpeg().toBuffer();
@@ -30,12 +30,13 @@ export async function illustrationFixture(t, handlers = {}) {
       if (request.url === '/result.png') {
         response.writeHead(200, { 'Content-Type': 'image/png' }); response.end(handlers.opaque ? await sharp(result).flatten({ background: '#ffffff' }).png().toBuffer() : result); return;
       }
-      const stage = request.url === '/v1/systemone' ? (JSON.parse(body).questions?.artwork?'fidelity':'attributes') : request.url === '/v1beta/interactions' ? 'generation'
+      const stage = request.url === '/v1/systemone' ? (JSON.parse(body).questions?.artwork?'fidelity':'attributes') : request.url === '/v1beta/interactions' ? (JSON.parse(body).model==='gemini-3.8-flash'?'structure':'generation')
         : request.url === '/v1/segment' ? (body.includes(Buffer.from('finalization.png')) ? 'finalization' : 'preparation') : null;
       if (!stage) { response.writeHead(404); response.end(); return; }
       calls[stage].push({ body, headers: request.headers, path: request.url });
       if (handlers[stage]) { await handlers[stage](request, response, { body, result }); return; }
-      if (stage === 'attributes'||stage === 'fidelity') {
+      if(stage==='structure'){response.writeHead(200,{'Content-Type':'application/json'});response.end(JSON.stringify({id:'v1_structure-1',model:'gemini-3.8-flash',status:'completed',steps:[{type:'model_output',content:[{type:'text',text:JSON.stringify({sleeve_count:2,folded_sleeves:false,duplicated_parts:false,raised_hood:false,confidence:.99,evidence:'Two normal sleeves.'})}]}]}));}
+      else if (stage === 'attributes'||stage === 'fidelity') {
         const payload = JSON.parse(body);
         const answers = Object.fromEntries(Object.entries(payload.questions).map(([name, q]) => {
           if (q.type === 'noul') return [name, { type: 'noul', noul: handlers.colors
@@ -51,7 +52,7 @@ export async function illustrationFixture(t, handlers = {}) {
         calls.generation.at(-1).interaction = request;
         const features = JSON.parse(request.input.at(-1).text.split('take precedence): ')[1]);
         let cutout = result;
-        if (features.type !== 'Футболка') {
+        if (features.type !== 'Футболка' || features.traits?.sleeves==='short') {
           const layout = garmentLayout(features);
           cutout = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-100 0 560 560"><path d="${layout.path}" fill="#dd3322"/></svg>`)).png().toBuffer();
         }
