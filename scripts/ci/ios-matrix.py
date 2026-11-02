@@ -11,7 +11,7 @@ CLASSES = {'wardrobe': 'WardrobeFlowTests', 'outfits': 'OutfitFlowTests'}
 PROFILES = ['iphone-light', 'iphone-dark', 'iphone-max-text', 'ipad-light']
 
 
-# A single build checks ingestion, persistence, native menus, cancellation and scrolling.
+# A single build checks ingestion, persistence, native menus and source cancellation.
 SMOKE = {
     'WardrobeFlowTests': [
         'testPhotoBecomesReadyThroughBackendAndSurvivesOfflineRelaunch',
@@ -19,9 +19,7 @@ SMOKE = {
         'testSourceCancellationAndUnavailableCameraDoNotCreateAnItem',
     ],
     'OutfitFlowTests': [
-        'testCancelDraftDoesNotCreateOutfit',
         'testCreateUnnamedOutfitSurvivesBackgroundResultOfflineRestartAndItemDeletion',
-        'testSwipeDoesNotOpenPickerAndVerticalDragScrollsThroughRow',
     ],
 }
 

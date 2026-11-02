@@ -23,7 +23,7 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         selected = rows[0]['selectors'].splitlines()
         self.assertEqual(len(selected), len(set(selected)))
-        self.assertEqual(len(selected), 6)
+        self.assertEqual(len(selected), 4)
         for cls in matrix.CLASSES.values():
             self.assertTrue(any(f'/{cls}/' in test for test in selected))
         complete = {test for suite in matrix.CLASSES for group in matrix.partitions(suite) for test in group}
