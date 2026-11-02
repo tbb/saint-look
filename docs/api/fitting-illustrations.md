@@ -51,7 +51,7 @@
   "itemId": "UUID", "operationId": "UUID", "photoVersionId": "UUID",
   "sourceSetVersionId": "UUID", "revision": 1,
   "status": "pending", "mode": "live",
-  "processing": {"preparation":"pending", "attributes":"pending", "generation":"pending", "finalization":"pending", "fidelity":"pending"},
+  "processing": {"preparation":"pending", "attributes":"pending", "unfolding":"pending", "generation":"pending", "finalization":"pending", "fidelity":"pending"},
   "observedFeatures": null, "effectiveFeatures": null,
   "manualType": null, "manualColors": null,
   "modelVersion": "gemini-3-pro-image",
@@ -250,6 +250,19 @@ v2. Старый результат доступен в карточке; «Об
 этом не обрезается и не деформируется. Несовместимые видимые слои показаны
 фотографиями отдельно с объяснением. Длинный центральный подол не скрывается
 ради выбора позы.
+
+### Расправление сложных исходников
+
+Худи с явно длинными рукавами перед генерацией проходит `unfolding` через
+Photoroom Flat Lay (`POST /v2/edit`, `flatLay.mode=ai.auto`). Этот этап расправляет
+позу; его результат служит фронтальным ориентиром Gemini. Исходная фотография
+остаётся эталоном признаков, измеримых пропорций и финальной проверки идентичности.
+Это дополнительный платный запрос обычным Photoroom-ключом, не fal.ai.
+
+Результат расправления сохраняется атомарно с завершением стадии и повторно
+используется при единственной корректирующей генерации. Неизвестный исход
+расправления останавливает операцию без автоматического повторения. При доставке,
+просрочке или замене фото эти временные байты удаляются вместе с остальными.
 
 ### Проверка качества и повтор
 

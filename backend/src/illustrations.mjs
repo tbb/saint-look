@@ -9,7 +9,7 @@ import { createIllustrationProvider, illustrationVersions, illustrationTaxonomy 
 import {compareTopProportions,measureTopProportions} from './illustration-proportions.mjs';
 import { registerGarmentForFitting, garmentLayout } from './illustration-layout.mjs';
 
-const stages = ['preparation', 'attributes', 'generation', 'finalization', 'fidelity'];
+const stages = ['preparation', 'attributes', 'unfolding', 'generation', 'finalization', 'fidelity'];
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const parse = value => value === null ? null : JSON.parse(value);
 const json = value => JSON.stringify(value ?? null);
@@ -101,6 +101,7 @@ export function createIllustrations(database, env, retention, budget) {
   if (!illustrationColumns.has('fitting_poses')) database.exec('ALTER TABLE illustrations ADD COLUMN fitting_poses TEXT');
   if (!illustrationColumns.has('quality_attempt')) database.exec('ALTER TABLE illustrations ADD COLUMN quality_attempt INTEGER NOT NULL DEFAULT 0');
   if (!illustrationColumns.has('quality_history')) database.exec("ALTER TABLE illustrations ADD COLUMN quality_history TEXT NOT NULL DEFAULT '[]'");
+  if (!illustrationColumns.has('unfolded')) database.exec('ALTER TABLE illustrations ADD COLUMN unfolded BLOB');
   if (!illustrationColumns.has('cutout')) database.exec('ALTER TABLE illustrations ADD COLUMN cutout BLOB');
   // Existing undelivered v3 output has real bytes: bind them before any cleanup.
   for (const row of database.prepare('SELECT * FROM illustrations WHERE result IS NOT NULL OR observed IS NOT NULL OR effective IS NOT NULL').all()) {
@@ -146,7 +147,7 @@ export function createIllustrations(database, env, retention, budget) {
     // Ordinary photo replacement is authoritative even when the illustration
     // worker is awaiting a provider. The old operation must not lock the item.
     database.prepare(`UPDATE illustrations SET status='failed',error='operation_superseded',retention_state='superseded',
-      generated=NULL,cutout=NULL,result=NULL,fitting_poses=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL
+      unfolded=NULL,generated=NULL,cutout=NULL,result=NULL,fitting_poses=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL
       WHERE retention_state='active' AND EXISTS (SELECT 1 FROM items
         WHERE items.item_id=illustrations.item_id AND items.photo_version_id<>illustrations.photo_version_id)`).run();
     for (const source of database.prepare('SELECT item_id,photo_id FROM illustration_sources WHERE source IS NOT NULL').all()) {
@@ -155,7 +156,7 @@ export function createIllustrations(database, env, retention, budget) {
       if (!referenced) database.prepare(`UPDATE illustration_sources SET ${cleared},state=CASE WHEN state='in_flight' THEN 'unknown' ELSE state END WHERE item_id=? AND photo_id=?`).run(source.item_id, source.photo_id);
     }
     database.prepare(`UPDATE illustrations SET status='failed',error='result_expired',retention_state='expired',
-      generated=NULL,cutout=NULL,result=NULL,fitting_poses=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL,processing=?
+      unfolded=NULL,generated=NULL,cutout=NULL,result=NULL,fitting_poses=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL,processing=?
       WHERE retention_state='active' AND expires_at<=?`).run(json(Object.fromEntries(stages.map(stage => [stage, 'cleared']))), now);
     database.prepare(`UPDATE illustration_sources SET ${cleared} WHERE expires_at<=?`).run(now);
   }
@@ -239,6 +240,20 @@ export function createIllustrations(database, env, retention, budget) {
         database.prepare('UPDATE illustrations SET observed=?,effective=?,observed_digest=?,effective_digest=? WHERE operation_id=?').run(json(observed), json(effective), featureDigest(observed), featureDigest(effective), operationId);
         setStage(operationId, stage, 'done');
       }
+      stage = 'unfolding'; row = live(operationId); if (!row) return;
+      const layout = garmentLayout(effective); // Unsupported types never spend on normalization.
+      const needsUnfolding = layout.group === 'hooded' && effective.traits?.sleeves === 'long';
+      let unfolded = row.unfolded && Buffer.from(row.unfolded);
+      if (needsUnfolding && !unfolded && !row.generated && !row.provider_receipt) {
+        setStage(operationId, stage, 'in_flight');
+        budget.reserve('photoroom', `${operationId}:unfolding:${row.photo_version_id}`);
+        unfolded = await provider.unfold(photos.find(photo => photo.role === 'front').source, abort.signal);
+        const active = live(operationId); if (!active) return;
+        database.prepare('UPDATE illustrations SET unfolded=?,processing=? WHERE operation_id=?')
+          .run(unfolded, json({...parse(active.processing), unfolding:'done'}), operationId);
+      }
+      if (unfolded) photos.find(photo => photo.role === 'front').generationReference = unfolded;
+      else setStage(operationId, stage, 'skipped');
       stage = 'generation'; row = live(operationId); if (!row) return;
       let generated = row.generated && { png: Buffer.from(row.generated), usableAlpha: Boolean(row.generated_alpha) };
       if (!generated) {
@@ -454,7 +469,7 @@ export function createIllustrations(database, env, retention, budget) {
         // This is the publication commit: generated output alone never freezes photos.
         lockSources(row);
         database.prepare(`UPDATE illustrations SET retention_state='delivered',status='failed',error='result_delivered',
-          generated=NULL,cutout=NULL,result=NULL,fitting_poses=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL,processing=? WHERE operation_id=?`)
+          unfolded=NULL,generated=NULL,cutout=NULL,result=NULL,fitting_poses=NULL,observed=NULL,effective=NULL,manual_type=NULL,manual_colors=NULL,processing=? WHERE operation_id=?`)
           .run(json(Object.fromEntries(stages.map(stage => [stage, 'cleared']))), operationId);
         for (const photo of parse(row.photos)) {
           const used = database.prepare("SELECT photos FROM illustrations WHERE item_id=? AND retention_state='active'").all(itemId)

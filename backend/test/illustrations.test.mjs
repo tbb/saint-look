@@ -64,7 +64,7 @@ test('single photo produces a separate transparent illustration with observed tr
   assert.equal(ready.observedFeatures.type, 'Футболка');
   assert.deepEqual(ready.effectiveFeatures.colors, ['Красный']);
   assert.equal(ready.effectiveFeatures.traits.silhouette, 'unknown');
-  assert.deepEqual(ready.processing, { preparation: 'done', attributes: 'done', generation: 'done', finalization: 'done', fidelity: 'done' });
+  assert.deepEqual(ready.processing, { preparation: 'done', attributes: 'done', unfolding: 'skipped', generation: 'done', finalization: 'done', fidelity: 'done' });
   const generation = fixture.calls.generation[0];
   assert.equal(generation.path, '/v1beta/interactions');
   assert.equal(generation.headers['x-goog-api-key'], 'fixture');
@@ -675,4 +675,43 @@ test('crash during structural inspection does not repeat either paid inspection'
  assert.equal((await waitForIllustration(restarted,photo.itemId,input.operationId,'failed')).error,'processing_unknown');
  await requestIllustration(restarted,photo.itemId,input);
  assert.equal(fixture.calls.structure.length,1);assert.equal(fixture.calls.fidelity.length,0);assert.equal(fixture.calls.generation.length,1);
+});
+
+
+test('specialized hoodie unfolding is retained across quality correction and erased on delivery',async t=>{
+ const fixture=await illustrationFixture(t,{traits:{sleeves:'long',body_length:'regular'},structure:async(_request,response)=>{
+  const bad=fixture.calls.structure.length===1;
+  response.writeHead(200,{'Content-Type':'application/json'});
+  response.end(JSON.stringify({id:'v1_unfold-check',model:'gemini-3.8-flash',status:'completed',steps:[{type:'model_output',content:[{type:'text',text:JSON.stringify({sleeve_count:bad?4:2,folded_sleeves:bad,duplicated_parts:bad,raised_hood:false,confidence:.99,evidence:'Controlled structural decision.'})}]}]}));
+ }});
+ const env=await environment(t),server=await env.launch(fixture.env),photo=await photoRequest();
+ await upload(server,photo);await waitForItem(server,photo.itemId);
+ const input=illustration(photo,{manualType:'Худи'});await requestIllustration(server,photo.itemId,input);
+ const ready=await waitForIllustration(server,photo.itemId,input.operationId);
+ assert.equal(ready.processing.unfolding,'done');
+ assert.equal(fixture.calls.unfolding.length,1);assert.equal(fixture.calls.generation.length,2);
+ const request=JSON.parse(fixture.calls.generation[0].body);
+ assert.ok(request.input.some(part=>part.type==='image'&&part.data===fixture.result.toString('base64')),'Generator uses the unfolded reference');
+ const check=JSON.parse(fixture.calls.fidelity[0].body);
+ const {jevRequest}=await import('../src/jev.mjs');
+ const original=await jevRequest(Buffer.from(photo.imageBase64,'base64'));
+ assert.equal(check.assets[check.state.photo_0_original_reference].data_base64,Object.values(original.assets)[0].data_base64,
+  'Identity must be checked against the original photograph, never the AI-unfolded reference');
+ const db=new DatabaseSync(join(env.directory,'wardrobe.sqlite'));
+ assert.ok(db.prepare('SELECT unfolded FROM illustrations WHERE operation_id=?').get(input.operationId).unfolded);
+ await commitIllustration(server,photo,input);
+ assert.equal(db.prepare('SELECT unfolded FROM illustrations WHERE operation_id=?').get(input.operationId).unfolded,null);db.close();
+});
+
+test('crash during specialized unfolding stops without repeating the paid request',async t=>{
+ const fixture=await illustrationFixture(t,{traits:{sleeves:'long'},unfolding:async()=>{}});
+ const env=await environment(t),server=await env.launch(fixture.env),photo=await photoRequest();
+ await upload(server,photo);await waitForItem(server,photo.itemId);
+ const input=illustration(photo,{manualType:'Худи'});await requestIllustration(server,photo.itemId,input);
+ await until(()=>fixture.calls.unfolding.length===1);await server.stop('SIGKILL');
+ const restarted=await env.launch(fixture.env);
+ const failed=await waitForIllustration(restarted,photo.itemId,input.operationId,'failed');
+ assert.equal(failed.error,'processing_unknown');assert.equal(failed.processing.unfolding,'unknown');
+ await requestIllustration(restarted,photo.itemId,input);
+ assert.equal(fixture.calls.unfolding.length,1);assert.equal(fixture.calls.generation.length,0);
 });
