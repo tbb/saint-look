@@ -581,3 +581,23 @@ test('a light garment keeps its pixels against a contrasting generator matte',as
  assert.deepEqual([...pixels.subarray((30*64+30)*3,(30*64+30)*3+3)],[255,255,255]);
  assert.match(request.input.at(-1).text,/#808080/);
 });
+
+test('folded hoodie editing preserves source views and uses a measured pose target last',async t=>{
+ const fixture=await illustrationFixture(t),provider=createIllustrationProvider(fixture.env);
+ const prepared=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M312 200 H712 V800 H312 Z M432 100 H592 V220 H432 Z" fill="#eee"/></svg>')).png().toBuffer();
+ const back=await sharp({create:{width:64,height:64,channels:4,background:'#0000ff'}}).png().toBuffer();
+ await provider.generate([{role:'front',source:prepared,prepared},{role:'back',source:back,prepared:back}],
+  {type:'Худи',colors:['Белый'],traits:{sleeves:'long',body_length:'regular',silhouette:'unknown'}},new AbortController().signal,()=>{});
+ const request=fixture.calls.generation[0].interaction,images=request.input.filter(v=>v.type==='image');
+ assert.equal(images.length,4,'Back original/prepared, original front, then measured target');
+ assert.equal(images[0].data,back.toString('base64'));
+ assert.equal(images.at(-2).data,prepared.toString('base64'),'Original identity remains immediately before the pose target');
+ const {data,info}=await sharp(Buffer.from(images.at(-1).data,'base64')).raw().toBuffer({resolveWithObject:true});
+ assert.deepEqual([...data.subarray(0,3)],[128,128,128],'Light hoodies keep contrasting matte in their pose target');
+ let left=512,right=512;
+ const fill=x=>data[(700*info.width+x)*info.channels]>=200&&data[(700*info.width+x)*info.channels]<=230;
+ while(fill(left-1))left--;while(fill(right+1))right++;
+ assert.ok(Math.abs((right-left+1)/600-400/600)<.02,'Pose target preserves the source body ratio, not a default slim torso');
+ assert.match(request.input.at(-1).text,/#808080/);
+ assert.ok(!request.input.at(-1).text.includes('"body_length"'),'Inferred fit labels must not override the visible source');
+});

@@ -39,3 +39,13 @@ test('a wide torso is not mistaken for two unfolded sleeves at the wrist bands',
   const check=await checkGarmentLayout(source,{type:'hoodie',traits:{sleeves:'long',body_length:'regular'}});
   assert.equal(check.valid,false,'Torso pixels inside wrist bands are not evidence of unfolded sleeves');
 });
+
+test('measured hood pose does not impose long sleeves or cuff-level hems on other cuts',async()=>{
+ const {editPoseGuide}=await import('../src/illustration-edit-pose.mjs');
+ const {garmentEditInstructions}=await import('../src/illustration-edit.mjs');
+ for(const [sleeves,body_length] of [['short','regular'],['sleeveless','regular'],['long','cropped'],['long','long'],['unknown','regular']]) {
+  const features={type:'hoodie',traits:{sleeves,body_length}},proportions={bodyWidthToLength:.8};
+  assert.equal(await editPoseGuide(features,proportions),null,`${sleeves}/${body_length} cannot use a regular long-sleeve pose`);
+  if(sleeves==='short'||sleeves==='sleeveless')assert.doesNotMatch(garmentEditInstructions(features,proportions),/Exactly TWO sleeves and TWO cuffs|Long cuffs end/);
+ }
+});
