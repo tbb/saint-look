@@ -12,13 +12,19 @@ REQUIRED = {'changes', 'ios-acceptance', 'ios-wardrobe-1', 'ios-wardrobe-2',
             'ios-visual-iphone-max-text', 'ios-visual-ipad-light'}
 
 
-def checked_run(runs, sha, repository):
+def checked_run(runs, sha, repository, jobs_for_run):
     for run in runs:
         if (run.get('head_sha') == sha and run.get('head_branch') == 'main'
                 and run.get('event') in ('push', 'workflow_dispatch') and run.get('status') == 'completed'
                 and run.get('conclusion') == 'success' and run.get('path') == '.github/workflows/ci.yml'
                 and run.get('head_repository', {}).get('full_name') == repository
                 and type(run.get('id')) is int):
+            jobs = jobs_for_run(run['id'])
+            try:
+                check_jobs(jobs)
+            except ValueError:
+                # A newer focused diagnostic must not hide complete acceptance.
+                continue
             return run['id']
     raise ValueError('No successful complete main CI for this revision')
 
@@ -40,8 +46,8 @@ def main():
     def api(path):
         return json.loads(subprocess.check_output(['gh', 'api', path], stderr=subprocess.DEVNULL, timeout=30))
     result = api(f'repos/{repository}/actions/workflows/ci.yml/runs?head_sha={sha}&branch=main&status=success&per_page=100')
-    run = checked_run(result.get('workflow_runs', []), sha, repository)
-    check_jobs(api(f'repos/{repository}/actions/runs/{run}/jobs?filter=latest&per_page=100').get('jobs', []))
+    run = checked_run(result.get('workflow_runs', []), sha, repository,
+                      lambda run_id: api(f'repos/{repository}/actions/runs/{run_id}/jobs?filter=latest&per_page=100').get('jobs', []))
     print(json.dumps({'revision': sha, 'ciRunId': run, 'checked': True}))
 
 
