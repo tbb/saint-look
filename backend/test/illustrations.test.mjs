@@ -488,9 +488,9 @@ function fidelityReply(response, body, choice = 'preserved', confidence = 1) {
   response.end(JSON.stringify({ model: payload.model, answers, usage: { input_tokens: 1000 } }));
 }
 
-test('a changed crest fails publication without silently retrying; uncertain identity is not a confident mismatch', async t => {
-  let choice = 'changed';
-  const fixture = await illustrationFixture(t, { fidelity: async (_request, response, { body }) => fidelityReply(response, body, choice, .96) });
+test('publication requires confirmed identity; uncertain and weak evidence fail without silent retries', async t => {
+  let choice = 'changed', confidence = .96;
+  const fixture = await illustrationFixture(t, { fidelity: async (_request, response, { body }) => fidelityReply(response, body, choice, confidence) });
   const env = await environment(t), server = await env.launch(fixture.env);
   const photo = await photoRequest(); await upload(server, photo); await waitForItem(server, photo.itemId);
   const input = illustration(photo); await requestIllustration(server, photo.itemId, input);
@@ -500,10 +500,24 @@ test('a changed crest fails publication without silently retrying; uncertain ide
   assert.equal((await server.request(`/v1/items/${photo.itemId}/illustrations/${input.operationId}/result`)).status, 409);
   await requestIllustration(server, photo.itemId, input);
   assert.equal(fixture.calls.generation.length, 1); assert.equal(fixture.calls.fidelity.length, 1);
-  choice = 'uncertain';
-  const retry = { ...input, operationId: randomUUID(), revision: 2 };
-  await requestIllustration(server, photo.itemId, retry);
-  assert.equal((await waitForIllustration(server, photo.itemId, retry.operationId)).status, 'ready');
+  let revision = 1;
+  for (const evidence of [{choice:'uncertain',confidence:.96}, {choice:'preserved',confidence:.44},
+    {choice:'preserved',confidence:.69}, {choice:'changed',confidence:.7}]) {
+    ({choice,confidence}=evidence);
+    const retry = { ...input, operationId: randomUUID(), revision: ++revision };
+    await requestIllustration(server, photo.itemId, retry);
+    const rejected=await waitForIllustration(server, photo.itemId, retry.operationId, ['ready','failed']);
+    assert.equal(rejected.status,'failed');
+    assert.equal(rejected.error,'illustration_identity_unconfirmed');
+    assert.equal((await server.request(`/v1/items/${photo.itemId}/illustrations/${retry.operationId}/result`)).status,409);
+    await requestIllustration(server,photo.itemId,retry);
+    assert.equal(fixture.calls.generation.length,revision);
+    assert.equal(fixture.calls.fidelity.length,revision);
+  }
+  choice='preserved'; confidence=.7;
+  const confirmed={...input,operationId:randomUUID(),revision:++revision};
+  await requestIllustration(server,photo.itemId,confirmed);
+  assert.equal((await waitForIllustration(server,photo.itemId,confirmed.operationId)).status,'ready');
 });
 
 test('crash during fidelity preserves its uncertain outcome without a second paid check or generation', async t => {

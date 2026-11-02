@@ -38,7 +38,7 @@ test('unfolding long sleeves does not change the measured torso hem',async()=>{
  assert.equal(checked.valid,true,'Same body must pass independently of cuffs below its hem');
  assert.ok(checked.relativeError<.01);
 });
-test('lowering a hood preserves the same neck-to-hem body ratio',async()=>{
+test('lowering a hood preserves the same shoulder-to-hem body ratio',async()=>{
  async function garment(hoodTop){return sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M312 200 H712 V800 H312 Z M432 ${hoodTop} H592 V220 H432 Z" fill="#222"/></svg>`)).png().toBuffer();}
  const checked=await compareTopProportions(await garment(20),await garment(160),{type:'hoodie',traits:{sleeves:'long'}});
  assert.equal(checked.valid,true,'Lowered hood must not need 15% extra height above unchanged shoulders');
@@ -56,4 +56,25 @@ test('ten-percent narrowing is rejected while a five-percent drawing variation p
  const source=await torso(640,800);
  assert.equal((await compareTopProportions(source,await torso(576,800),features)).valid,false);
  assert.equal((await compareTopProportions(source,await torso(608,800),features)).valid,true);
+});
+
+test('a transparent hood neckline does not move the shoulder reference into the torso',async()=>{
+ const hood={type:'hoodie',traits:{sleeves:'long'}};
+ const closed=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M312 200 H712 V800 H312 Z M432 100 H592 V220 H432 Z" fill="#222"/></svg>')).png().toBuffer();
+ const opening=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><path d="M432 200 L512 300 L592 200Z" fill="white"/></svg>');
+ const open=await sharp(closed).composite([{input:opening,blend:'dest-out'}]).png().toBuffer();
+ const original=await measureTopProportions(closed,hood),candidate=await measureTopProportions(open,hood);
+ assert.equal(candidate.bodyTop,original.bodyTop,'An opening changes neither shoulder line nor torso length');
+ assert.equal(candidate.bodyWidthToLength,original.bodyWidthToLength);
+});
+
+test('an open hood rim is not substantial shoulder support',async()=>{
+ const hood={type:'hoodie',traits:{sleeves:'long'}};
+ const torso='<path d="M312 200 H712 V800 H312Z" fill="#222"/>';
+ const image=async path=>sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024">'+path+torso+'</svg>')).png().toBuffer();
+ const narrow=await image('<path d="M432 100 H592 V220 H432Z" fill="#222"/>');
+ const open=await image('<path fill="#222" fill-rule="evenodd" d="M432 40 H592 L712 100 V220 H312 V100Z M442 60 H582 L692 110 V200 H332 V110Z"/>');
+ const original=await measureTopProportions(narrow,hood),candidate=await measureTopProportions(open,hood);
+ assert.equal(candidate.bodyTop,original.bodyTop);
+ assert.equal(candidate.bodyWidthToLength,original.bodyWidthToLength);
 });
