@@ -9,7 +9,7 @@ import {fidelityRequest,fidelityAnswer} from './illustration-fidelity.mjs';
 import {measureTopProportions} from './illustration-proportions.mjs';
 import { garmentLayout, layoutGuide, layoutPoseGuide, layoutInstructions, registerGarmentLayout, templateVersion, layoutVersion } from './illustration-layout.mjs';
 
-export const illustrationVersions = Object.freeze({ modelVersion: 'gemini-3-pro-image',
+export const illustrationVersions = Object.freeze({ modelVersion: 'gemini-nano-banana-2.1',
   templateVersion, geometryVersion: layoutVersion });
 export const illustrationTaxonomy = JSON.parse(readFileSync(new URL('../../shared/wardrobe-taxonomy.json', import.meta.url)));
 const pngHeader = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -106,11 +106,10 @@ export function createIllustrationProvider(env) {
       // earlier detail references, never an instruction to redraw the back.
       const references=edit?[...photos.filter(photo=>photo!==front),front]:photos;
       const template=savedReceipt||edit?null:await layoutGuide(features);
-      const sourceFrontOnly=edit && garmentLayout(features).group==='hooded'
-        && !['short','sleeveless','not_applicable'].includes(features?.traits?.sleeves);
+      const sourceFrontOnly=false;
       const pose=savedReceipt||edit?null:await layoutPoseGuide(features);
       const proportions=edit?await measureTopProportions(front.prepared,features):null;
-      const editPose=edit?await editPoseGuide(features,proportions):null;
+      const editPose=null;
       const prompt=savedReceipt?null:
         (editPose ? measuredPoseInstructions(features,proportions)
         : (edit?garmentEditInstructions(features,proportions):layoutInstructions(features)))
@@ -128,7 +127,7 @@ export function createIllustrationProvider(env) {
         {type:'image',mime_type:'image/png',data:photo.prepared.toString('base64')},
       ]);
       const payload=savedReceipt?null:{model:illustrationVersions.modelVersion,store:true,
-        generation_config:{max_output_tokens:8192,thinking_level:'high'},
+        generation_config:{max_output_tokens:8192},
         input:[...sourceImages,...(editPose?[{type:'text',text:'Edit this measured-proportion target: keep its pose, replace only its grey design.'},{type:'image',mime_type:'image/png',data:editPose.toString('base64')}]:[]),
           ...(pose?[{type:'text',text:'Enlarged pose guide only: front view and relative stance, not garment design or final canvas size.'},
             {type:'image',mime_type:'image/png',data:pose.toString('base64')}]:[]),
