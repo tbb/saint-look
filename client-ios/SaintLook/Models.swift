@@ -293,6 +293,13 @@ struct IllustrationFeatures: Codable {
     let traits: [String: String]
 
     // Mirrors the v4 generator's hooded group, not every item with a hood.
+    /// Only an explicitly closed long sleeve may contain a known short sleeve.
+    /// Pixel opacity is checked separately by the presentation renderer.
+    func canContainShortSleeves(of inner: IllustrationFeatures) -> Bool {
+        traits["sleeves"] == "long" && traits["fastening"] == "none"
+            && inner.traits["sleeves"] == "short"
+    }
+
     var usesLoweredHoodPose: Bool {
         if type == "Худи" { return true }
         guard traits["hood"] == "yes" else { return false }

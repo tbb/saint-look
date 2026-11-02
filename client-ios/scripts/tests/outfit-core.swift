@@ -1113,6 +1113,13 @@ struct OutfitCoreChecks {
                 colors: [], traits: ["hood": "yes", "sleeves": sleeves])
             precondition(features.usesLoweredHoodPose == expected, "Head occlusion must match generator pose for \(type)")
         }
+        let shortInner = IllustrationFeatures(version: "fitting-observable-v2-photoroom-sandbox", type: "Футболка", colors: [], traits: ["sleeves": "short"])
+        for (sleeves, fastening, expected) in [("long", "none", true), ("long", "zip", false),
+            ("long", "buttons", false), ("long", "unknown", false), ("short", "none", false)] {
+            let outer = IllustrationFeatures(version: shortInner.version, type: "Худи", colors: [], traits: ["sleeves": sleeves, "fastening": fastening])
+            precondition(outer.canContainShortSleeves(of: shortInner) == expected,
+                         "Open or ambiguous outer garments cannot contain inner sleeves")
+        }
         print("PASS: Gemini admission, legacy publication restart and same-source prepared cache compatibility")
     }
 
