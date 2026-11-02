@@ -329,7 +329,7 @@ class ObserverTests(unittest.TestCase):
 
     def test_manual_diagnostic_routing_keeps_default_matrix_and_exact_selectors(self):
         workflow = (SCRIPT.parents[2] / '.github/workflows/ci.yml').read_text()
-        matrix = textwrap.dedent(workflow.split("python3 - <<'PY'\n", 1)[1].split('          PY', 1)[0])
+        matrix_script = SCRIPT.parents[2] / 'scripts/ci/ios-matrix.py'
         route = workflow[workflow.index('          if [[ "$TEST_SUITE" == "outfits-launch-pair" ]]'):]
         route = textwrap.dedent(route.split('          if [[ "$TEST_SUITE" == "outfits"', 1)[0])
         pair = ('SaintLookUITests/OutfitFlowTests/testCancelDraftDoesNotCreateOutfit\n'
@@ -339,15 +339,15 @@ class ObserverTests(unittest.TestCase):
                        if 'timeout-minutes:' in line and 'matrix.suite' in line)
         timeout = timeout.replace('matrix.suite', 'suite').replace('&&', 'and').replace('||', 'or')
         for suite, minutes in [('outfits-launch-pair', 20), ('wardrobe-expired-retry', 20),
-                               ('wardrobe', 60), ('outfits', 75), ('outfits-max-text', 60), ('visual', 60), ('camera', 40)]:
+                               ('wardrobe', 35), ('outfits', 35), ('outfits-max-text', 35), ('visual', 35), ('camera', 35)]:
             self.assertEqual(eval(timeout, {'__builtins__': {}}, {'suite': suite}), minutes)
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder) / 'output'
-            for selected, suites in [('all', ['wardrobe', 'outfits', 'visual', 'visual', 'visual', 'visual']),
+            for selected, suites in [('all', ['wardrobe', 'wardrobe', 'outfits', 'outfits', 'outfits-max-text', 'visual', 'visual', 'visual', 'visual']),
                                      ('outfits-launch-pair', ['outfits-launch-pair']),
                                      ('wardrobe-expired-retry', ['wardrobe-expired-retry'])]:
                 output.write_text('')
-                subprocess.run([sys.executable, '-c', matrix], env={**os.environ, 'BASE_SHA': '', 'HEAD_SHA': '',
+                subprocess.run([sys.executable, str(matrix_script)], env={**os.environ, 'BASE_SHA': '', 'HEAD_SHA': '',
                     'IOS_SUITE': selected, 'VISUAL_PROFILES': 'all', 'GITHUB_OUTPUT': str(output)}, check=True, timeout=3)
                 value = next(line.split('=', 1)[1] for line in output.read_text().splitlines() if line.startswith('ios_matrix='))
                 self.assertEqual([entry['suite'] for entry in json.loads(value)['include']], suites)

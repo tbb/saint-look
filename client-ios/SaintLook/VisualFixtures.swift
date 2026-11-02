@@ -6,7 +6,7 @@ import CryptoKit
 
 /// Initial data only. After loading, all edits, selection and persistence use the normal store.
 enum VisualFixtures {
-    enum Scenario: String { case ready = "ready-four", legacy = "legacy-four", legacyLabels = "legacy-labels", fitting = "fitting-ready", fittingTrial = "fitting-trial-ready", empty, mixed = "mixed-offline", unreadable = "unreadable-catalog" }
+    enum Scenario: String { case ready = "ready-four", readyLook = "ready-look", legacy = "legacy-four", legacyLabels = "legacy-labels", fitting = "fitting-ready", fittingTrial = "fitting-trial-ready", empty, mixed = "mixed-offline", unreadable = "unreadable-catalog" }
     enum FixtureError: Error { case invalidConfiguration, missingTaxonomy }
 
     static func prepare(environment: [String: String], support: URL, resources: URL,
@@ -33,7 +33,7 @@ enum VisualFixtures {
             return root
         }
         var preparedSeeds: [WardrobeItem] = []
-        if scenario == .ready {
+        if scenario == .ready || scenario == .readyLook {
             try prepareFitting(root: root, resources: resources, taxonomy: taxonomy)
             preparedSeeds = try WardrobeCatalogFile(directory: root).load().items
         }
@@ -81,14 +81,25 @@ enum VisualFixtures {
                     }
                     if index == 3 { item.status = .pending; item.action = .replace; item.revision = 1 }
                 }
-                if scenario == .ready {
+                if scenario == .ready || scenario == .readyLook {
                     item = try preparePublicFixture(item, seed: preparedSeeds[index], key: ["tee", "jeans", "jacket", "shoes"][index],
                         root: root, resources: resources, taxonomy: taxonomy)
                 }
                 items.append(item)
             }
         }
-        try WardrobeCatalogFile(directory: root).save(WardrobeCatalog(items: items, pendingAcknowledgements: []))
+        var outfits: [Outfit] = []
+        if scenario == .readyLook {
+            var outfit = Outfit(id: UUID(uuidString: "36000004-0000-0000-0000-000000000001")!,
+                name: "Прогулка по осеннему городу после работы")
+            outfit.selectItem(items[0].id, for: outfit.slots[1].id)
+            outfit.selectItem(items[1].id, for: outfit.slots[2].id)
+            outfit.selectItem(items[3].id, for: outfit.slots[3].id)
+            let outer = outfit.addBodyLayer()
+            outfit.selectItem(items[2].id, for: outer)
+            outfits = [outfit]
+        }
+        try WardrobeCatalogFile(directory: root).save(WardrobeCatalog(items: items, pendingAcknowledgements: [], outfits: outfits))
         return root
     }
 
