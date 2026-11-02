@@ -16,7 +16,7 @@ for(const[name,v]of Object.entries(state.variants)){
   await sharp(original).ensureAlpha().composite([{input:mask,blend:'dest-in'}]).png().toFile(out+'/'+name+'-'+part.name+'.png');
   overlay.push(`<polygon points="${points}" stroke="${palette[part.name]}" stroke-width="3" fill="${palette[part.name]}" fill-opacity=".15"/>`);
  }
- for(const[label,p]of Object.entries(v.segmentation.landmarks)){const[x,y]=point(p);overlay.push(`<circle cx="${x}" cy="${y}" r="5" fill="white" stroke="black"/><text x="${x+7}" y="${y-7}" font-family="sans-serif" font-size="14" fill="white" stroke="black" paint-order="stroke" stroke-width="3">${label.replaceAll('_',' ')}</text>`);}
+ for(const[label,p]of Object.entries(v.segmentation.landmarks)){if(label.endsWith('_edge')){const a=point(p[0]),b=point(p[1]);overlay.push(`<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="#ff00ff" stroke-width="6"/>`);continue;}const[x,y]=point(p);overlay.push(`<circle cx="${x}" cy="${y}" r="5" fill="white" stroke="black"/><text x="${x+7}" y="${y-7}" font-family="sans-serif" font-size="14" fill="white" stroke="black" paint-order="stroke" stroke-width="3">${label.replaceAll('_',' ')}</text>`);}
  await sharp(original).composite([{input:Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${overlay.join('')}</svg>`)}]).png().toFile(out+'/'+name+'-panels.png');
  writeFileSync(out+'/'+name+'-landmarks.json',JSON.stringify(v.segmentation,null,2));
 }
