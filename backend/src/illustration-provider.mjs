@@ -9,7 +9,7 @@ import {fidelityRequest,fidelityAnswer} from './illustration-fidelity.mjs';
 import {measureTopProportions} from './illustration-proportions.mjs';
 import { garmentLayout, layoutGuide, layoutPoseGuide, layoutInstructions, registerGarmentLayout, templateVersion, layoutVersion } from './illustration-layout.mjs';
 
-export const illustrationVersions = Object.freeze({ modelVersion: 'gemini-3-pro-image',
+export const illustrationVersions = Object.freeze({ modelVersion: 'gemini-nano-banana-2.1',
   templateVersion, geometryVersion: layoutVersion });
 export const illustrationTaxonomy = JSON.parse(readFileSync(new URL('../../shared/wardrobe-taxonomy.json', import.meta.url)));
 const pngHeader = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
