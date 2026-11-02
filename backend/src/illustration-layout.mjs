@@ -46,9 +46,9 @@ const armLines=(points,side)=>points.map(p=>'L'+armPoint(p,side,pose).join(' '))
 for (const group of ['upper','hooded','full']) {
   const layout=layouts[group];
   layout.path=layout.path.replace('L245 181 L264 300 L247 307 L216 206',
-    armLines([[245,181],[264,304],[247,311],[216,206]],'right')+' L216 206')
+    armLines([[255,174],[272,306],[240,316],[214,206]],'right')+' L216 206')
     .replace('L113 307 L94 300 L116 181',
-      armLines([[143,206],[113,311],[94,304],[116,181]],'left'));
+      armLines([[146,206],[120,316],[88,306],[105,174]],'left'));
   layout.bounds=[pose==='spread'?0:45,layout.bounds[1],pose==='spread'?360:270,layout.bounds[3]];
   layout.anchors={...layout.anchors,leftWrist:armPoint([103,306],'left',pose),rightWrist:armPoint([257,306],'right',pose)};
 }
@@ -234,19 +234,40 @@ function shortSleeveOpenings(data,width,layout,features) {
   });
 }
 
-function armsContained(data,width,layout,features) {
+// Same native arm contour as FittingMannequin. Clip only the exposed hand and
+// shoulder joint before rotation; garment pixels are never cropped or changed.
+const armContour='M 135.0 147.0 C 124.499 144.905 119.838 163.974 117.312 182.868 L 107.758 224.958 Q 104.157 238.038 104.405 245.886 L 97.639 288.732 L 93.574 309.719 Q 92.282 319.661 99.225 322.045 Q 106.226 323.442 109.115 310.419 L 116.491 281.294 L 126.409 245.076 Q 130.663 232.926 133.015 216.997 L 140.798 180.953 Q 147.404 152.874 135.0 147.0 Z';
+const armMasks=new Map();
+async function coveredArmMask(pose) {
+  if(!armMasks.has(pose)) {
+    const angle=fittingArmPoses[pose];
+    const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-100 0 560 560"><defs><clipPath id="sleeve"><rect x="0" y="164" width="360" height="128"/></clipPath></defs><g fill="white"><g transform="rotate(${angle} 135 147)"><path d="${armContour}" clip-path="url(#sleeve)"/></g><g transform="translate(360 1) scale(-1 1) rotate(${angle} 135 147)"><path d="${armContour}" clip-path="url(#sleeve)"/></g></g></svg>`;
+    armMasks.set(pose,sharp(Buffer.from(svg)).ensureAlpha().raw().toBuffer());
+  }
+  return armMasks.get(pose);
+}
+async function armsContained(data,width,layout,features) {
   if(!['upper','hooded','full'].includes(layout.group)||!requiresWristPose(layout,features))return true;
-  return ['left','right'].every(side=>{
-    const start=point(side==='left'?[135,147]:[225,148]);
-    const end=point(side==='left'?layout.anchors.leftWrist:layout.anchors.rightWrist);
-    const dx=end[0]-start[0],dy=end[1]-start[1],length=Math.hypot(dx,dy);
-    let covered=0,total=0;
-    for(let t=.15;t<=.91;t+=.04)for(const offset of [-5,0,5]){
-      const x=Math.round(start[0]+dx*t-dy/length*offset),y=Math.round(start[1]+dy*t+dx/length*offset);
-      total++;if(data[(y*width+x)*4+3]>=128)covered++;
+  const mask=await coveredArmMask(layout.armPose);
+  let total=0,uncovered=0;
+  for(let y=0;y<1024;y++)for(let x=0;x<width;x++){
+    const i=(y*width+x)*4+3;
+    if(mask[i]<224)continue;
+    total++;
+    if(data[i]<128){
+      uncovered++;
+      // An exposed 5×5 patch is visible even when it is a small global fraction.
+      if(x>1&&y>1&&x<width-2&&y<1022){
+        let exposed=true;
+        for(let dy=-2;dy<=2&&exposed;dy++)for(let dx=-2;dx<=2;dx++){
+          const j=((y+dy)*width+x+dx)*4+3;
+          if(mask[j]<224||data[j]>=128){exposed=false;break;}
+        }
+        if(exposed)return false;
+      }
     }
-    return covered/total>=.95;
-  });
+  }
+  return total>0&&uncovered/total<=.02;
 }
 
 function cuffExtents(data, width, layout, features) {
@@ -488,7 +509,7 @@ export async function checkGarmentLayout(bytes, features) {
   const sleevesUnfolded=unfoldedSleeves(data,info.width,layout,features);
   const wristsValid=wristsContactCuffs(data,info.width,layout,features);
   const sleeveOpeningsValid=shortSleeveOpenings(data,info.width,layout,features);
-  const armsContainedValid=armsContained(data,info.width,layout,features);
+  const armsContainedValid=await armsContained(data,info.width,layout,features);
   return { valid: baseValid && shouldersValid && cuffsValid && sleevesUnfolded && wristsValid && sleeveOpeningsValid && armsContainedValid, armsContainedValid, sleeveOpeningsValid, baseValid, shouldersValid, cuffsValid, sleevesUnfolded, wristsValid,
     outsideFraction, coverage, legsValid, anchorsValid, footAnchorsValid, bounds: { left,top,right,bottom } };
 }

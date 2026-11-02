@@ -1044,7 +1044,8 @@ struct OutfitCoreChecks {
         precondition(!restoredLegacy.hasFittingGeometry)
         var missing = currentFit.displayedIllustration!.response
         missing.fittingPoses = nil
-        let currentRequest = currentFit.illustration!
+        let currentRequest = IllustrationRequest(operationID: missing.operationId, photoVersionID: missing.photoVersionId,
+            sourceSetVersionID: missing.sourceSetVersionId, revision: missing.revision, manualType: nil, manualColors: nil, status: .ready)
         do { try missing.validate(for: currentFit, request: currentRequest); fatalError("v6 requires pose evidence") }
         catch ClientError.invalidResponse { }
         for invalid in [[], ["open", "open"], ["invented"]] {
