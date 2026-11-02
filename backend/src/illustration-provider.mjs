@@ -128,7 +128,7 @@ export function createIllustrationProvider(env) {
       ]);
       const payload=savedReceipt?null:{model:illustrationVersions.modelVersion,store:true,
         generation_config:{max_output_tokens:8192},
-        input:[...sourceImages,...(editPose?[{type:'text',text:'Edit this measured-proportion target: keep its pose, replace only its grey design.'},{type:'image',mime_type:'image/png',data:editPose.toString('base64')}]:[]),
+        input:[...sourceImages,...(editPose?[{type:'text',text:'Arm centre-line pose reference only. Edit the original garment photo; do not draw these lines.'},{type:'image',mime_type:'image/png',data:editPose.toString('base64')}]:[]),
           ...(pose?[{type:'text',text:'Enlarged pose guide only: front view and relative stance, not garment design or final canvas size.'},
             {type:'image',mime_type:'image/png',data:pose.toString('base64')}]:[]),
           ...(!edit?[{type:'image',mime_type:'image/png',data:template.toString('base64')}]:[]),
