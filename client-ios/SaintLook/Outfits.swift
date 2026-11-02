@@ -577,34 +577,52 @@ extension OutfitRecommendationSession {
     }
 }
 
-// A saved legacy outfit keeps its original pose. Once a v5 arm-bearing layer is
-// selected, legacy arm layers use their photo fallback until explicitly updated.
-// Never deform an old image or silently give it the new geometry version.
-enum FittingArmPose { case legacy, wide }
+// Whole garments keep their published geometry. One shared, finite arm pose
+// must fit every visible sleeve; covered inner sleeves do not constrain it.
+enum FittingArmPose: Hashable, CaseIterable {
+    case legacy, wide, spread
+    var shoulderRotation: CGFloat { self == .legacy ? 0 : self == .wide ? 13 : 34 }
+    static let preference: [FittingArmPose] = [.wide, .legacy, .spread]
+}
 
 extension WardrobeItem {
-    var fittingArmPose: FittingArmPose? {
+    var fittingArmPoses: Set<FittingArmPose>? {
         guard hasFittingGeometry, let response = displayedIllustration?.response,
               let features = response.effectiveFeatures ?? response.observedFeatures,
               let type = WardrobeTaxonomy.shared.types.first(where: { $0.label == features.type })?.id,
               ["t_shirt", "polo", "shirt", "blouse", "sweater", "cardigan", "sweatshirt", "hoodie",
                "blazer", "jacket", "coat", "raincoat", "dress", "jumpsuit", "swimwear", "gloves"].contains(type)
         else { return nil }
-        return response.geometryVersion == IllustrationContract.currentGeometryVersion ? .wide : .legacy
+        if let poses = response.fittingPoses, response.geometryVersion == IllustrationContract.currentGeometryVersion {
+            return Set(poses.compactMap { $0 == "open" ? .wide : $0 == "relaxed" ? .legacy : $0 == "spread" ? .spread : nil })
+        }
+        return [response.geometryVersion == "fitting-anchors-1024-v5" ? .wide : .legacy]
+    }
+    var hasShortFittingSleeves: Bool {
+        let features = displayedIllustration?.response.effectiveFeatures ?? displayedIllustration?.response.observedFeatures
+        return features?.traits["sleeves"] == "short"
+            || (["Футболка", "Поло"].contains(features?.type ?? "") && features?.traits["sleeves"] != "long")
     }
 }
 
 extension Outfit {
     func fittingArmPose(in items: [WardrobeItem]) -> FittingArmPose {
-        let poses = items.filter { selectedIDs.contains($0.id) }.compactMap(\.fittingArmPose)
-        return poses.contains(.wide) || poses.isEmpty ? .wide : .legacy
+        let constraints = slots.compactMap { slot in items.first { $0.id == slot.itemID }?.fittingArmPoses }
+        let common = constraints.reduce(Set(FittingArmPose.allCases)) { $0.intersection($1) }
+        let available = common.isEmpty ? constraints.last ?? Set(FittingArmPose.allCases) : common
+        return FittingArmPose.preference.first { available.contains($0) } ?? .wide
     }
 
     func acceptsFittingPose(of item: WardrobeItem, in items: [WardrobeItem]) -> Bool {
-        item.fittingArmPose == nil || item.fittingArmPose == fittingArmPose(in: items)
+        item.fittingArmPoses?.contains(fittingArmPose(in: items)) ?? true
     }
 
     func hasMixedFittingPoses(in items: [WardrobeItem]) -> Bool {
         items.contains { selectedIDs.contains($0.id) && !acceptsFittingPose(of: $0, in: items) }
     }
+}
+
+struct FittingComposition {
+    let pose: FittingArmPose
+    let renderedIDs: Set<UUID>
 }

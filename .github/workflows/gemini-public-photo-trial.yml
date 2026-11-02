@@ -54,13 +54,6 @@ jobs:
     - run: bash client-ios/scripts/test-image-presentation.sh
     - run: bash client-ios/scripts/test-outfit-core.sh
     - run: bash client-ios/scripts/build-device.sh
-    - name: Confirm the same noise fixture fails on the previous crop implementation
-      run: "set -euo pipefail\nulimit -c 0\ngit fetch --no-tags origin bce0e6c0072902b1ec9dc31b52a1edbb301799ab\ngit show\
-        \ FETCH_HEAD:client-ios/SaintLook/GarmentImagePresentation.swift > \"$RUNNER_TEMP/Before.swift\"\nswiftc \"$RUNNER_TEMP/Before.swift\"\
-        \ client-ios/scripts/tests/image-presentation.swift -o \"$RUNNER_TEMP/before-crop\"\nif \"$RUNNER_TEMP/before-crop\"\
-        \ \"$PWD/client-ios/SaintLook/VisualFixtures\" > \"$RUNNER_TEMP/before-crop.log\" 2>&1; then\n  echo 'Expected old\
-        \ crop to fail on matte noise'; exit 1\nfi\ngrep -F 'Near-transparent remote matte noise must not shrink' \"$RUNNER_TEMP/before-crop.log\"\
-        \n"
   native:
     name: Actual garment render
     if: inputs.item == 'native-only' && github.ref == 'refs/heads/codex/garment-quality-trial' && github.event.repository.visibility

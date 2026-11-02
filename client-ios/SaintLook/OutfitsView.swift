@@ -285,8 +285,8 @@ private struct OutfitComposition: View {
                 FittingRoomCanvas(store: store, outfit: outfit)
                     .frame(maxWidth: compact ? 300 : 460)
             }
-            if outfit.hasMixedFittingPoses(in: store.items) {
-                Text("Обновите посадку старых вещей, чтобы совместить их с новой. Пока их фотографии показаны ниже.")
+            if store.hasMixedFittingPoses(in: outfit) {
+                Text("У некоторых вещей не совпадает положение рукавов. Их фотографии показаны ниже; можно обновить посадку или выбрать другую вещь.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             if showsCanvas && photoSlots.contains(where: { slot in
@@ -853,7 +853,7 @@ struct OutfitEditorView: View {
     private var saveExplanation: String? {
         if !store.storageAvailable { return "Сохранение на устройстве сейчас недоступно." }
         if !store.canSaveOutfit(draft) {
-            if draft.hasMixedFittingPoses(in: store.items) {
+            if store.hasMixedFittingPoses(in: draft) {
                 Text("Обновите посадку старых вещей, чтобы показать все слои вместе. Их фотографии сохранены ниже.")
                     .font(.footnote).foregroundStyle(.secondary)
             }

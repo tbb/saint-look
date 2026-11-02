@@ -344,8 +344,8 @@ struct IllustrationResult: Codable {
 
 enum IllustrationContract {
     static let currentModelVersion = "gemini-3-pro-image"
-    static let currentTemplateVersion = "category-front-anchors-v5"
-    static let currentGeometryVersion = "fitting-anchors-1024-v5"
+    static let currentTemplateVersion = "category-front-anchors-v6"
+    static let currentGeometryVersion = "fitting-anchors-1024-v6"
     private static let supportedModels: Set<String> = [currentModelVersion, "fal-ai/nano-banana-pro/edit"]
 
     static func accepts(modelVersion: String, templateVersion: String, geometryVersion: String) -> Bool {
@@ -359,7 +359,8 @@ enum IllustrationContract {
             && geometryVersion == "fitting-anchors-1024-v3"
         let previousV4 = modelVersion == currentModelVersion && templateVersion == "category-front-anchors-v4"
             && geometryVersion == "fitting-anchors-1024-v4"
-        return legacy || previousAnchors || previousV3 || previousV4 || current
+        let previousV5 = modelVersion == currentModelVersion && templateVersion == "category-front-anchors-v5" && geometryVersion == "fitting-anchors-1024-v5"
+        return legacy || previousAnchors || previousV3 || previousV4 || previousV5 || current
     }
 }
 
@@ -381,10 +382,17 @@ struct IllustrationResponse: Codable {
     let geometryVersion: String
     let resultPath: String?
     let error: String?
+    var fittingPoses: [String]? = nil
     var preparedSources: [IllustrationPreparedSource]? = nil
     var resultSHA256: String? = nil
     var observedFeaturesSHA256: String? = nil
     var effectiveFeaturesSHA256: String? = nil
+
+    var hasValidFittingPoses: Bool {
+        guard let fittingPoses else { return false }
+        return !fittingPoses.isEmpty && Set(fittingPoses).count == fittingPoses.count
+            && fittingPoses.allSatisfy { ["relaxed", "open", "spread"].contains($0) }
+    }
 
     func validate(for item: WardrobeItem, request: IllustrationRequest) throws {
         guard itemId == item.id, operationId == request.operationID,
@@ -394,6 +402,9 @@ struct IllustrationResponse: Codable {
               IllustrationContract.accepts(modelVersion: modelVersion, templateVersion: templateVersion, geometryVersion: geometryVersion) else {
             throw ClientError.invalidResponse
         }
+        if fittingPoses != nil && !hasValidFittingPoses { throw ClientError.invalidResponse }
+        if status == .ready && geometryVersion == IllustrationContract.currentGeometryVersion
+            && !hasValidFittingPoses { throw ClientError.invalidResponse }
         if status == .ready {
             let expectedSources = Set([item.photoVersionID] + item.additionalPhotos.map(\.id))
             guard let preparedSources, preparedSources.count == expectedSources.count,
@@ -415,12 +426,13 @@ extension WardrobeItem {
 
     var hasFittingGeometry: Bool {
         guard let result = displayedIllustration else { return false }
-        return ["fitting-anchors-1024-v2", "fitting-anchors-1024-v3", "fitting-anchors-1024-v4", IllustrationContract.currentGeometryVersion].contains(result.response.geometryVersion)
+        if result.response.geometryVersion == IllustrationContract.currentGeometryVersion && !result.response.hasValidFittingPoses { return false }
+        return ["fitting-anchors-1024-v2", "fitting-anchors-1024-v3", "fitting-anchors-1024-v4", "fitting-anchors-1024-v5", IllustrationContract.currentGeometryVersion].contains(result.response.geometryVersion)
     }
 
     var needsFittingUpdate: Bool {
         guard let result = displayedIllustration else { return false }
-        return result.response.geometryVersion != IllustrationContract.currentGeometryVersion
+        return result.response.geometryVersion != IllustrationContract.currentGeometryVersion || !result.response.hasValidFittingPoses
     }
 
     var illustrationIsStale: Bool {

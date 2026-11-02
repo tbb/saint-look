@@ -635,8 +635,36 @@ extension WardrobeStore {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
+    func fittingComposition(for outfit: Outfit) -> FittingComposition {
+        let ordered = [OutfitZone.bottom, .shoes, .body, .head].flatMap { zone in
+            outfit.slots.filter { $0.zone == zone }.compactMap { slot in
+                items.first { $0.id == slot.itemID }
+            }
+        }.filter { $0.hasFittingGeometry && illustrationURL(for: $0) != nil }
+        let outerPoses = ordered.reversed().compactMap(\.fittingArmPoses).first
+        let choices = FittingArmPose.preference.filter { outerPoses?.contains($0) ?? true }
+        var best = FittingComposition(pose: choices.first ?? .wide, renderedIDs: [])
+        for pose in choices {
+            var rendered = Set<UUID>(), overlays: [URL] = []
+            for item in ordered.reversed() {
+                guard let url = illustrationURL(for: item) else { continue }
+                let compatible = item.fittingArmPoses?.contains(pose) ?? true
+                if compatible || FittingOcclusionCache.covered(url, by: overlays, shortSleeves: item.hasShortFittingSleeves) {
+                    rendered.insert(item.id); overlays.append(url)
+                }
+            }
+            if rendered.count > best.renderedIDs.count { best = FittingComposition(pose: pose, renderedIDs: rendered) }
+        }
+        return best
+    }
+
+    func hasMixedFittingPoses(in outfit: Outfit) -> Bool {
+        let composition = fittingComposition(for: outfit)
+        return items.contains { outfit.selectedIDs.contains($0.id) && $0.hasFittingGeometry && !composition.renderedIDs.contains($0.id) }
+    }
+
     func fittingIllustrationURL(for item: WardrobeItem, in outfit: Outfit? = nil) -> URL? {
-        if let outfit, !outfit.acceptsFittingPose(of: item, in: items) { return nil }
+        if let outfit, !fittingComposition(for: outfit).renderedIDs.contains(item.id) { return nil }
         guard item.hasFittingGeometry else { return nil }
         return illustrationURL(for: item)
     }

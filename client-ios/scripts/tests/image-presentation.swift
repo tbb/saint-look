@@ -52,6 +52,29 @@ import ImageIO
                      "Near-transparent remote matte noise must not shrink the garment preview")
         precondition(noisyImage.width == 1024 && noisyImage.height == 1024,
                      "Preview must not modify the fitting asset")
+
+        func mask(_ rects: [(Int, Int, Int, Int, UInt8)]) -> CGImage {
+            var pixels = [UInt8](repeating: 0, count: size * size * 4)
+            for (x, y, w, h, alpha) in rects {
+                for row in y..<(y+h) { for col in x..<(x+w) { pixels[(row*size+col)*4+3] = alpha } }
+            }
+            return CGImage(width: size, height: size, bitsPerComponent: 8, bitsPerPixel: 32,
+                bytesPerRow: size*4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                provider: CGDataProvider(data: Data(pixels) as CFData)!, decode: nil,
+                shouldInterpolate: false, intent: .defaultIntent)!
+        }
+        let sleeve = mask([(350, 300, 70, 70, 255), (600, 300, 70, 70, 255), (450, 550, 120, 80, 255)])
+        let covering = mask([(340, 290, 90, 90, 255), (590, 290, 90, 90, 255)])
+        precondition(GarmentImagePresentation.armsCovered(sleeve, by: [covering], shortSleeves: true),
+                     "Completely hidden short sleeves do not constrain pose; long central hem stays visible")
+        let exposed = mask([(350, 300, 70, 70, 255), (600, 300, 70, 70, 255), (300, 350, 20, 20, 223)])
+        precondition(!GarmentImagePresentation.armsCovered(exposed, by: [covering], shortSleeves: true),
+                     "A translucent exposed sleeve is visible and must constrain pose")
+        precondition(!GarmentImagePresentation.armsCovered(sleeve, by: [], shortSleeves: true))
+        let translucent = mask([(340, 290, 90, 90, 128), (590, 290, 90, 90, 128)])
+        precondition(!GarmentImagePresentation.armsCovered(sleeve, by: [translucent], shortSleeves: true),
+                     "A translucent outer garment cannot hide the inner sleeve")
         print("PASS: preview removes only transparent margins; fitting source stays square")
     }
 }

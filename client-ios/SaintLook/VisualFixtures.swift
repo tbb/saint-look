@@ -353,7 +353,7 @@ enum VisualFixtures {
                 modelVersion: IllustrationContract.currentModelVersion,
                 templateVersion: trial ? "category-front-anchors-v3" : IllustrationContract.currentTemplateVersion,
                 geometryVersion: trial ? "fitting-anchors-1024-v3" : IllustrationContract.currentGeometryVersion,
-                resultPath: "/v1/items/\(item.id.uuidString.lowercased())/illustrations/\(operation.uuidString.lowercased())/result", error: nil)
+                resultPath: "/v1/items/\(item.id.uuidString.lowercased())/illustrations/\(operation.uuidString.lowercased())/result", error: nil, fittingPoses: trial ? nil : ["open"])
             item.illustrationResult = IllustrationResult(filename: filename, response: response)
             // This isolated scenario depicts an already committed test publication,
             // not a v2 catalog awaiting a real server receipt.
@@ -433,7 +433,7 @@ enum VisualFixtures {
             status: .ready, mode: "test", processing: [:], observedFeatures: features, effectiveFeatures: features,
             manualType: nil, manualColors: nil, modelVersion: old.response.modelVersion,
             templateVersion: old.response.templateVersion, geometryVersion: old.response.geometryVersion,
-            resultPath: nil, error: nil)
+            resultPath: nil, error: nil, fittingPoses: old.response.fittingPoses)
         item.illustration = seed.illustration
         item.illustrationResult = IllustrationResult(filename: old.filename, response: response)
         let representationJSON = try String(contentsOf: fixtures.appendingPathComponent(hashes.representationFilename), encoding: .utf8)
