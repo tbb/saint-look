@@ -1,11 +1,4 @@
 name: Encrypted garment quality diagnostic
-on:
-  workflow_dispatch:
-    inputs:
-      item:
-        type: choice
-        default: hoodie
-        options: [hoodie, trousers, tee, checks-only, qa-only]
 permissions:
   contents: read
 concurrency:
@@ -13,59 +6,227 @@ concurrency:
   cancel-in-progress: false
 jobs:
   compare:
-    if: inputs.item != 'checks-only' && github.ref == 'refs/heads/codex/garment-fit-quality' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    if: inputs.item != 'checks-only' && inputs.item != 'native-only' && github.ref == 'refs/heads/codex/garment-fit-quality'
+      && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
-      - run: npm --prefix backend ci --ignore-scripts
-      - name: Validate one source-preserving generation
-        env:
-          TRIAL_ITEM: ${{ inputs.item }}
-          SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true'
-          SAINT_LOOK_ILLUSTRATION_TIMEOUT_MS: '120000'
-          SAINT_LOOK_PHOTOROOM_MODE: production
-          PHOTOROOM_PRODUCTION_APPROVED: 'true'
-          PHOTOROOM_API_KEY: ${{ secrets.PHOTOROOM_API_KEY }}
-          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GARMENT_QUALITY_TRIAL_KEY: ${{ secrets.GARMENT_QUALITY_TRIAL_KEY }}
-        run: node ${{ inputs.item == 'qa-only' && 'scripts/fitting/diagnostics/garment-fidelity-check.mjs' || 'scripts/fitting/diagnostics/garment-quality-trial.mjs' }}
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: encrypted-garment-quality
-          path: garment-quality-output/
-          retention-days: 2
-          if-no-files-found: ignore
-
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+        cache: npm
+        cache-dependency-path: backend/package-lock.json
+    - run: npm --prefix backend ci --ignore-scripts
+    - name: Validate one source-preserving generation
+      env:
+        TRIAL_ITEM: ${{ inputs.item }}
+        SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true'
+        SAINT_LOOK_ILLUSTRATION_TIMEOUT_MS: '120000'
+        SAINT_LOOK_PHOTOROOM_MODE: production
+        PHOTOROOM_PRODUCTION_APPROVED: 'true'
+        PHOTOROOM_API_KEY: ${{ secrets.PHOTOROOM_API_KEY }}
+        TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        GARMENT_QUALITY_TRIAL_KEY: ${{ secrets.GARMENT_QUALITY_TRIAL_KEY }}
+      run: node ${{ inputs.item == 'qa-only' && 'scripts/fitting/diagnostics/garment-fidelity-check.mjs' || 'scripts/fitting/diagnostics/garment-quality-trial.mjs'
+        }}
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: encrypted-garment-quality
+        path: garment-quality-output/
+        retention-days: 2
+        if-no-files-found: ignore
   image-presentation:
-    if: inputs.item == 'checks-only' && github.ref == 'refs/heads/codex/garment-fit-quality' && (github.event.repository.visibility == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
+    if: inputs.item == 'checks-only' && github.ref == 'refs/heads/codex/garment-fit-quality' && (github.event.repository.visibility
+      == 'public' || vars.ACTIONS_BUDGET_VERIFIED == 'true')
     runs-on: macos-26
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - run: bash client-ios/scripts/test-image-presentation.sh
-      - run: bash client-ios/scripts/test-outfit-core.sh
-      - run: bash client-ios/scripts/build-device.sh
-      - name: Confirm the same noise fixture fails on the previous crop implementation
-        run: |
-          set -euo pipefail
-          ulimit -c 0
-          git fetch --no-tags origin bce0e6c0072902b1ec9dc31b52a1edbb301799ab
-          git show FETCH_HEAD:client-ios/SaintLook/GarmentImagePresentation.swift > "$RUNNER_TEMP/Before.swift"
-          swiftc "$RUNNER_TEMP/Before.swift" client-ios/scripts/tests/image-presentation.swift -o "$RUNNER_TEMP/before-crop"
-          if "$RUNNER_TEMP/before-crop" "$PWD/client-ios/SaintLook/VisualFixtures" > "$RUNNER_TEMP/before-crop.log" 2>&1; then
-            echo 'Expected old crop to fail on matte noise'; exit 1
-          fi
-          grep -F 'Near-transparent remote matte noise must not shrink' "$RUNNER_TEMP/before-crop.log"
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - run: bash client-ios/scripts/test-image-presentation.sh
+    - run: bash client-ios/scripts/test-outfit-core.sh
+    - run: bash client-ios/scripts/build-device.sh
+    - name: Confirm the same noise fixture fails on the previous crop implementation
+      run: "set -euo pipefail\nulimit -c 0\ngit fetch --no-tags origin bce0e6c0072902b1ec9dc31b52a1edbb301799ab\ngit show\
+        \ FETCH_HEAD:client-ios/SaintLook/GarmentImagePresentation.swift > \"$RUNNER_TEMP/Before.swift\"\nswiftc \"$RUNNER_TEMP/Before.swift\"\
+        \ client-ios/scripts/tests/image-presentation.swift -o \"$RUNNER_TEMP/before-crop\"\nif \"$RUNNER_TEMP/before-crop\"\
+        \ \"$PWD/client-ios/SaintLook/VisualFixtures\" > \"$RUNNER_TEMP/before-crop.log\" 2>&1; then\n  echo 'Expected old\
+        \ crop to fail on matte noise'; exit 1\nfi\ngrep -F 'Near-transparent remote matte noise must not shrink' \"$RUNNER_TEMP/before-crop.log\"\
+        \n"
+  native:
+    name: Actual garment render
+    if: inputs.item == 'native-only' && github.ref == 'refs/heads/codex/garment-fit-quality' && github.event.repository.visibility
+      == 'public'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+        cache: npm
+        cache-dependency-path: backend/package-lock.json
+    - run: npm --prefix backend ci --ignore-scripts
+    - name: Load actual trial outputs in DEBUG fixtures only
+      env:
+        GARMENT_QUALITY_TRIAL_KEY: ${{ secrets.GARMENT_QUALITY_TRIAL_KEY }}
+      run: node scripts/fitting/diagnostics/prepare-native-trial.mjs
+    - run: bash client-ios/scripts/test-outfit-core.sh
+    - run: bash client-ios/scripts/test-visual-fixtures.sh
+    - name: Check bounded visual diagnostic observer
+      if: '''visual'' == ''visual'' || ''visual'' == ''outfits-launch-pair'' || ''visual'' == ''wardrobe-expired-retry'''
+      run: PYTHONDONTWRITEBYTECODE=1 python3 client-ios/scripts/tests/test-visual-stall-observer.py
+    - uses: actions/setup-python@v5
+      if: '''visual'' == ''benchmark'''
+      with:
+        python-version: '3.12'
+    - name: ${{ 'visual' == 'benchmark' && 'Simulator with isolated real-model benchmark' || 'Real Simulator and local backend
+        (controlled providers)' }}
+      env:
+        TEST_SUITE: ${{ 'visual' }}
+        SAINT_LOOK_BENCHMARK: ${{ 'visual' == 'benchmark' && '1' || '0' }}
+        SAINT_LOOK_VISUAL_PROFILES: ${{ 'iphone-light' || 'all' }}
+        SAINT_LOOK_UI_TEST_ONLY: ${{ 'visual' == 'outfits' && 'SaintLookUITests/OutfitFlowTests' || 'SaintLookUITests/WardrobeFlowTests'
+          }}
+        NODE_ENV: test
+        SAINT_LOOK_TEST_CLOCK_FILE: ${{ runner.temp }}/saint-look-clock.json
+        SAINT_LOOK_RECORD_VIDEO: '1'
+        SAINT_LOOK_OWNER_TOKEN: saint-look-ui-tests-owner-token-00000001
+        SAINT_LOOK_PROVIDER: live
+        SAINT_LOOK_TEST_PROVIDER_ORIGIN: http://127.0.0.1:8789
+        SAINT_LOOK_ILLUSTRATIONS_ENABLED: 'true'
+        SAINT_LOOK_TEST_MODEL_ORIGIN: http://127.0.0.1:8789
+        SAINT_LOOK_ILLUSTRATION_TEST_ORIGIN: http://127.0.0.1:8789
+        SAINT_LOOK_ILLUSTRATION_TEST_CONTROLLED: 'true'
+        PHOTOROOM_SANDBOX_API_KEY: sandbox_fixture
+        GEMINI_API_KEY: fixture
+        TYPESAFE_API_KEY: fixture-typesafe-key
+        PHOTOROOM_API_KEY: fixture-photoroom-key
+        SAINT_LOOK_PROVIDER_PREFLIGHT_CONFIRMED: 'true'
+        SAINT_LOOK_STAGE_DELAY_MS: '100'
+        SAINT_LOOK_PROVIDER_TIMEOUT_MS: '5000'
+        SAINT_LOOK_UI_PROVIDER_CONTROL_URL: http://127.0.0.1:8789/__control
+        SAINT_LOOK_UI_PROVIDER_CONTROL_TOKEN: saint-look-ui-provider-control-token-00000001
+        SAINT_LOOK_DATA_DIR: ${{ runner.temp }}/saint-look-backend
+        SAINT_LOOK_UI_TEST_URL: http://127.0.0.1:8788
+        SAINT_LOOK_UI_TEST_TOKEN: saint-look-ui-tests-owner-token-00000001
+        SAINT_LOOK_UI_TEST_CONTROL_URL: http://127.0.0.1:8788/__control
+        SAINT_LOOK_UI_TEST_CONTROL_TOKEN: saint-look-ui-control-test-token-00000001
+      run: "if [[ \"$TEST_SUITE\" == benchmark ]]; then\n  set -euo pipefail\n  [[ \"$GITHUB_EVENT_NAME\" == workflow_dispatch\
+        \ ]] || { echo 'Benchmark must be explicitly dispatched.' >&2; exit 1; }\n  bash backend/test/ios-benchmark-run.sh\n\
+        \  exit $?\nfi\nwait_for_health() {\n  local url=\"$1\"\n  for attempt in {1..50}; do\n    if curl --max-time 1 --fail\
+        \ --silent \"$url\" > /dev/null; then return 0; fi\n    sleep 0.2\n  done\n  echo \"Health check timed out: $url\"\
+        \ >&2\n  return 1\n}\ncleanup() {\n  if [[ -n \"$proxy_pid\" ]]; then kill \"$proxy_pid\" 2>/dev/null || true; fi\n\
+        \  if [[ -n \"$backend_pid\" ]]; then kill \"$backend_pid\" 2>/dev/null || true; fi\n  if [[ -n \"$provider_pid\"\
+        \ ]]; then kill \"$provider_pid\" 2>/dev/null || true; fi\n}\nprovider_pid=''\nnode -e 'require(\"node:fs\").writeFileSync(process.env.SAINT_LOOK_TEST_CLOCK_FILE,\
+        \ JSON.stringify({offsetMs: 0}))'\nbackend_pid=''\nproxy_pid=''\ntrap cleanup EXIT\nnode backend/test/providers/ui-server.mjs\
+        \ > \"$RUNNER_TEMP/ui-provider.log\" 2>&1 &\nprovider_pid=$!\nwait_for_health http://127.0.0.1:8789/health\nnode backend/src/server.mjs\
+        \ > \"$RUNNER_TEMP/backend.log\" 2>&1 &\nbackend_pid=$!\nwait_for_health http://127.0.0.1:8787/health\nnode client-ios/scripts/ui-test-proxy.mjs\
+        \ > \"$RUNNER_TEMP/ui-proxy.log\" 2>&1 &\nproxy_pid=$!\nwait_for_health http://127.0.0.1:8788/health\nif [[ \"$TEST_SUITE\"\
+        \ == \"visual\" ]]; then\n  SAINT_LOOK_VISUAL_PROFILE=iphone-light SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/VisualAcceptanceTests/testRealGeneratedGarmentsInCatalogAndFitting\
+        \ bash client-ios/scripts/test-simulator.sh\n  exit $?\nfi\nif [[ \"$TEST_SUITE\" == native-menu-* ]]; then\n  [[\
+        \ \"$GITHUB_EVENT_NAME\" == workflow_dispatch ]] || { echo 'Native menu diagnostics require manual dispatch.' >&2;\
+        \ exit 1; }\n  if [[ \"$TEST_SUITE\" == native-menu-delete ]]; then\n    export SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/WardrobeFlowTests/testCancelDeletionKeepsPhotoAndDoesNotSendDelete\n\
+        \  else\n    export SAINT_LOOK_VISUAL_PROFILE=iphone-max-text\n    export SAINT_LOOK_UI_CONTENT_SIZE=accessibility-extra-extra-extra-large\n\
+        \    export SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/VisualAcceptanceTests/testReplaceSavedNameThroughNativeMenu\n\
+        \  fi\n  bash client-ios/scripts/test-simulator.sh\n  exit $?\nfi\nif [[ \"$TEST_SUITE\" == \"outfits-launch-pair\"\
+        \ ]]; then\n  [[ \"$GITHUB_EVENT_NAME\" == workflow_dispatch ]] || { echo 'Launch-pair diagnostics require manual\
+        \ dispatch.' >&2; exit 1; }\n  SAINT_LOOK_LAUNCH_PAIR=1 \\\n  SAINT_LOOK_UI_TEST_ONLY=$'SaintLookUITests/OutfitFlowTests/testCancelDraftDoesNotCreateOutfit\\\
+        nSaintLookUITests/OutfitFlowTests/testCreateUnnamedOutfitSurvivesBackgroundResultOfflineRestartAndItemDeletion' \\\
+        \n    bash client-ios/scripts/test-simulator.sh\n  exit $?\nfi\nif [[ \"$TEST_SUITE\" == \"wardrobe-expired-retry\"\
+        \ ]]; then\n  [[ \"$GITHUB_EVENT_NAME\" == workflow_dispatch ]] || { echo 'Expired-retry diagnostics require manual\
+        \ dispatch.' >&2; exit 1; }\n  SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/WardrobeFlowTests/testExpiredUndeliveredResultKeepsOriginalAndRequiresExplicitRetryAfterRelaunch\
+        \ \\\n    bash client-ios/scripts/test-simulator.sh\n  exit $?\nfi\nif [[ \"$TEST_SUITE\" == \"outfits\" || \"$TEST_SUITE\"\
+        \ == \"outfits-max-text\" ]]; then\n  # Main/PR run both font sizes. Manual max-text selection reuses the same checks.\n\
+        \  trap 'exit 130' INT\n  trap 'exit 143' TERM\n  normal_status=0\n  if [[ \"$TEST_SUITE\" == \"outfits\" ]]; then\n\
+        \    bash client-ios/scripts/test-simulator.sh || normal_status=$?\n    if (( normal_status >= 128 )); then exit \"\
+        $normal_status\"; fi\n  fi\n  large_status=0\n  SAINT_LOOK_UI_CONTENT_SIZE=accessibility-extra-extra-extra-large \\\
+        \n  SAINT_LOOK_UI_TEST_ONLY=$'SaintLookUITests/OutfitFlowTests/testOutfitActionsStayLocalAndAccessibleWithoutSwipes\\\
+        nSaintLookUITests/OutfitFlowTests/testSwipeDoesNotOpenPickerAndVerticalDragScrollsThroughRow' \\\n  bash client-ios/scripts/test-simulator.sh\
+        \ || large_status=$?\n  if (( large_status >= 128 )); then exit \"$large_status\"; fi\n  if (( normal_status != 0\
+        \ )); then exit \"$normal_status\"; fi\n  exit \"$large_status\"\nfi\nif [[ \"$TEST_SUITE\" == \"camera\" ]]; then\n\
+        \  # Three focused cases, one build; full PR wardrobe still runs all cases.\n  export SAINT_LOOK_UI_TEST_ONLY=\"SaintLookUITests/WardrobeFlowTests/testSourceCancellationAndUnavailableCameraDoNotCreateAnItem\n\
+        SaintLookUITests/WardrobeFlowTests/testDeniedCameraOffersSettingsAndGalleryWithoutCreatingAnItem\nSaintLookUITests/WardrobeFlowTests/testReplacementSourceCancellationAndRestrictedCameraKeepTheItem\"\
+        \nfi\nif [[ \"$TEST_SUITE\" == \"wardrobe-recovery\" ]]; then\n  export SAINT_LOOK_UI_TEST_ONLY=\"SaintLookUITests/WardrobeFlowTests/testCancelDeletionKeepsPhotoAndDoesNotSendDelete\n\
+        SaintLookUITests/WardrobeFlowTests/testOfflineReplacementShowsCurrentOriginalAndPreservesEditsAfterRelaunch\nSaintLookUITests/WardrobeFlowTests/testOpeningPhotoKeepsItemContextThroughEditingAndBackToCollection\"\
+        \nfi\nbash client-ios/scripts/test-simulator.sh\nif [[ \"$TEST_SUITE\" == \"wardrobe\" ]]; then\n# Exercise the explicit\
+        \ XCTest manifest using one existing local test.\n# This validates the runner path; it is not a remote deployment\
+        \ demonstration.\nSAINT_LOOK_REMOTE_SMOKE=1 \\\nSAINT_LOOK_REMOTE_URL=https://example.invalid \\\nSAINT_LOOK_REMOTE_TOKEN=\"\
+        $SAINT_LOOK_UI_TEST_TOKEN\" \\\nSAINT_LOOK_REMOTE_REVISION=\"$(git rev-parse HEAD)\" \\\nSAINT_LOOK_REMOTE_DEPLOYMENT_ID=local-harness-validation\
+        \ \\\nSAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/WardrobeFlowTests/testPhotoBecomesReadyThroughBackendAndSurvivesOfflineRelaunch\
+        \ \\\nSAINT_LOOK_RECORD_VIDEO=0 \\\nbash client-ios/scripts/test-simulator.sh\nfi\n"
+    - name: Upload Simulator screencast
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: simulator-ui-video-${{ 'garment-quality' }}
+        path: client-ios/build/videos/*.mp4
+        if-no-files-found: warn
+        retention-days: 7
+        compression-level: 0
+    - name: Export Simulator screenshots
+      if: always()
+      run: "mkdir -p client-ios/build/screenshots\nfor evidence in client-ios/build/*-profile.json client-ios/build/*-devices.json;\
+        \ do\n  if [[ -f \"$evidence\" ]]; then cp \"$evidence\" client-ios/build/screenshots/; fi\ndone\nfor result in client-ios/build/*.xcresult;\
+        \ do\n  [[ -d \"$result\" ]] || continue\n  output=\"client-ios/build/screenshots/$(basename \"$result\" .xcresult)\"\
+        \n  xcrun xcresulttool export attachments --path \"$result\" --output-path \"$output\"\ndone\n"
+    - name: Sanitize benchmark screenshots after any export outcome
+      if: always() && 'visual' == 'benchmark'
+      run: "# Export can leave partial metadata before failing. Never publish that metadata.\npython3 - <<'PY'\nfrom pathlib\
+        \ import Path\nfor path in Path('client-ios/build/screenshots').rglob('*'):\n    if path.is_file() and path.suffix\
+        \ != '.png':\n        path.unlink()\nPY\n"
+    - name: Upload Simulator screenshots
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: simulator-screenshots-${{ 'garment-quality' }}
+        path: ${{ 'visual' == 'benchmark' && 'client-ios/build/screenshots/**/*.png' || 'client-ios/build/screenshots' }}
+        if-no-files-found: warn
+        retention-days: 7
+    - name: Upload visual stall diagnostics
+      if: always() && ('visual' == 'visual' || 'visual' == 'outfits-launch-pair')
+      uses: actions/upload-artifact@v4
+      with:
+        name: simulator-stall-diagnostics-${{ 'garment-quality' }}
+        path: ${{ 'visual' == 'outfits-launch-pair' && 'client-ios/build/launch-pair-diagnostics/**/*.json' || 'client-ios/build/visual-stall-diagnostics'
+          }}
+        if-no-files-found: warn
+        retention-days: 7
+    - name: Upload local XCTest results and screenshots
+      if: always() && 'visual' != 'benchmark'
+      uses: actions/upload-artifact@v4
+      with:
+        name: simulator-results-${{ 'garment-quality' }}
+        path: client-ios/build/*.xcresult
+        if-no-files-found: warn
+        retention-days: 7
+    - name: Upload sanitized benchmark observations
+      if: always() && 'visual' == 'benchmark'
+      uses: actions/upload-artifact@v4
+      with:
+        name: simulator-benchmark-observations
+        path: client-ios/build/benchmark/*.json
+        if-no-files-found: warn
+        retention-days: 7
+'on':
+  workflow_dispatch:
+    inputs:
+      item:
+        type: choice
+        default: hoodie
+        options:
+        - hoodie
+        - trousers
+        - tee
+        - checks-only
+        - qa-only
+        - native-only
