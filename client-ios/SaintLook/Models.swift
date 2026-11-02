@@ -292,6 +292,14 @@ struct IllustrationFeatures: Codable {
     let colors: [String]
     let traits: [String: String]
 
+    /// Only a known pullover without fastening may contain a short sleeve.
+    /// Pixel opacity is checked separately by the presentation renderer.
+    func canContainShortSleeves(of inner: IllustrationFeatures) -> Bool {
+        ["Худи", "Свитшот", "Свитер", "Футболка", "Поло"].contains(type)
+            && traits["sleeves"] == "long" && traits["fastening"] == "none"
+            && inner.traits["sleeves"] == "short"
+    }
+
     // Mirrors the v4 generator's hooded group, not every item with a hood.
     var usesLoweredHoodPose: Bool {
         if type == "Худи" { return true }
