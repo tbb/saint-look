@@ -584,6 +584,12 @@ final class OutfitFlowTests: XCTestCase {
         app.tabBars.buttons["Луки"].tap()
         tap(app.buttons[cardID], in: app)
         tap(app.buttons["repair-slot-\(firstSlotID)"], in: app)
+        guard app.navigationBars["Тело"].waitForExistence(timeout: 5),
+              app.buttons["cancel-outfit-picker"].exists else {
+            capture("second-repair-picker-not-presented", diagnostic: true)
+            XCTFail("Second repair action must present the picker before choosing a candidate")
+            return
+        }
         chooseCandidate(button(prefix: "outfit-candidate-", in: app), in: app)
         XCTAssertTrue(app.navigationBars["Изменить лук"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["save-outfit"].isEnabled)

@@ -12,7 +12,7 @@ on:
         description: Local Simulator suite
         type: choice
         default: all
-        options: [all, smoke, wardrobe, outfits, outfits-max-text, outfits-launch-pair, wardrobe-expired-retry, visual, camera, wardrobe-recovery, native-menus, benchmark]
+        options: [all, smoke, wardrobe, outfits, outfits-max-text, outfits-launch-pair, wardrobe-expired-retry, visual, camera, outfit-repair-diagnostic, wardrobe-recovery, native-menus, benchmark]
       outfit_screenshots:
         description: Capture extra outfit flow screenshots (visual profiles always capture)
         type: boolean
@@ -251,6 +251,11 @@ jobs:
             if (( large_status >= 128 )); then exit "$large_status"; fi
             if (( normal_status != 0 )); then exit "$normal_status"; fi
             exit "$large_status"
+          fi
+          if [[ "$TEST_SUITE" == "outfit-repair-diagnostic" ]]; then
+            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || exit 1
+            export SAINT_LOOK_REPAIR_DIAGNOSTIC=1
+            export SAINT_LOOK_UI_TEST_ONLY=SaintLookUITests/OutfitFlowTests/testReplacementSavesTheAddressedLayerAndAnIncompleteRepairRemainsADiscardableDraft
           fi
           if [[ "$TEST_SUITE" == "camera" ]]; then
             # Three focused cases, one build; full acceptance still runs all cases.

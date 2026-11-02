@@ -45,6 +45,14 @@ simulator_family="${SAINT_LOOK_SIMULATOR_FAMILY:-iPhone}"
 cleanup() {
   local test_status=$?
   trap - EXIT
+  if [[ "${SAINT_LOOK_REPAIR_DIAGNOSTIC:-0}" == 1 && -n "${simulator_id:-}" ]]; then
+    repair_container="$(xcrun simctl get_app_container "$simulator_id" com.saintlook.dev data 2>/dev/null)" || repair_container=''
+    if [[ -f "$repair_container/Documents/outfit-repair-trace.txt" ]]; then
+      mkdir -p build/repair-diagnostic
+      cp "$repair_container/Documents/outfit-repair-trace.txt" build/repair-diagnostic/
+      cat build/repair-diagnostic/outfit-repair-trace.txt
+    fi
+  fi
   if [[ -n "$recording_pid" ]]; then
     # SIGINT lets simctl finish the MP4 container, including after a failed test.
     kill -INT "$recording_pid" 2>/dev/null || true

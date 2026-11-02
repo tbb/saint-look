@@ -149,7 +149,11 @@ struct OutfitDetailView: View {
                         Text(outfit.displayName)
                             .font(.title2.bold())
                             .fixedSize(horizontal: false, vertical: true)
-                        OutfitComposition(store: store, outfit: outfit) { repairingSlot = $0 }
+                        OutfitComposition(store: store, outfit: outfit) { slot in
+                            traceRepair("repair-action-before " + slot.id.uuidString)
+                            repairingSlot = slot
+                            traceRepair("repair-action-after " + slot.id.uuidString)
+                        }
                     }
                     .padding(16)
                     .frame(maxWidth: 620)
@@ -187,6 +191,7 @@ struct OutfitDetailView: View {
                     Text(deletionError ?? "")
                 }
                 .sheet(item: $repairingSlot, onDismiss: {
+                    traceRepair("picker-onDismiss")
                     if let queuedEditor {
                         editorRequest = queuedEditor
                         self.queuedEditor = nil
@@ -196,15 +201,43 @@ struct OutfitDetailView: View {
                                      excluding: outfit.selectedIDs.subtracting(slot.itemID.map { [$0] } ?? [])) { itemID in
                         replace(itemID, in: slot.id)
                     }
+                    .onAppear { traceRepair("picker-onAppear " + slot.id.uuidString) }
+                    .onDisappear { traceRepair("picker-onDisappear " + slot.id.uuidString) }
                 }
                 .sheet(item: $editorRequest) { request in
                     OutfitEditorView(store: store, draft: request.draft, initial: request.initial,
                                      errorMessage: request.errorMessage)
+                        .onAppear { traceRepair("editor-onAppear") }
+                        .onDisappear { traceRepair("editor-onDisappear") }
                 }
+                .onAppear { traceRepair("detail-onAppear") }
+                .onChange(of: repairingSlot?.id) { _, _ in traceRepair("repairingSlot-changed") }
+                .onChange(of: editorRequest?.id) { _, _ in traceRepair("editorRequest-changed") }
+                .onChange(of: queuedEditor?.id) { _, _ in traceRepair("queuedEditor-changed") }
             }
         }
     }
+    private func traceRepair(_ event: String) {
+#if DEBUG
+        guard ProcessInfo.processInfo.environment["SAINT_LOOK_UI_TESTING"] == "1" else { return }
+        let parts = ["REPAIR_TRACE", String(Date().timeIntervalSince1970), event,
+            "slot=" + (repairingSlot?.id.uuidString ?? "-"),
+            "editor=" + (editorRequest?.id.uuidString ?? "-"),
+            "queued=" + (queuedEditor?.id.uuidString ?? "-")]
+        let line = parts.joined(separator: " ") + "\n"
+        print(line)
+        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("outfit-repair-trace.txt")
+        if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: nil) }
+        if let file = try? FileHandle(forWritingTo: url) {
+            defer { try? file.close() }
+            try? file.seekToEnd()
+            try? file.write(contentsOf: Data(line.utf8))
+        }
+#endif
+    }
     private func replace(_ itemID: UUID, in slotID: UUID) {
+        traceRepair("replace-start " + slotID.uuidString)
         guard let current = outfit,
               let slot = current.slots.first(where: { $0.id == slotID && $0.needsReplacement }) else {
             repairingSlot = nil
