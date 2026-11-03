@@ -1,0 +1,260 @@
+{
+  "revision": "b531cec64e0f49abc03631c5ab87a2386f66dd32",
+  "batch": "initial",
+  "variants": {
+    "fashn-hoodie": {
+      "model": "fal-ai/fashn/tryon/v1.6",
+      "status": "completed",
+      "stage": "done",
+      "queueStatus": "COMPLETED",
+      "sourceHash": "639ae47c0084a443211d07f657fbe0aad60fa6489ea818b9b8bf72ed61acecc3",
+      "nativeAlpha": false,
+      "seconds": 23
+    },
+    "fashn-tee": {
+      "model": "fal-ai/fashn/tryon/v1.6",
+      "status": "completed",
+      "stage": "done",
+      "queueStatus": "COMPLETED",
+      "sourceHash": "21b22fa4a5526491fd2a3549f18fef2500ad13f77bad3571b044c90be4a186c3",
+      "nativeAlpha": false,
+      "seconds": 22
+    },
+    "fashn-trousers": {
+      "model": "fal-ai/fashn/tryon/v1.6",
+      "status": "completed",
+      "stage": "done",
+      "queueStatus": "COMPLETED",
+      "sourceHash": "49bd83c9ce3d9a8f02cfa144b2cbf92202d02d9b3c712685f7b5a9c44ab6a881",
+      "nativeAlpha": false,
+      "seconds": 23
+    },
+    "flux-hoodie": {
+      "model": "blackforestlabs/flux-3/edit-image",
+      "status": "completed",
+      "stage": "done",
+      "queueStatus": "COMPLETED",
+      "sourceHash": "639ae47c0084a443211d07f657fbe0aad60fa6489ea818b9b8bf72ed61acecc3",
+      "promptHash": "59ed3690ddd7e8de5b20ddbc3b28c6f4b168257b46f3394a1136feb4398c292b",
+      "nativeAlpha": false,
+      "geometry": {
+        "valid": true,
+        "armsContainedValid": true,
+        "sleeveOpeningsValid": true,
+        "baseValid": true,
+        "shouldersValid": true,
+        "cuffsValid": true,
+        "sleevesUnfolded": true,
+        "wristsValid": true,
+        "outsideFraction": 0,
+        "coverage": 0.4775386833786257,
+        "legsValid": true,
+        "anchorsValid": true,
+        "footAnchorsValid": true,
+        "bounds": {
+          "left": 265,
+          "top": 165,
+          "right": 759,
+          "bottom": 603
+        }
+      },
+      "proportions": {
+        "measurable": true,
+        "valid": true,
+        "sourceRatio": 0.884,
+        "resultRatio": 0.887,
+        "relativeError": 0.0033936651583710287
+      },
+      "poses": [
+        "open"
+      ],
+      "seconds": 71
+    },
+    "flux-tee": {
+      "model": "blackforestlabs/flux-3/edit-image",
+      "status": "completed",
+      "stage": "done",
+      "queueStatus": "COMPLETED",
+      "sourceHash": "21b22fa4a5526491fd2a3549f18fef2500ad13f77bad3571b044c90be4a186c3",
+      "promptHash": "1887b8be1eef504c461602a86bb03a22d7400b3968e5a48b06c619963d2e96c1",
+      "nativeAlpha": false,
+      "geometry": {
+        "valid": true,
+        "armsContainedValid": true,
+        "sleeveOpeningsValid": true,
+        "baseValid": true,
+        "shouldersValid": true,
+        "cuffsValid": true,
+        "sleevesUnfolded": true,
+        "wristsValid": true,
+        "outsideFraction": 0,
+        "coverage": 0.3765055338541667,
+        "legsValid": true,
+        "anchorsValid": true,
+        "footAnchorsValid": true,
+        "bounds": {
+          "left": 320,
+          "top": 219,
+          "right": 704,
+          "bottom": 667
+        }
+      },
+      "proportions": {
+        "measurable": true,
+        "valid": false,
+        "sourceRatio": 0.784,
+        "resultRatio": 0.67,
+        "relativeError": 0.14540816326530615
+      },
+      "poses": [
+        "relaxed",
+        "open"
+      ],
+      "seconds": 68
+    },
+    "flux-trousers": {
+      "model": "blackforestlabs/flux-3/edit-image",
+      "status": "completed",
+      "stage": "done",
+      "queueStatus": "COMPLETED",
+      "sourceHash": "49bd83c9ce3d9a8f02cfa144b2cbf92202d02d9b3c712685f7b5a9c44ab6a881",
+      "promptHash": "94b0aa150020dbd8d4c204ce53723e479bf9b51c26c5980643424f46522ced82",
+      "nativeAlpha": false,
+      "geometry": {
+        "valid": true,
+        "armsContainedValid": true,
+        "sleeveOpeningsValid": true,
+        "baseValid": true,
+        "shouldersValid": true,
+        "cuffsValid": true,
+        "sleevesUnfolded": true,
+        "wristsValid": true,
+        "outsideFraction": 0.008256020892787565,
+        "coverage": 0.6832119834235064,
+        "legsValid": true,
+        "anchorsValid": true,
+        "footAnchorsValid": true,
+        "bounds": {
+          "left": 366,
+          "top": 453,
+          "right": 658,
+          "bottom": 929
+        }
+      },
+      "proportions": {
+        "measurable": false,
+        "reason": "ambiguous-source-outline"
+      },
+      "poses": [
+        "relaxed",
+        "open",
+        "spread"
+      ],
+      "seconds": 42
+    },
+    "gpt-hoodie": {
+      "model": "openai/gpt-image-2.5/sunburst/edit",
+      "status": "completed",
+      "stage": "done",
+      "queueStatus": "COMPLETED",
+      "sourceHash": "639ae47c0084a443211d07f657fbe0aad60fa6489ea818b9b8bf72ed61acecc3",
+      "promptHash": "8c291d5fe209538c59fd8b40cdd3d9c2a1b41c6c9b46de7191cb8a1babe7ebed",
+      "nativeAlpha": true,
+      "geometry": [
+        "wrist_alignment",
+        "sleeve_opening"
+      ],
+      "proportions": {
+        "measurable": true,
+        "valid": true,
+        "sourceRatio": 0.884,
+        "resultRatio": 0.855,
+        "relativeError": 0.03280542986425339
+      },
+      "registrationError": "illustration_geometry_invalid",
+      "seconds": 39
+    },
+    "gpt-tee": {
+      "model": "openai/gpt-image-2.5/sunburst/edit",
+      "status": "completed",
+      "stage": "done",
+      "queueStatus": "COMPLETED",
+      "sourceHash": "21b22fa4a5526491fd2a3549f18fef2500ad13f77bad3571b044c90be4a186c3",
+      "promptHash": "4ddb5c93b1a555dfd2170a095a3e0c65b097f374ce3dc3900dcce7c9c8b42ca7",
+      "nativeAlpha": true,
+      "geometry": {
+        "valid": true,
+        "armsContainedValid": true,
+        "sleeveOpeningsValid": true,
+        "baseValid": true,
+        "shouldersValid": true,
+        "cuffsValid": true,
+        "sleevesUnfolded": true,
+        "wristsValid": true,
+        "outsideFraction": 0,
+        "coverage": 0.34633091517857145,
+        "legsValid": true,
+        "anchorsValid": true,
+        "footAnchorsValid": true,
+        "bounds": {
+          "left": 320,
+          "top": 219,
+          "right": 704,
+          "bottom": 667
+        }
+      },
+      "proportions": {
+        "measurable": true,
+        "valid": false,
+        "sourceRatio": 0.784,
+        "resultRatio": 0.71,
+        "relativeError": 0.0943877551020409
+      },
+      "poses": [
+        "open",
+        "spread"
+      ],
+      "seconds": 39
+    },
+    "gpt-trousers": {
+      "model": "openai/gpt-image-2.5/sunburst/edit",
+      "status": "completed",
+      "stage": "done",
+      "queueStatus": "COMPLETED",
+      "sourceHash": "49bd83c9ce3d9a8f02cfa144b2cbf92202d02d9b3c712685f7b5a9c44ab6a881",
+      "promptHash": "7e45c737a25bbeafe0f0d7a85f0792dc8ffcb37074552576589fac2d609055e0",
+      "nativeAlpha": true,
+      "geometry": {
+        "valid": true,
+        "armsContainedValid": true,
+        "sleeveOpeningsValid": true,
+        "baseValid": true,
+        "shouldersValid": true,
+        "cuffsValid": true,
+        "sleevesUnfolded": true,
+        "wristsValid": true,
+        "outsideFraction": 0.03933517488521408,
+        "coverage": 0.7709508460918614,
+        "legsValid": true,
+        "anchorsValid": true,
+        "footAnchorsValid": true,
+        "bounds": {
+          "left": 366,
+          "top": 453,
+          "right": 658,
+          "bottom": 929
+        }
+      },
+      "proportions": {
+        "measurable": false,
+        "reason": "ambiguous-source-outline"
+      },
+      "poses": [
+        "relaxed",
+        "open",
+        "spread"
+      ],
+      "seconds": 40
+    }
+  }
+}
