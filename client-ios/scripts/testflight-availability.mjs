@@ -1,4 +1,4 @@
-// Read-only diagnosis of the uploaded Saint Look build. Never emits tokens or tester identities.
+// Inspect availability; optionally attach only the verified 40.2 build to existing Personal group.
 import{writeFileSync}from'node:fs';import{appleToken}from'./testflight-signing.mjs';
 if(process.env.GITHUB_EVENT_NAME!=='workflow_dispatch'||process.env.GITHUB_REF!=='refs/heads/codex/testflight-availability'||process.env.GITHUB_REPOSITORY!=='tbb/saint-look')throw Error('Invalid diagnostic context');
 const config={keyId:process.env.ASC_KEY_ID,issuer:process.env.ASC_ISSUER_ID,privateKey:process.env.ASC_PRIVATE_KEY};
@@ -13,6 +13,23 @@ try{
  const groups=await get('/v1/apps/'+app+'/betaGroups?limit=50&fields[betaGroups]=name,isInternalGroup,hasAccessToAllBuilds');
  for(const g of groups.data){const row={id:g.id,...g.attributes};report.groups.push(row);const builds=await get('/v1/betaGroups/'+g.id+'/relationships/builds?limit=200');row.buildIds=(builds.data||[]).map(x=>x.id);row.buildListTruncated=Boolean(builds.links?.next);const testers=await get('/v1/betaGroups/'+g.id+'/relationships/betaTesters?limit=200');row.testerCount=(testers.data||[]).length;row.testerListTruncated=Boolean(testers.links?.next);save();}
  const target=report.builds.find(b=>b.version===report.targetBuild);report.targetFound=Boolean(target);report.targetProcessed=target?.processingState==='VALID';report.targetHasGroup=Boolean(target?.groups?.length||report.groups.some(g=>g.buildIds?.includes(target?.id)));report.targetInternalState=target?.beta?.internalBuildState;save();
+ if(process.env.ATTACH_BUILD==='true'){
+  if(process.env.GITHUB_RUN_ATTEMPT!=='1')throw Error('Mutation cannot be rerun; inspect first');
+  const buildId='ef45832a-8890-49cb-937c-84a06efa18f7',groupId='c3fc4461-e4aa-47a1-ae73-8c78286212b1';
+  const group=report.groups.find(g=>g.id===groupId);
+  if(target?.id!==buildId||target.preRelease?.version!=='1.0'||target.preRelease?.platform!=='IOS'||target.processingState!=='VALID'||target.expired!==false||target.buildAudienceType!=='INTERNAL_ONLY')throw Error('Unexpected target build');
+  if(!group||group.name!=='Personal'||group.isInternalGroup!==true||group.hasAccessToAllBuilds!==false||group.testerCount!==1||group.buildListTruncated||group.testerListTruncated||!group.buildIds.includes('20704592-aab8-4741-94cc-39b971053db2'))throw Error('Unexpected existing group');
+  if(!group.buildIds.includes(buildId)){
+   report.attachment={groupId,buildId,state:'intent-recorded-no-retry'};save();
+   const r=await fetch('https://api.appstoreconnect.apple.com/v1/betaGroups/'+groupId+'/relationships/builds',{method:'POST',headers:{Authorization:'Bearer '+appleToken(config),'Content-Type':'application/json'},body:JSON.stringify({data:[{type:'builds',id:buildId}]}),redirect:'error',signal:AbortSignal.timeout(30000)});
+   report.attachment.httpStatus=r.status;report.attachment.state=r.status===204?'accepted':'unconfirmed-inspect-before-any-retry';save();
+   if(r.status!==204)throw Error('Attachment HTTP '+r.status);
+  }else{report.attachment={groupId,buildId,state:'already-attached-no-mutation'};save();}
+  const verified=await get('/v1/betaGroups/'+groupId+'/relationships/builds?limit=200');
+  group.buildIds=verified.data.map(b=>b.id);report.targetHasGroup=group.buildIds.includes(buildId);
+  const beta=await get('/v1/builds/'+buildId+'/buildBetaDetail');report.targetInternalState=beta.data?.attributes?.internalBuildState;
+  report.attachment.verified=report.targetHasGroup;save();
+ }
  console.log(JSON.stringify(report,null,2));
  if(!report.targetFound||!report.targetProcessed||!report.targetHasGroup)process.exitCode=1;
 }catch(e){report.error=e.message;save();console.log(JSON.stringify({error:report.error,requests:report.requests}));process.exitCode=1;}

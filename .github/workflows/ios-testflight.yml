@@ -1,6 +1,11 @@
-name: Read-only TestFlight availability
+name: TestFlight availability and scoped delivery
 on:
   workflow_dispatch:
+    inputs:
+      attach_build:
+        description: Attach verified 40.2 to existing Personal group
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -17,6 +22,7 @@ jobs:
           node-version: '24'
       - name: Read processing and existing tester-group availability
         env:
+          ATTACH_BUILD: ${{ inputs.attach_build }}
           ASC_KEY_ID: ${{ vars.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ vars.ASC_ISSUER_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
