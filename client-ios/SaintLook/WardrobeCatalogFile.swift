@@ -31,6 +31,61 @@ struct WardrobeCatalog: Codable {
     }
 }
 
+/// Only the ingestion attempt owns these transitions. New item fields remain
+/// untouched unless this operation explicitly takes responsibility for them.
+enum IngestionUpdate {
+    case uploadStarted
+    case received(ItemResponse, resultFilename: String?)
+    case interrupted(retryable: Bool, mode: ProcessingMode?, message: String?, code: String?)
+}
+
+extension WardrobeCatalog {
+    @discardableResult
+    mutating func applyIngestion(_ update: IngestionUpdate, for id: UUID, operationID: UUID) throws -> ResultAcknowledgement? {
+        guard let index = items.firstIndex(where: { $0.id == id }),
+              items[index].operationID == operationID else { throw CancellationError() }
+        var item = items[index]
+        var acknowledgement: ResultAcknowledgement?
+        switch update {
+        case .uploadStarted:
+            item.uploadStarted = true
+        case .received(let response, let filename):
+            try response.validate(for: item)
+            item.mode = response.mode
+            switch response.status {
+            case .pending:
+                item.errorMessage = nil
+            case .failed:
+                item.status = .failed
+                item.errorCode = response.error
+                item.errorMessage = ProcessingFailure.message(for: response.error)
+            case .ready:
+                guard let filename, let type = response.type else { throw ClientError.invalidResponse }
+                item.resultFilename = filename
+                item.resultMode = response.mode
+                item.resultSHA256 = response.resultSHA256
+                item.type = type
+                item.colors = response.colors
+                item.status = .ready
+                item.errorMessage = nil
+                item.errorCode = nil
+                acknowledgement = ResultAcknowledgement(itemID: id, operationID: operationID)
+            }
+        case .interrupted(let retryable, let mode, let message, let code):
+            if !retryable { item.status = .failed }
+            item.mode = mode
+            item.errorMessage = message
+            item.errorCode = code
+        }
+        item.publishIngestion()
+        items[index] = item
+        if let acknowledgement {
+            pendingAcknowledgements = (pendingAcknowledgements ?? []).union([acknowledgement])
+        }
+        return acknowledgement
+    }
+}
+
 extension WardrobeCatalog {
     var legacyPublicationAcknowledgements: Set<ResultAcknowledgement> {
         Set(items.compactMap { item in

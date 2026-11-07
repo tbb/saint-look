@@ -228,3 +228,5 @@ extension BackendClient {
         return response
     }
 }
+
+extension BackendClient: RecommendationTransport {}

@@ -480,33 +480,12 @@ final class WardrobeStore: ObservableObject {
         }
     }
 
-    private func replace(_ item: WardrobeItem, acknowledgement: ResultAcknowledgement? = nil) throws {
-        guard let index = items.firstIndex(where: { $0.id == item.id }),
-              items[index].operationID == item.operationID else { throw CancellationError() }
-        var updated = items
-        updated[index] = item
-        // A response may have awaited the network while this thing was edited locally.
-        // Processing updates never own manual values, including pending and failure updates.
-        updated[index].manualType = items[index].manualType
-        updated[index].manualColors = items[index].manualColors
-        updated[index].illustration = items[index].illustration
-        updated[index].illustrationResult = items[index].illustrationResult
-        updated[index].sourceSetVersionID = items[index].sourceSetVersionID
-        updated[index].automaticallyIllustrate = items[index].automaticallyIllustrate
-        updated[index].additionalPhotos = items[index].additionalPhotos
-        updated[index].preparedPhotos = items[index].preparedPhotos
-        updated[index].pendingPublication = items[index].pendingPublication
-        updated[index].publishedVersion = items[index].publishedVersion
-        updated[index].photosLocked = items[index].photosLocked
-        updated[index].preparation = items[index].preparation
-        updated[index].preparationRevision = items[index].preparationRevision
-        updated[index].downloadedIllustration = items[index].downloadedIllustration
-        updated[index].publishIngestion()
-        var acknowledgements = pendingAcknowledgements
-        if let acknowledgement { acknowledgements.insert(acknowledgement) }
-        try persist(updated, pendingAcknowledgements: acknowledgements)
-        items = updated
-        pendingAcknowledgements = acknowledgements
+    private func applyIngestion(_ update: IngestionUpdate, for item: WardrobeItem) throws {
+        var updated = catalog
+        let acknowledgement = try updated.applyIngestion(update, for: item.id, operationID: item.operationID)
+        try persist(updated.items, pendingAcknowledgements: updated.pendingAcknowledgements)
+        items = updated.items
+        pendingAcknowledgements = updated.pendingAcknowledgements ?? []
         if let acknowledgement, observing { startAcknowledgement(acknowledgement) }
     }
 
@@ -533,7 +512,7 @@ final class WardrobeStore: ObservableObject {
         guard isCurrent(item) else { throw CancellationError() }
         if !item.uploadStarted {
             item.uploadStarted = true
-            try replace(item)
+            try applyIngestion(.uploadStarted, for: item)
         }
         let photo = try Data(contentsOf: directory.appendingPathComponent(item.directoryName).appendingPathComponent(item.uploadFilename))
         return try await client.submit(item, photo: photo)
@@ -558,10 +537,7 @@ final class WardrobeStore: ObservableObject {
                 backendMode = current.mode
                 item.mode = current.mode
                 if current.status == .failed {
-                    item.status = .failed
-                    item.errorCode = current.error
-                    item.errorMessage = ProcessingFailure.message(for: current.error)
-                    try replace(item)
+                    try applyIngestion(.received(current, resultFilename: nil), for: item)
                     return
                 }
                 if current.status == .ready {
@@ -574,23 +550,14 @@ final class WardrobeStore: ObservableObject {
                     guard isCurrent(item) else { return }
                     let filename = "result-\(item.operationID.uuidString.lowercased()).png"
                     try imageData.write(to: directory.appendingPathComponent(item.directoryName).appendingPathComponent(filename), options: .atomic)
-                    var completed = item
-                    completed.resultFilename = filename
-                    completed.resultMode = current.mode
-                    completed.resultSHA256 = current.resultSHA256
-                    completed.type = type
-                    completed.colors = current.colors
-                    completed.status = .ready
-                    completed.errorMessage = nil
-                    completed.errorCode = nil
-                    try replace(completed, acknowledgement: ResultAcknowledgement(itemID: item.id, operationID: item.operationID))
+                    try applyIngestion(.received(current, resultFilename: filename), for: item)
                     startNewItemIllustrations()
                     if items.contains(where: { $0.id == id && $0.automaticallyIllustrate }) { discoverMode() }
                     startNextPreparation()
                     return
                 }
                 item.errorMessage = nil
-                if pendingChanged { try replace(item) }
+                if pendingChanged { try applyIngestion(.received(current, resultFilename: nil), for: item) }
                 retrySeconds = 1
                 try await Task.sleep(nanoseconds: 1_000_000_000)
             } catch {
@@ -604,14 +571,14 @@ final class WardrobeStore: ObservableObject {
                 } else {
                     retryable = error is URLError
                 }
-                if !retryable { item.status = .failed }
                 if let clientError = error as? ClientError, case .resultUnavailable(let code) = clientError {
                     item.errorCode = code
                 }
                 item.errorMessage = retryable
                     ? "Связи с сервером пока нет. Фото сохранено; отправка продолжится автоматически."
                     : (error as? ClientError)?.localizedDescription ?? "Не удалось сохранить результат. Исходное фото сохранено."
-                do { try replace(item) }
+                do { try applyIngestion(.interrupted(retryable: retryable, mode: item.mode,
+                                                   message: item.errorMessage, code: item.errorCode), for: item) }
                 catch { notice = "Не удалось сохранить состояние карточки. Исходное фото сохранено."; return }
                 guard retryable else { return }
                 do { try await Task.sleep(nanoseconds: retrySeconds * 1_000_000_000) }
