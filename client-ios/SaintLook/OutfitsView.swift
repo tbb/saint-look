@@ -376,10 +376,7 @@ struct OutfitEditorView: View {
     @State private var activeBodySlotID: UUID?
     @State private var pinnedSlotIDs: Set<UUID> = []
     @State private var compositionHistory = OutfitCompositionHistory()
-    @State private var recommendation = OutfitRecommendationSession()
-    @State private var recommendationTask: Task<Void, Never>?
-    @State private var recommendationSlotID: UUID?
-    @State private var recommendationMessage: String?
+    @State private var recommendation = OutfitRecommendations()
 
     @State private var actionMessage: String?
     @State private var errorMessage: String?
@@ -562,14 +559,14 @@ struct OutfitEditorView: View {
 
     @ViewBuilder
     private func recommendationFeedback(for slotID: UUID) -> some View {
-        if recommendationSlotID == slotID {
+        if recommendation.slotID == slotID {
             if recommendation.hasPending {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 16) { recommendationProgress }
                     VStack(alignment: .leading, spacing: 8) { recommendationProgress }
                 }
             }
-            if let recommendationMessage {
+            if let recommendationMessage = recommendation.message {
                 Text(recommendationMessage).font(.footnote).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("recommendation-message")
@@ -941,15 +938,15 @@ struct OutfitEditorView: View {
 
     @ViewBuilder
     private var compositionFeedback: some View {
-        if recommendationSlotID == nil {
-            if recommendation.pendingComposition != nil {
+        if recommendation.slotID == nil {
+            if recommendation.isComposing {
                 ProgressView("Подбираем лук…")
                     .accessibilityIdentifier("composition-pending")
                 Button("Остановить подбор") { cancelRecommendation(message: "Подбор остановлен. Состав сохранён.") }
                     .frame(minHeight: 44)
                     .accessibilityIdentifier("cancel-recommendation")
             }
-            if let recommendationMessage {
+            if let recommendationMessage = recommendation.message {
                 Text(recommendationMessage).font(.footnote).foregroundStyle(.secondary)
                     .accessibilityIdentifier("composition-message")
             }
@@ -957,88 +954,32 @@ struct OutfitEditorView: View {
     }
 
     private func compose(_ mode: ComposeMode) {
-        cancelRecommendation()
-        recommendationSlotID = nil
-        recommendationMessage = nil
         actionMessage = nil
-        let started = Date()
-        do {
-            let packets = try store.recommendationItems()
-            let request = try recommendation.beginComposition(draft: draft, mode: mode, pinnedSlotIDs: pinnedSlotIDs,
-                items: store.items, preparedItems: packets, savedOutfit: store.outfits.first { $0.id == draft.id },
-                activeSpaceID: store.preparationConfiguration?.encoder.activeSpaceID)
-            let client = BackendClient(settings: store.settings)
-            recommendationTask = Task { @MainActor in
-                do {
-                    let response = try await client.compose(request)
-                    try Task.checkCancellation()
-                    guard recommendation.pendingComposition?.request.requestId == request.requestId else { return }
-                    let currentPackets = try store.recommendationItems()
-                    let message = try recommendation.applyComposition(response, to: &draft, history: &compositionHistory,
-                        pinnedSlotIDs: pinnedSlotIDs, items: store.items, preparedItems: currentPackets,
-                        savedOutfit: store.outfits.first { $0.id == draft.id }, taxonomy: .shared)
-                    recommendationMessage = response.modelMode == "controlled" ? "Тестовый подбор. " + message : message
-                    recommendationTask = nil
-                    #if DEBUG
-                    print("compose_recommendation_applied_ms=\(Int(Date().timeIntervalSince(started) * 1000)) outcome=\(response.outcome.rawValue)")
-                    #endif
-                } catch {
-                    guard !Task.isCancelled,
-                          !recommendation.hasPending || recommendation.pendingComposition?.request.requestId == request.requestId else { return }
-                    recommendation.cancel()
-                    recommendationTask = nil
-                    recommendationMessage = RecommendationError.message(for: error)
-                    await store.refreshPreparationConfiguration(after: error)
-                }
-            }
-        } catch { recommendationMessage = RecommendationError.message(for: error) }
+        requestRecommendation(.composition(mode))
     }
 
     private func cancelRecommendation(message: String? = nil) {
-        let wasPending = recommendation.hasPending
-        recommendation.cancel()
-        recommendationTask?.cancel()
-        recommendationTask = nil
-        recommendationMessage = wasPending ? (message ?? RecommendationError.stale.localizedDescription) : nil
+        recommendation.cancel(message: message)
     }
 
     private func recommend(_ slot: OutfitSlot, intent: RecommendationIntent = .complement) {
-        cancelRecommendation()
         activate(slot)
-        recommendationSlotID = slot.id
-        recommendationMessage = nil
-        let started = Date()
-        do {
-            let packets = try store.recommendationItems(excluding: intent == .complement ? slot.itemID : nil)
-            let request = try recommendation.begin(draft: draft, targetSlotID: slot.id, intent: intent, pinnedSlotIDs: pinnedSlotIDs,
-                items: store.items, preparedItems: packets, savedOutfit: store.outfits.first { $0.id == draft.id },
+        requestRecommendation(.single(slotID: slot.id, intent: intent),
+                              excluding: intent == .complement ? slot.itemID : nil)
+    }
+
+    private func requestRecommendation(_ action: OutfitRecommendations.Action, excluding itemID: UUID? = nil) {
+        recommendation.start(action, transport: BackendClient(settings: store.settings), context: {
+            OutfitRecommendations.Context(draft: draft, history: compositionHistory, pinnedSlotIDs: pinnedSlotIDs,
+                items: store.items, preparedItems: try store.recommendationItems(excluding: itemID),
+                savedOutfit: store.outfits.first { $0.id == draft.id },
                 activeSpaceID: store.preparationConfiguration?.encoder.activeSpaceID)
-            let client = BackendClient(settings: store.settings)
-            recommendationTask = Task { @MainActor in
-                do {
-                    let response = try await client.recommendSingle(request)
-                    try Task.checkCancellation()
-                    guard recommendation.pending?.request.requestId == request.requestId else { return }
-                    let currentPackets = try store.recommendationItems(excluding: intent == .complement ? slot.itemID : nil)
-                    let savedOutfit = store.outfits.first { $0.id == draft.id }
-                    let message = try recommendation.apply(response, to: &draft, history: &compositionHistory,
-                        pinnedSlotIDs: pinnedSlotIDs, items: store.items, preparedItems: currentPackets,
-                        savedOutfit: savedOutfit, taxonomy: .shared)
-                    recommendationMessage = response.mode == "controlled" ? "Тестовый подбор. " + message : message
-                    recommendationTask = nil
-                    #if DEBUG
-                    print("single_recommendation_applied_ms=\(Int(Date().timeIntervalSince(started) * 1000)) outcome=\(response.outcome.rawValue)")
-                    #endif
-                } catch {
-                    guard !Task.isCancelled,
-                          !recommendation.hasPending || recommendation.pending?.request.requestId == request.requestId else { return }
-                    recommendation.cancel()
-                    recommendationTask = nil
-                    recommendationMessage = RecommendationError.message(for: error)
-                    await store.refreshPreparationConfiguration(after: error)
-                }
-            }
-        } catch { recommendationMessage = RecommendationError.message(for: error) }
+        }, apply: { updated, history in
+            draft = updated
+            compositionHistory = history
+        }, onFailure: { error in
+            await store.refreshPreparationConfiguration(after: error)
+        })
     }
 
     private func save() {

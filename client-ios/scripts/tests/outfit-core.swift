@@ -2,7 +2,8 @@ import Foundation
 
 @main
 struct OutfitCoreChecks {
-    static func main() throws {
+    @MainActor
+    static func main() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -41,6 +42,8 @@ struct OutfitCoreChecks {
         } catch OutfitError.unavailableItem { }
         shirt = try preparedFixture(shirt)
         jeans = try preparedFixture(jeans)
+        try ingestionChecks(prepared: shirt, file: file)
+        try await recommendationWorkflowChecks(shirt: shirt, jeans: jeans)
         try boundedCandidateChecks(shirt: shirt, jeans: jeans, taxonomy: taxonomy)
         try recommendationChecks(shirt: shirt, jeans: jeans, taxonomy: taxonomy)
         try modelSpaceRecoveryChecks(shirt: shirt, jeans: jeans, file: file, taxonomy: taxonomy)
